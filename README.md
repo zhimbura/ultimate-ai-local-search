@@ -12,6 +12,8 @@ Embeddings can run **fully local** (Ollama / LM Studio) or via a **cloud provide
 
 > Why it exists: wiring claude-context + Milvus + a local embedder by hand is a minefield — the classic failure is an **embedding-dimension mismatch** that makes every insert silently fail (indexing reports "done", search returns nothing). This repo encodes the working setup and a **smoke test that catches that bug at install time**.
 
+![Deployment architecture: an AI agent calls ast-index, claude-context (MCP) and rg/grep on the local machine; claude-context uses a local Ollama/LM Studio or a cloud embedder, and Milvus runs in Docker with etcd and minio](docs/architecture.svg)
+
 ## Quick start
 
 ```bash
