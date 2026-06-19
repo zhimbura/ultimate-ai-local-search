@@ -105,13 +105,38 @@ If they differ: set `EMBEDDING_DIMENSION` (and the correct `EMBEDDING_MODEL`) in
 
 **LM Studio: "No models loaded".** The embedding model must be loaded and the server running: `lms get <model>` then `lms server start`.
 
-## How it works
+## Architecture — what goes where
 
+```mermaid
+flowchart LR
+    A(["AI Agent"])
+    A -->|symbols| T1["Tier 1 · ast-index"]
+    A -->|by meaning| T2["Tier 2 · claude-context"]
+    A -->|exact text / regex| T3["Tier 3 · rg / grep"]
+    T2 -->|text to embed| E{{Embedder}}
+    T2 -->|vectors| M[("Milvus<br/>etcd · minio · milvus")]
+    E --> L["Local<br/>Ollama · LM Studio"]
+    E --> C["Cloud<br/>OpenAI · Voyage · Gemini · OpenRouter"]
+    classDef tier fill:#eef2ff,stroke:#6366f1,color:#312e81;
+    classDef infra fill:#ecfdf5,stroke:#10b981,color:#064e3b;
+    class T1,T2,T3 tier
+    class E,M,L,C infra
 ```
-agent ──MCP──▶ claude-context ──┬─▶ embedder (Ollama / LM Studio / cloud)  → vectors
-                                └─▶ Milvus (etcd + minio + milvus, Docker)  → ANN search
-agent ──CLI──▶ ast-index (SQLite)        # Tier 1
-agent ──CLI──▶ rg / grep                 # Tier 3
+
+## Picking a tier
+
+```mermaid
+flowchart TD
+    Q(["Search query"]) --> D{"What are you<br/>looking for?"}
+    D -->|a symbol name| A["ast-index · Tier 1"]
+    D -->|a concept, by meaning| V["claude-context vector · Tier 2"]
+    D -->|exact string / regex / config| G["rg / grep · Tier 3"]
+    classDef t1 fill:#eef2ff,stroke:#6366f1,color:#312e81;
+    classDef t2 fill:#fef3c7,stroke:#f59e0b,color:#713f12;
+    classDef t3 fill:#f1f5f9,stroke:#64748b,color:#1e293b;
+    class A t1
+    class V t2
+    class G t3
 ```
 
 ## License
