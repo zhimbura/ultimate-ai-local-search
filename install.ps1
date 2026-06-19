@@ -23,9 +23,11 @@ Say "ultimate-ai-local-search — Windows"
 if(-not (Have docker)){ Die "Docker not found. Install Docker Desktop (WSL2 backend) and re-run." }
 try { docker info *> $null } catch { Die "Docker is not running. Start Docker Desktop and re-run." }
 if(-not (Have jq)){ Say "tip: jq not required on Windows (using native JSON)" }
-# Node not used by installer, but the claude-context MCP runs via npx afterward — warn if missing.
-if((Have node) -and (Have npx)){ Ok "node present" }
-else { Write-Host "! Node.js/npx not found — not needed for this install, but REQUIRED afterward: your agent runs claude-context via 'npx'. Install Node 18+ from https://nodejs.org before using semantic search." -ForegroundColor Yellow }
+# Node not used by installer, but claude-context runs via npx afterward and needs Node 22+
+# (a dep uses require(ESM), unsupported before 22.12). Warn if missing/old.
+$nodeMajor = if(Have node){ try { [int]((node --version) -replace '^v','' -replace '\..*','') } catch { 0 } } else { 0 }
+if((Have node) -and (Have npx) -and ($nodeMajor -ge 22)){ Ok "node present ($(node --version))" }
+else { Write-Host "! Node.js 22+ REQUIRED afterward (claude-context runs via npx, needs require(ESM)). Current: $(if(Have node){node --version}else{'none'}). Get it from https://nodejs.org." -ForegroundColor Yellow }
 
 # ── provider selection ──
 if(-not $Provider){

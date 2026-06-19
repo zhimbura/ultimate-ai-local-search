@@ -33,7 +33,7 @@ The installer: checks deps → installs/sets up your embedder → starts Milvus 
 ## Requirements
 
 - **Docker** (Desktop / OrbStack / Engine) running — for Milvus.
-- **Node.js** (for `npx @zilliz/claude-context-mcp`).
+- **Node.js 22+** (for `npx @zilliz/claude-context-mcp`; older versions fail with `ERR_REQUIRE_ESM`).
 - macOS or Linux for `install.sh`; Windows via `install.ps1`.
 - Homebrew recommended on macOS/Linux (used for `ast-index`, `jq`, `ollama`).
 
@@ -66,7 +66,8 @@ For Tier 1 it calls the `ast-index` CLI; for Tier 3, `rg`/`grep`. The routing po
   ```bash
   bash scripts/smoke-test.sh --env-file .env
   ```
-- **End-to-end** — `./scripts/e2e-test.sh` (needs Node.js 18+). Creates a tiny sample project, indexes it through the **real claude-context MCP**, runs a semantic search ("retry with exponential backoff" → expects `retry.js`), asserts the hit, then cleans up the index and files. Exercises the full agent path, not just Milvus.
+- **Tier 1 (ast-index)** — `./scripts/ast-test.sh`. Builds an index over a sample project and asserts symbol search finds a known function/symbol. Skips cleanly if ast-index isn't installed.
+- **Tier 2 end-to-end** — `./scripts/e2e-test.sh` (needs **Node.js 22+**). Creates a tiny sample project, indexes it through the **real claude-context MCP**, runs a semantic search ("retry with exponential backoff" → expects `retry.js`), asserts the hit, then cleans up index + files. Exercises the full agent path, not just Milvus.
 
 ## Managing the stack
 

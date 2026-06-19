@@ -49,15 +49,21 @@ docker info >/dev/null 2>&1 || die "Docker is installed but not running. Start i
 docker compose version >/dev/null 2>&1 || die "Docker Compose v2 required (docker compose ...)."
 ok "docker + jq + curl ready"
 
-# Node is NOT used by this installer, but the claude-context MCP server is launched
-# by your agent via `npx` — warn (don't fail) if it's missing so semantic search works later.
+# Node is NOT used by this installer, but the claude-context MCP server is launched by
+# your agent via `npx` — and it needs Node 22+ (a dep uses require(ESM), unsupported <22.12).
+# Warn (don't fail) so semantic search works later.
 if have node && have npx; then
-  ok "node present ($(node --version 2>/dev/null))"
+  node_major=$(node --version 2>/dev/null | sed 's/^v//; s/\..*//')
+  if [ "${node_major:-0}" -ge 22 ] 2>/dev/null; then
+    ok "node present ($(node --version 2>/dev/null))"
+  else
+    warn "Node $(node --version 2>/dev/null) is too OLD — claude-context needs Node 22+ (require(ESM))."
+    warn "  Upgrade before using semantic search: 'nvm install 22' or https://nodejs.org."
+  fi
 else
-  warn "Node.js/npx not found — not needed for THIS install, but REQUIRED afterward:"
+  warn "Node.js/npx not found — not needed for THIS install, but REQUIRED afterward (Node 22+):"
   warn "  your AI agent runs the claude-context MCP via 'npx @zilliz/claude-context-mcp'."
-  warn "  Install Node.js 18+ (brew install node · https://nodejs.org) before using semantic search,"
-  warn "  otherwise the Milvus stack will be up but the MCP server won't start."
+  warn "  Install Node.js 22+ (brew install node · https://nodejs.org), else the MCP server won't start."
 fi
 
 # ─── Tier 1: ast-index (structural) ──────────────────────────────────────────
@@ -67,8 +73,25 @@ if [ "$DO_AST" = 1 ]; then
     say "installing ast-index (Tier 1: structural symbol search)…"
     brew tap defendend/ast-index >/dev/null 2>&1 || true
     brew install ast-index && brew trust defendend/ast-index/ast-index 2>/dev/null || warn "ast-index install failed — Tier 1 optional, continuing"
+  elif [ "$PLATFORM" = linux ]; then
+    # No Homebrew (typical on Linux): grab the prebuilt binary from GitHub releases.
+    av="${AST_INDEX_VERSION:-3.48.0}"
+    case "$ARCH" in
+      x86_64|amd64) aarch=linux-x86_64;;
+      arm64|aarch64) aarch=linux-arm64;;
+      *) aarch="";;
+    esac
+    if [ -n "$aarch" ]; then
+      say "installing ast-index $av (prebuilt $aarch)…"
+      td="$(mktemp -d)"
+      if curl -fsSL "https://github.com/defendend/Claude-ast-index-search/releases/download/v${av}/ast-index-v${av}-${aarch}.tar.gz" -o "$td/ai.tgz" && tar -xzf "$td/ai.tgz" -C "$td" 2>/dev/null; then
+        if install -m755 "$td/ast-index" /usr/local/bin/ast-index 2>/dev/null; then ok "ast-index → /usr/local/bin"
+        else mkdir -p "$HOME/.local/bin"; install -m755 "$td/ast-index" "$HOME/.local/bin/ast-index" && ok "ast-index → ~/.local/bin (ensure it's on PATH)"; fi
+      else warn "ast-index download failed — Tier 1 optional, continuing"; fi
+      rm -rf "$td"
+    else warn "no prebuilt ast-index for $ARCH — skipping Tier 1"; fi
   else
-    warn "Homebrew not found — skipping ast-index (Tier 1). Install brew or grab ast-index manually later."
+    warn "Homebrew not found — skipping ast-index (Tier 1). Binary: github.com/defendend/Claude-ast-index-search/releases"
   fi
 fi
 
