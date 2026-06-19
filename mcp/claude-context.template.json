@@ -1,0 +1,53 @@
+{
+  "_comment": "Sample claude-context MCP block. install.sh merges the right variant into ~/.claude.json automatically. This file is for manual setup / reference. Use 127.0.0.1, never localhost.",
+
+  "_ollama_example": {
+    "mcpServers": {
+      "claude-context": {
+        "type": "stdio",
+        "command": "npx",
+        "args": ["-y", "@zilliz/claude-context-mcp@latest"],
+        "env": {
+          "MILVUS_ADDRESS": "127.0.0.1:19530",
+          "EMBEDDING_PROVIDER": "Ollama",
+          "EMBEDDING_MODEL": "nomic-embed-text",
+          "EMBEDDING_DIMENSION": "768",
+          "OLLAMA_HOST": "http://127.0.0.1:11434"
+        }
+      }
+    }
+  },
+
+  "_lmstudio_example": {
+    "mcpServers": {
+      "claude-context": {
+        "type": "stdio",
+        "command": "npx",
+        "args": ["-y", "@zilliz/claude-context-mcp@latest"],
+        "env": {
+          "MILVUS_ADDRESS": "127.0.0.1:19530",
+          "EMBEDDING_PROVIDER": "OpenAI",
+          "OPENAI_BASE_URL": "http://127.0.0.1:1234/v1",
+          "OPENAI_API_KEY": "lm-studio",
+          "EMBEDDING_MODEL": "text-embedding-nomic-embed-text-v1.5"
+        }
+      }
+    }
+  },
+
+  "_openai_example": {
+    "mcpServers": {
+      "claude-context": {
+        "type": "stdio",
+        "command": "npx",
+        "args": ["-y", "@zilliz/claude-context-mcp@latest"],
+        "env": {
+          "MILVUS_ADDRESS": "127.0.0.1:19530",
+          "EMBEDDING_PROVIDER": "OpenAI",
+          "OPENAI_API_KEY": "sk-REPLACE_ME",
+          "EMBEDDING_MODEL": "text-embedding-3-small"
+        }
+      }
+    }
+  }
+}

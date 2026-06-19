@@ -1,0 +1,18 @@
+# Secrets / local config — NEVER commit
+.env
+*.local
+*.key
+
+# Backups created by the MCP merge step
+*.bak
+*.bak.*
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+
+# Smoke-test scratch
+.smoke-test/

@@ -1,0 +1,85 @@
+# Milvus standalone stack (etcd + minio + milvus) for ultimate-ai-local-search.
+# "standalone" is misleading — Milvus needs all three containers to work.
+# Labels are intentional: they let you find/keep these and avoid nuking them by accident.
+name: uals
+
+services:
+  etcd:
+    container_name: uals-etcd
+    image: quay.io/coreos/etcd:${ETCD_VERSION:-v3.5.18}
+    environment:
+      - ETCD_AUTO_COMPACTION_MODE=revision
+      - ETCD_AUTO_COMPACTION_RETENTION=1000
+      - ETCD_QUOTA_BACKEND_BYTES=4294967296
+      - ETCD_SNAPSHOT_COUNT=50000
+    volumes:
+      - etcd_data:/etcd
+    command: etcd -advertise-client-urls=http://etcd:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 30s
+      timeout: 20s
+      retries: 5
+    labels:
+      app: ultimate-ai-local-search
+      do-not-delete: "uals vector-search stack"
+
+  minio:
+    container_name: uals-minio
+    image: minio/minio:${MINIO_VERSION:-RELEASE.2023-03-20T20-16-18Z}
+    environment:
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+    volumes:
+      - minio_data:/minio_data
+    command: minio server /minio_data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 5
+    labels:
+      app: ultimate-ai-local-search
+      do-not-delete: "uals vector-search stack"
+
+  milvus:
+    container_name: uals-milvus
+    image: milvusdb/milvus:${MILVUS_VERSION:-v2.5.6}
+    command: ["milvus", "run", "standalone"]
+    security_opt:
+      - seccomp:unconfined
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio:9000
+    volumes:
+      - milvus_data:/var/lib/milvus
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 30s
+      start_period: 120s
+      timeout: 20s
+      retries: 5
+    ports:
+      # Only Milvus is exposed to the host. etcd/minio stay on the internal network.
+      - "${MILVUS_PORT:-19530}:19530"
+      - "${MILVUS_HEALTH_PORT:-9091}:9091"
+    depends_on:
+      etcd:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    labels:
+      app: ultimate-ai-local-search
+      do-not-delete: "uals vector-search stack"
+
+volumes:
+  etcd_data:
+    labels: { app: ultimate-ai-local-search }
+  minio_data:
+    labels: { app: ultimate-ai-local-search }
+  milvus_data:
+    labels: { app: ultimate-ai-local-search }
+
+networks:
+  default:
+    name: uals-net
