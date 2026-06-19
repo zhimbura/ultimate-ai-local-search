@@ -14,8 +14,9 @@ const INDEX_TIMEOUT_MS = 180_000;
 const CALL_TIMEOUT_MS = 60_000;
 
 // Spawn the MCP server; it inherits embedding/Milvus config from process.env.
+// detached:true → own process group, so we can kill the whole npx→node tree on exit
 const srv = spawn('npx', ['-y', '@zilliz/claude-context-mcp@latest'], {
-  stdio: ['pipe', 'pipe', 'inherit'], env: process.env,
+  stdio: ['pipe', 'pipe', 'inherit'], env: process.env, detached: true,
 });
 
 let buf = '';
@@ -97,7 +98,7 @@ try {
   failed = true;
 } finally {
   try { await rpc('tools/call', { name: 'clear_index', arguments: { path: projectPath } }); console.log('✓ cleaned up index'); } catch {}
-  srv.kill();
+  try { process.kill(-srv.pid, 'SIGKILL'); } catch { try { srv.kill('SIGKILL'); } catch {} }
 }
 console.log(failed ? '✗ E2E FAILED' : '✓ E2E PASSED');
 process.exit(failed ? 1 : 0);

@@ -35,7 +35,7 @@ The installer: checks deps → installs/sets up your embedder → starts Milvus 
 - **Docker** (Desktop / OrbStack / Engine) running — for Milvus.
 - **Node.js 22+** (for `npx @zilliz/claude-context-mcp`; older versions fail with `ERR_REQUIRE_ESM`).
 - macOS or Linux for `install.sh`; Windows via `install.ps1`.
-- Homebrew recommended on macOS/Linux (used for `ast-index`, `jq`, `ollama`).
+- On **macOS**, Homebrew is used for `ast-index`/`jq`/`ollama`. On **Linux** none of that needs brew — `ast-index` is fetched as a prebuilt binary, Ollama via its install script, `jq`/`curl` via apt.
 
 ## Providers
 
