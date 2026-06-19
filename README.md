@@ -108,19 +108,36 @@ If they differ: set `EMBEDDING_DIMENSION` (and the correct `EMBEDDING_MODEL`) in
 ## Architecture — what goes where
 
 ```mermaid
-flowchart LR
-    A(["AI Agent"])
-    A -->|symbols| T1["Tier 1 · ast-index"]
-    A -->|by meaning| T2["Tier 2 · claude-context"]
-    A -->|exact text / regex| T3["Tier 3 · rg / grep"]
-    T2 -->|text to embed| E{{Embedder}}
-    T2 -->|vectors| M[("Milvus<br/>etcd · minio · milvus")]
-    E --> L["Local<br/>Ollama · LM Studio"]
-    E --> C["Cloud<br/>OpenAI · Voyage · Gemini · OpenRouter"]
+flowchart TB
+    subgraph LOCAL["💻 Local machine"]
+        AGENT["AI Agent · Claude Code / Cursor"]
+        AST["Tier 1 · ast-index<br/>CLI + SQLite"]
+        CC["Tier 2 · claude-context MCP<br/>npx · Node 22+"]
+        GREP["Tier 3 · rg / grep"]
+        EMB["Embedder<br/>Ollama :11434 / LM Studio :1234"]
+        subgraph DOCKER["🐳 Docker · Milvus stack"]
+            MILVUS["milvus :19530"]
+            ETCD["etcd :2379"]
+            MINIO["minio :9000"]
+        end
+    end
+    subgraph CLOUD["☁️ Cloud — optional embedder"]
+        API["OpenAI / VoyageAI / Gemini / OpenRouter"]
+    end
+    AGENT -->|"MCP · stdio"| CC
+    AGENT -->|spawns CLI| AST
+    AGENT -->|spawns CLI| GREP
+    CC -->|"HTTP · embeddings"| EMB
+    CC -. "HTTPS (if cloud)" .-> API
+    CC -->|"gRPC :19530"| MILVUS
+    MILVUS -->|metadata| ETCD
+    MILVUS -->|"objects (S3)"| MINIO
     classDef tier fill:#eef2ff,stroke:#6366f1,color:#312e81;
     classDef infra fill:#ecfdf5,stroke:#10b981,color:#064e3b;
-    class T1,T2,T3 tier
-    class E,M,L,C infra
+    classDef cloud fill:#fef3c7,stroke:#f59e0b,color:#713f12;
+    class AST,CC,GREP tier
+    class EMB,MILVUS,ETCD,MINIO infra
+    class API cloud
 ```
 
 ## Picking a tier
