@@ -60,6 +60,14 @@ Once the MCP is loaded, the agent has these tools:
 
 For Tier 1 it calls the `ast-index` CLI; for Tier 3, `rg`/`grep`. The routing policy lives in [`rules/`](rules/) — copy `rules/AGENTS.snippet.md` into your project's `AGENTS.md` (or the compact `rules/CLAUDE.snippet.md` into `CLAUDE.md`).
 
+## Testing
+
+- **Smoke test** — runs automatically at the end of `install.sh`. Verifies your model's embedding dimension matches the configured one, and that Milvus accepts inserts + search at that dimension. Re-run anytime:
+  ```bash
+  bash scripts/smoke-test.sh --env-file .env
+  ```
+- **End-to-end** — `./scripts/e2e-test.sh` (needs Node.js 18+). Creates a tiny sample project, indexes it through the **real claude-context MCP**, runs a semantic search ("retry with exponential backoff" → expects `retry.js`), asserts the hit, then cleans up the index and files. Exercises the full agent path, not just Milvus.
+
 ## Managing the stack
 
 ```bash

@@ -189,6 +189,7 @@ Next steps:
      or check status with ${B}get_indexing_status${N}.
   3) Search semantically via ${B}search_code${N}; use ast-index for symbols, rg/grep for text.
 
+Verify end to end (needs Node.js): ${B}./scripts/e2e-test.sh${N} — indexes a sample project via claude-context, searches, cleans up.
 Rules for agents: see ${B}rules/${N} (3-tier search policy) — copy into your project's AGENTS.md / CLAUDE.md.
 Manage the stack: ${B}docker compose --env-file .env {ps,logs,down}${N} · uninstall: ${B}./uninstall.sh${N}
 EOF
