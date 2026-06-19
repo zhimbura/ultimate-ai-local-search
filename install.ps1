@@ -23,6 +23,9 @@ Say "ultimate-ai-local-search — Windows"
 if(-not (Have docker)){ Die "Docker not found. Install Docker Desktop (WSL2 backend) and re-run." }
 try { docker info *> $null } catch { Die "Docker is not running. Start Docker Desktop and re-run." }
 if(-not (Have jq)){ Say "tip: jq not required on Windows (using native JSON)" }
+# Node not used by installer, but the claude-context MCP runs via npx afterward — warn if missing.
+if((Have node) -and (Have npx)){ Ok "node present" }
+else { Write-Host "! Node.js/npx not found — not needed for this install, but REQUIRED afterward: your agent runs claude-context via 'npx'. Install Node 18+ from https://nodejs.org before using semantic search." -ForegroundColor Yellow }
 
 # ── provider selection ──
 if(-not $Provider){

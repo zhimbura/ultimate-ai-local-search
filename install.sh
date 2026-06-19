@@ -49,6 +49,17 @@ docker info >/dev/null 2>&1 || die "Docker is installed but not running. Start i
 docker compose version >/dev/null 2>&1 || die "Docker Compose v2 required (docker compose ...)."
 ok "docker + jq + curl ready"
 
+# Node is NOT used by this installer, but the claude-context MCP server is launched
+# by your agent via `npx` — warn (don't fail) if it's missing so semantic search works later.
+if have node && have npx; then
+  ok "node present ($(node --version 2>/dev/null))"
+else
+  warn "Node.js/npx not found — not needed for THIS install, but REQUIRED afterward:"
+  warn "  your AI agent runs the claude-context MCP via 'npx @zilliz/claude-context-mcp'."
+  warn "  Install Node.js 18+ (brew install node · https://nodejs.org) before using semantic search,"
+  warn "  otherwise the Milvus stack will be up but the MCP server won't start."
+fi
+
 # ─── Tier 1: ast-index (structural) ──────────────────────────────────────────
 if [ "$DO_AST" = 1 ]; then
   if have ast-index; then ok "ast-index present ($(ast-index --version 2>/dev/null || echo ok))"
