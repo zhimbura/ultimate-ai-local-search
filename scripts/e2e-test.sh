@@ -42,9 +42,15 @@ def factorial(n):
 EOF
 
 echo "▸ e2e fixture project: $FIX (retry.js / auth.js / math.py)"
+# Snapshot pre-existing MCP processes so we only clean up the one THIS test spawns
+# (never touch a real claude-context MCP your agent may be running).
+before="$(pgrep -f 'claude-context-mcp' 2>/dev/null | sort -u || true)"
 set +e
 node "$REPO_DIR/test/e2e.mjs" "$FIX" "retry a network request with exponential backoff" "retry.js"
 rc=$?
 set -e
+after="$(pgrep -f 'claude-context-mcp' 2>/dev/null | sort -u || true)"
+newpids="$(comm -13 <(printf '%s\n' "$before") <(printf '%s\n' "$after") 2>/dev/null | tr '\n' ' ')"
+[ -n "${newpids// /}" ] && kill -9 $newpids 2>/dev/null || true
 rm -rf "$TMP"
 exit "$rc"
