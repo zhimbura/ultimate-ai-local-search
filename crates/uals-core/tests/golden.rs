@@ -112,8 +112,10 @@ fn golden_files_are_well_formed() {
             per_backend.entry(hit.backend).or_default().push(hit.rank);
         }
         for (backend, ranks) in &per_backend {
-            let in_every_repo = per_repo.iter().filter(|((of, _), _)| of == backend).all(|(_, list)| are_places(list));
-            assert!(in_every_repo || are_places(ranks), "{}: ranks of {backend} have gaps", case.name);
+            let places_in_every_repo =
+                per_repo.iter().filter(|((of, _), _)| of == backend).all(|(_, list)| are_places(list));
+            let places_over_all_repos = are_places(ranks);
+            assert!(places_in_every_repo || places_over_all_repos, "{}: ranks of {backend} have gaps", case.name);
         }
     }
 }

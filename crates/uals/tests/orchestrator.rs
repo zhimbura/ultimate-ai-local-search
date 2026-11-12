@@ -2,7 +2,7 @@
 //! all repositories, fusion with symbol spans and snippets from disk, paging, the usages fallback,
 //! index status, refresh and the background index update.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -14,8 +14,8 @@ use uals::orchestrator::{Backends, Orchestrator, SearchParams, UsagesParams, sel
 use uals_core::backend::{BackendError, SearchBackend, SpanProvider, UsageSource};
 use uals_core::config::Config;
 use uals_core::types::{
-    BackendAnswer, BackendId, BackendResult, BackendStatus, Hit, IndexState, LineRange, QueryKind, Repo, SearchRequest,
-    Snippet, SymbolKind, SymbolSpan, Usage, UsageAnswer, Workspace,
+    BackendAnswer, BackendId, BackendResult, BackendStatus, Hit, IndexState, LineRange, QueryKind, Repo,
+    SearchAllAnswer, SearchRequest, Snippet, SymbolKind, SymbolSpan, Usage, UsageAnswer, Workspace,
 };
 
 type SearchReply = dyn Fn(&Repo, &SearchRequest) -> Result<BackendAnswer, BackendError> + Send + Sync;
@@ -97,11 +97,14 @@ impl SearchBackend for FakeSearch {
 type SearchAllReply = dyn Fn(&[Repo]) -> Result<BackendAnswer, BackendError> + Send + Sync;
 
 /// A search backend that searches all repositories in one call: it waits `delay`, then answers
-/// with `reply`. It records the repositories of every call.
+/// with `reply`, and with `unavailable` next to a successful reply. It records the repositories of
+/// every call.
 struct FakeSearchAll {
     id: BackendId,
     delay: Duration,
     reply: Box<SearchAllReply>,
+    /// Repositories it could not search, with the reason.
+    unavailable: BTreeMap<String, String>,
     calls: Mutex<Vec<Vec<String>>>,
 }
 
@@ -110,11 +113,23 @@ impl FakeSearchAll {
         id: BackendId,
         reply: impl Fn(&[Repo]) -> Result<BackendAnswer, BackendError> + Send + Sync + 'static,
     ) -> Self {
-        Self { id, delay: Duration::ZERO, reply: Box::new(reply), calls: Mutex::new(Vec::new()) }
+        Self {
+            id,
+            delay: Duration::ZERO,
+            reply: Box::new(reply),
+            unavailable: BTreeMap::new(),
+            calls: Mutex::new(Vec::new()),
+        }
     }
 
     fn slow(mut self, delay: Duration) -> Self {
         self.delay = delay;
+        self
+    }
+
+    /// Reports `repo` as a repository it could not search, for `reason`.
+    fn cannot_search(mut self, repo: &str, reason: &str) -> Self {
+        self.unavailable.insert(repo.into(), reason.into());
         self
     }
 
@@ -142,10 +157,11 @@ impl SearchBackend for FakeSearchAll {
         true
     }
 
-    async fn search_all(&self, repos: &[Repo], _request: &SearchRequest) -> Result<BackendAnswer, BackendError> {
+    async fn search_all(&self, repos: &[Repo], _request: &SearchRequest) -> Result<SearchAllAnswer, BackendError> {
         self.calls.lock().expect("call log").push(repos.iter().map(|repo| repo.name.clone()).collect());
         tokio::time::sleep(self.delay).await;
-        (self.reply)(repos)
+        let answer = (self.reply)(repos)?;
+        Ok(SearchAllAnswer { answer, unavailable: self.unavailable.clone() })
     }
 
     async fn index_state(&self, repo: &Repo) -> IndexState {
@@ -505,6 +521,37 @@ async fn a_failed_or_late_call_for_all_repositories_is_reported_for_every_reposi
         );
         assert!(results.iter().all(|result| result.hits.is_empty()));
     }
+}
+
+#[tokio::test]
+async fn a_repository_the_backend_could_not_search_is_unavailable_and_the_others_keep_their_hits() {
+    let repos = [repo("app", Path::new("/ws/app")), repo("web", Path::new("/ws/web"))];
+    let semble = Arc::new(
+        FakeSearchAll::new(BackendId::Semble, |repos| {
+            Ok(BackendAnswer {
+                stale: Some("index is old".into()),
+                ..answer(vec![hit(BackendId::Semble, &repos[0], "Retry.kt", (1, 9), 0)])
+            })
+        })
+        .cannot_search("web", "semble: Failed to index '/ws/web'"),
+    );
+    let natural = request("where is the backend host chosen", QueryKind::Natural);
+
+    let results = search_only(vec![semble], Config::default()).collect(&repos, &natural).await;
+
+    assert_eq!(
+        statuses(&results),
+        vec![
+            (BackendId::Semble, "app".into(), BackendStatus::Stale { reason: "index is old".into() }),
+            (
+                BackendId::Semble,
+                "web".into(),
+                BackendStatus::Unavailable { reason: "semble: Failed to index '/ws/web'".into() }
+            ),
+        ]
+    );
+    let hit_counts: Vec<usize> = results.iter().map(|result| result.hits.len()).collect();
+    assert_eq!(hit_counts, [1, 0]);
 }
 
 #[tokio::test]

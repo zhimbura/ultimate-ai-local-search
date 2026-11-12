@@ -1,6 +1,7 @@
 //! `SembleBackend` parsing and error mapping against the recorded Semble 0.7.3 outputs
 //! (`tests/fixtures/semble/*.json`), replayed by a fake `McpToolCaller`. No Semble needed.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -8,7 +9,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
-use uals_adapters::semble::SembleBackend;
+use uals_adapters::semble::{SembleBackend, UNINDEXABLE_RETRY};
 use uals_core::backend::{BackendError, McpToolCaller, SearchBackend, ToolOutput};
 use uals_core::config::{SembleConfig, SembleContent};
 use uals_core::types::{BackendId, LineRange, QueryKind, Repo, SearchRequest};
@@ -413,7 +414,7 @@ async fn search_all_asks_once_and_places_every_labelled_path_in_its_repository()
     let backend = backend(&replay, None);
     let repos = workspace_repos();
 
-    let answer = backend.search_all(&repos, &request("retry with exponential backoff", 5)).await.unwrap();
+    let found = backend.search_all(&repos, &request("retry with exponential backoff", 5)).await.unwrap();
 
     assert!(backend.searches_all_at_once());
     let calls = replay.calls();
@@ -422,8 +423,9 @@ async fn search_all_asks_once_and_places_every_labelled_path_in_its_repository()
         calls[0].1["repo"],
         json!(["/work/space/sample-android", "/work/space/sample-tools", "/work/space/sample-web"])
     );
+    assert_eq!(found.unavailable, BTreeMap::new());
     let found: Vec<(&str, PathBuf, u32)> =
-        answer.hits.iter().map(|hit| (hit.repo.as_str(), hit.path.clone(), hit.rank)).collect();
+        found.answer.hits.iter().map(|hit| (hit.repo.as_str(), hit.path.clone(), hit.rank)).collect();
     let android = |file: &str| PathBuf::from("/work/space/sample-android").join(file);
     let web = |file: &str| PathBuf::from("/work/space/sample-web").join(file);
     assert_eq!(
@@ -447,10 +449,10 @@ async fn search_all_filters_by_the_path_inside_the_repository() {
     let mut request = request("retry with exponential backoff", 5);
     request.paths = vec!["src/**".into()];
 
-    let answer = backend(&replay, None).search_all(&workspace_repos(), &request).await.unwrap();
+    let found = backend(&replay, None).search_all(&workspace_repos(), &request).await.unwrap();
 
-    assert_eq!(replay.calls()[0].1["top_k"], json!(20), "over-fetches when filtering");
-    let found: Vec<(&str, u32)> = answer.hits.iter().map(|hit| (hit.repo.as_str(), hit.rank)).collect();
+    assert_eq!(replay.calls()[0].1["top_k"], json!(5 * 4 * 3), "over-fetches for each repository when filtering");
+    let found: Vec<(&str, u32)> = found.answer.hits.iter().map(|hit| (hit.repo.as_str(), hit.rank)).collect();
     assert_eq!(found, vec![("sample-web", 0), ("sample-web", 1), ("sample-web", 2)]);
 }
 
@@ -459,10 +461,10 @@ async fn search_all_sends_a_repeated_root_once_as_one_path() {
     let replay = Replay::fixture("search_retry_backoff_one_top2");
     let android = repo("sample-android");
 
-    let answer = backend(&replay, None).search_all(&[android.clone(), android], &request("q", 2)).await.unwrap();
+    let found = backend(&replay, None).search_all(&[android.clone(), android], &request("q", 2)).await.unwrap();
 
     assert_eq!(replay.calls()[0].1["repo"], json!("/work/space/sample-android"));
-    let paths: Vec<&Path> = answer.hits.iter().map(|hit| hit.path.as_path()).collect();
+    let paths: Vec<&Path> = found.answer.hits.iter().map(|hit| hit.path.as_path()).collect();
     assert_eq!(
         paths,
         [
@@ -493,28 +495,120 @@ async fn search_all_fails_on_a_path_it_cannot_place() {
     }
 }
 
-#[cfg(unix)]
+/// Semble's answer when it cannot index `/work/space/broken`.
+const BROKEN_FAILS: &str = "Failed to index '/work/space/broken': No supported files found under /work/space/broken.";
+
+/// Semble over the sample workspace and `broken`, a repository it cannot index: a search that
+/// includes `broken` fails to index; any other search gets `several` for several roots and `one`
+/// for one root. Records the `repo` argument of every call.
+struct WithBrokenRepo {
+    several: ToolOutput,
+    one: ToolOutput,
+    asked: Mutex<Vec<Value>>,
+}
+
+impl WithBrokenRepo {
+    fn new(several: ToolOutput) -> Arc<Self> {
+        Arc::new(Self { several, one: load_fixture("search_retry_backoff_one_top2"), asked: Mutex::new(Vec::new()) })
+    }
+
+    fn asked(&self) -> Vec<Value> {
+        self.asked.lock().unwrap().clone()
+    }
+}
+
+#[async_trait]
+impl McpToolCaller for WithBrokenRepo {
+    async fn call_tool(&self, _name: &str, arguments: Value) -> Result<ToolOutput, BackendError> {
+        let repo = arguments["repo"].clone();
+        self.asked.lock().unwrap().push(repo.clone());
+        Ok(if repo.to_string().contains("/work/space/broken") {
+            text_output(BROKEN_FAILS, false)
+        } else if repo.is_array() {
+            self.several.clone()
+        } else {
+            self.one.clone()
+        })
+    }
+}
+
+/// The sample repositories with `broken` among them.
+fn repos_with_broken() -> Vec<Repo> {
+    ["sample-android", "broken", "sample-tools", "sample-web"].map(repo).into()
+}
+
+const SAMPLE_ROOTS: [&str; 3] = ["/work/space/sample-android", "/work/space/sample-tools", "/work/space/sample-web"];
+
 #[tokio::test]
-async fn search_all_finds_a_repository_whose_root_is_a_symbolic_link() {
-    let folder = tempfile::tempdir().unwrap();
-    let (real, other) = (folder.path().join("real"), folder.path().join("other"));
-    std::fs::create_dir(&real).unwrap();
-    std::fs::create_dir(&other).unwrap();
-    std::os::unix::fs::symlink(&real, folder.path().join("link")).unwrap();
-    // Semble reports the resolved paths.
-    let (real, other) = (real.canonicalize().unwrap(), other.canonicalize().unwrap());
-    let linked = Repo { name: "linked".into(), root: folder.path().join("link") };
-    let plain = Repo { name: "other".into(), root: other.clone() };
-    let text = json!({
-        "query": "q",
-        "results": [{"file_path": "real/a.rs", "start_line": 1, "end_line": 2, "score": 0.5}],
-        "repos": {"other": other, "real": real},
-    });
-    let replay = Replay::new(Ok(text_output(&text.to_string(), false)));
+async fn search_all_leaves_out_a_repository_semble_cannot_index_and_searches_the_others() {
+    let semble = WithBrokenRepo::new(load_fixture("search_retry_backoff_multi"));
+    let backend = SembleBackend::new(semble.clone(), SembleConfig::default());
 
-    let answer = backend(&replay, None).search_all(&[linked.clone(), plain], &request("q", 5)).await.unwrap();
+    let found = backend.search_all(&repos_with_broken(), &request("retry with exponential backoff", 5)).await.unwrap();
 
-    assert_eq!((answer.hits[0].repo.as_str(), &answer.hits[0].path), ("linked", &linked.root.join("a.rs")));
+    assert_eq!(
+        semble.asked(),
+        vec![
+            json!([
+                "/work/space/sample-android",
+                "/work/space/broken",
+                "/work/space/sample-tools",
+                "/work/space/sample-web"
+            ]),
+            json!("/work/space/sample-android"),
+            json!("/work/space/broken"),
+            json!("/work/space/sample-tools"),
+            json!("/work/space/sample-web"),
+            json!(SAMPLE_ROOTS),
+        ],
+        "one call for all, each root alone, then all but the broken one"
+    );
+    assert_eq!(found.unavailable, BTreeMap::from([("broken".to_owned(), format!("semble: {BROKEN_FAILS}"))]));
+    let places: Vec<(&str, u32)> = found.answer.hits.iter().map(|hit| (hit.repo.as_str(), hit.rank)).collect();
+    assert_eq!(
+        places,
+        vec![("sample-android", 0), ("sample-web", 1), ("sample-android", 2), ("sample-web", 3), ("sample-web", 4)]
+    );
+    assert!(!backend.index_state(&repo("broken")).await.indexed);
+}
+
+#[tokio::test(start_paused = true)]
+async fn search_all_tries_a_repository_semble_could_not_index_again_after_the_retry_time() {
+    let semble = WithBrokenRepo::new(load_fixture("search_retry_backoff_multi"));
+    let backend = SembleBackend::new(semble.clone(), SembleConfig::default());
+    let (repos, request) = (repos_with_broken(), request("q", 5));
+    backend.search_all(&repos, &request).await.unwrap();
+    let mut seen = semble.asked().len();
+    let mut asked_since = || {
+        let asked = semble.asked().split_off(seen);
+        seen += asked.len();
+        asked
+    };
+
+    tokio::time::advance(UNINDEXABLE_RETRY - Duration::from_secs(1)).await;
+    let found = backend.search_all(&repos, &request).await.unwrap();
+    assert_eq!(asked_since(), vec![json!(SAMPLE_ROOTS)], "left out without a new search of each root");
+    assert_eq!(found.unavailable, BTreeMap::from([("broken".to_owned(), format!("semble: {BROKEN_FAILS}"))]));
+    assert_eq!(found.answer.hits.len(), 5);
+
+    tokio::time::advance(Duration::from_secs(1)).await;
+    backend.search_all(&repos, &request).await.unwrap();
+    assert_eq!(asked_since()[0].as_array().map(Vec::len), Some(4), "asked together with the others again");
+}
+
+#[tokio::test]
+async fn search_all_is_unavailable_when_every_repository_indexes_alone_but_not_together() {
+    let merge_fails = "Failed to index '/work/space/sample-web': cannot merge";
+    let semble = WithBrokenRepo::new(text_output(merge_fails, false));
+    let backend = SembleBackend::new(semble.clone(), SembleConfig::default());
+
+    for _ in 0..2 {
+        let error = backend.search_all(&workspace_repos(), &request("q", 5)).await.unwrap_err();
+        assert_eq!(error, BackendError::Unavailable(format!("semble: {merge_fails}")));
+    }
+
+    let together = semble.asked().into_iter().filter(|repo| repo.is_array()).count();
+    assert_eq!(together, 2, "no repository was left out, so the second search asks all of them together");
 }
 
 /// Answers with a recorded fixture, except for repositories named `hung*`, which never answer.

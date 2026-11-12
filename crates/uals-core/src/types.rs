@@ -6,6 +6,7 @@
 //! - A backend's `rank` is the 0-based position in its own ranked list for ONE repository, or for
 //!   all repositories when the backend searched them in one call (`SearchBackend::search_all`).
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::path::PathBuf;
 
@@ -189,11 +190,12 @@ pub struct SearchRequest {
     pub paths: Vec<String>,
 }
 
-/// A successful backend answer for one repository, or for all repositories of one
-/// `SearchBackend::search_all` call.
+/// A successful backend answer for one repository, or the hits of one `SearchBackend::search_all`
+/// call (`SearchAllAnswer`).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct BackendAnswer {
-    /// Ordered best first; `Hit::rank` equals the position in this vector.
+    /// Ordered best first. `Hit::rank` is the position in the backend's list: in this vector, or,
+    /// for one repository's share of a `search_all` answer, in the list over all repositories.
     pub hits: Vec<Hit>,
     /// Set when the answer came from an index that may be older than the files.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -203,6 +205,15 @@ pub struct BackendAnswer {
     /// the future, so they stop on their own and report it here.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub partial: Option<String>,
+}
+
+/// The answer of one `SearchBackend::search_all` call.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SearchAllAnswer {
+    /// The hits of the repositories the backend searched, in one list over all of them.
+    pub answer: BackendAnswer,
+    /// The repositories the backend could not search, by name, with the reason. They have no hits.
+    pub unavailable: BTreeMap<String, String>,
 }
 
 /// How one backend did for one repository.

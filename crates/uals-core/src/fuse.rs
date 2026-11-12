@@ -73,24 +73,15 @@ pub fn fuse(
     candidates.into_iter().map(|candidate| candidate.fused).collect()
 }
 
-/// Replaces each hit's `rank` with its place in its backend's list over all repositories (rule 2).
-/// The hits stay where they are; only the ranks change.
+/// Orders `hits` as rule 2 says and replaces each hit's `rank` with its place in its backend's
+/// list over all repositories.
 fn rank_across_repositories(hits: &mut [Hit]) {
-    let mut order: Vec<usize> = (0..hits.len()).collect();
-    order.sort_by(|&a, &b| list_order(&hits[a], &hits[b]));
-    let mut places = vec![0u32; hits.len()];
-    let mut previous: Option<(BackendId, u32)> = None;
-    for index in order {
-        let backend = hits[index].backend;
-        let place = match previous {
-            Some((last, place)) if last == backend => place.saturating_add(1),
-            _ => 0,
-        };
-        places[index] = place;
-        previous = Some((backend, place));
-    }
-    for (hit, place) in hits.iter_mut().zip(places) {
-        hit.rank = place;
+    hits.sort_by(list_order);
+    let mut next_place: BTreeMap<BackendId, u32> = BTreeMap::new();
+    for hit in hits {
+        let place = next_place.entry(hit.backend).or_insert(0);
+        hit.rank = *place;
+        *place = place.saturating_add(1);
     }
 }
 

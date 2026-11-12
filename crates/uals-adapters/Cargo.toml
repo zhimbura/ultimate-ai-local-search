@@ -31,6 +31,8 @@ nix.workspace = true
 [dev-dependencies]
 pretty_assertions.workspace = true
 tempfile.workspace = true
+# `test-util`: paused time, to test how long the Semble adapter leaves out a repository.
+tokio = { workspace = true, features = ["test-util"] }
 
 [lints]
 workspace = true

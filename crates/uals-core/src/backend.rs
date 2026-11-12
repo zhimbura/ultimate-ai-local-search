@@ -11,7 +11,9 @@ use std::path::PathBuf;
 use async_trait::async_trait;
 use thiserror::Error;
 
-use crate::types::{BackendAnswer, BackendId, IndexState, QueryKind, Repo, SearchRequest, SymbolSpan, UsageAnswer};
+use crate::types::{
+    BackendAnswer, BackendId, IndexState, QueryKind, Repo, SearchAllAnswer, SearchRequest, SymbolSpan, UsageAnswer,
+};
 
 /// Why a backend could not answer.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -37,15 +39,15 @@ pub trait SearchBackend: Send + Sync {
 
     /// Whether `search_all` ranks the hits of several repositories against each other. When true,
     /// the orchestrator makes one `search_all` call for all repositories instead of one `search`
-    /// call per repository.
+    /// call per repository, so a backend that returns true implements `search_all`.
     fn searches_all_at_once(&self) -> bool {
         false
     }
 
-    /// Searches all `repos` in one call and returns one list over all of them, best first, with
-    /// `rank` equal to the position in that list; every hit names its repository. Only called when
-    /// `searches_all_at_once` is true.
-    async fn search_all(&self, _repos: &[Repo], _request: &SearchRequest) -> Result<BackendAnswer, BackendError> {
+    /// Searches all `repos` in one call. The hits form one list over all of them, best first, with
+    /// `rank` equal to the position in that list, and every hit names its repository. A repository
+    /// the backend cannot search goes to `SearchAllAnswer::unavailable` and does not fail the call.
+    async fn search_all(&self, _repos: &[Repo], _request: &SearchRequest) -> Result<SearchAllAnswer, BackendError> {
         Err(BackendError::Failed(format!("{} searches one repository at a time", self.id())))
     }
 

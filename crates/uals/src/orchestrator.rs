@@ -29,7 +29,7 @@ use uals_core::fuse::fuse;
 use uals_core::render::{self, Format};
 use uals_core::types::{
     BackendAnswer, BackendId, BackendReport, BackendResult, BackendStatus, Hit, IndexState, QueryKind, Repo,
-    RepoUsages, SearchRequest, SearchResponse, SymbolSpan, UsageAnswer, UsagesResponse, Workspace,
+    RepoUsages, SearchAllAnswer, SearchRequest, SearchResponse, SymbolSpan, UsageAnswer, UsagesResponse, Workspace,
 };
 
 use crate::snippets;
@@ -195,7 +195,10 @@ impl Orchestrator {
     /// material of `search`.
     pub async fn collect(&self, repos: &[Repo], request: &SearchRequest) -> Vec<BackendResult> {
         let request = Arc::new(request.clone());
-        let mut batch = Batch::new();
+        // Labelled with (place of the repository, order of the backend, backend).
+        let mut per_repo = Batch::new();
+        // Labelled with (order of the backend, backend).
+        let mut all_at_once = Batch::new();
         for (order, backend) in self.backends.search.iter().enumerate() {
             if !self.asks(backend.as_ref(), request.kind) {
                 continue;
@@ -204,32 +207,29 @@ impl Orchestrator {
             if backend.searches_all_at_once() {
                 if !repos.is_empty() {
                     let cold = repos.iter().any(|repo| self.is_cold(id, &repo.root));
-                    batch.push(
-                        (order, id, Covers::All),
-                        search_all_call(backend, repos, &request, self.deadline(id, cold)),
-                    );
+                    all_at_once.push((order, id), search_all_call(backend, repos, &request, self.deadline(id, cold)));
                 }
                 continue;
             }
             for (place, repo) in repos.iter().enumerate() {
                 let deadline = self.deadline(id, self.is_cold(id, &repo.root));
-                batch.push((order, id, Covers::One(place, repo)), search_call(backend, repo, &request, deadline));
+                per_repo.push((place, order, id), search_call(backend, repo, &request, deadline));
             }
         }
+        let (per_repo, all_at_once) = tokio::join!(per_repo.run(), all_at_once.run());
+        // Each result is keyed by (place of the repository, order of the backend).
         let mut results = Vec::new();
-        for ((order, backend, covers), timed) in batch.run().await {
-            match covers {
-                Covers::One(place, repo) => results.push((place, order, self.record_search(backend, repo, timed))),
-                Covers::All => {
-                    let split = split_by_repo(backend, repos, timed);
-                    for ((place, repo), timed) in repos.iter().enumerate().zip(split) {
-                        results.push((place, order, self.record_search(backend, repo, timed)));
-                    }
-                }
+        for ((place, order, backend), timed) in per_repo {
+            results.push(((place, order), self.record_search(backend, &repos[place], timed)));
+        }
+        for ((order, backend), timed) in all_at_once {
+            let split = split_by_repo(backend, repos, timed);
+            for ((place, repo), timed) in repos.iter().enumerate().zip(split) {
+                results.push(((place, order), self.record_search(backend, repo, timed)));
             }
         }
-        results.sort_by_key(|&(place, order, _)| (place, order));
-        results.into_iter().map(|(_, _, result)| result).collect()
+        results.sort_by_key(|&(slot, _)| slot);
+        results.into_iter().map(|(_, result)| result).collect()
     }
 
     /// Lists every usage of `symbol` in `repos`, grouped by repository, sorted by path and line.
@@ -452,13 +452,6 @@ struct RepoAnswer {
     complete: bool,
 }
 
-/// The repositories one search call covers: one, with its place in the list of repositories, or
-/// all of them.
-enum Covers<'a> {
-    One(usize, &'a Repo),
-    All,
-}
-
 /// A search call of `backend` in `repo` under `deadline`.
 fn search_call(
     backend: &Arc<dyn SearchBackend>,
@@ -476,18 +469,21 @@ fn search_all_call(
     repos: &[Repo],
     request: &Arc<SearchRequest>,
     deadline: Duration,
-) -> Call<BackendAnswer> {
+) -> Call<SearchAllAnswer> {
     let (backend, repos, request) = (Arc::clone(backend), repos.to_vec(), Arc::clone(request));
     Call::new(deadline, async move { backend.search_all(&repos, &request).await })
 }
 
 /// Splits the outcome of one `search_all` call of `backend` into one outcome per repository of
-/// `repos`, in that order: each repository gets its own hits, with their ranks over all
-/// repositories, and the call's status and time. Hits of a repository not in `repos` are dropped.
-fn split_by_repo(backend: BackendId, repos: &[Repo], timed: Timed<BackendAnswer>) -> Vec<Timed<BackendAnswer>> {
+/// `repos`, in that order, each with the call's time. A failed or late call fails every
+/// repository. A repository the backend could not search gets `Unavailable` with its reason. Every
+/// other repository gets its own hits, with their ranks over all repositories, and the call's
+/// `stale` and `partial` notes. Hits of any other repository are a backend bug: they are dropped
+/// and logged.
+fn split_by_repo(backend: BackendId, repos: &[Repo], timed: Timed<SearchAllAnswer>) -> Vec<Timed<BackendAnswer>> {
     let Timed { result, elapsed_ms } = timed;
-    let BackendAnswer { hits, stale, partial } = match result {
-        Ok(answer) => answer,
+    let SearchAllAnswer { answer: BackendAnswer { hits, stale, partial }, mut unavailable } = match result {
+        Ok(found) => found,
         Err(status) => return repos.iter().map(|_| Timed { result: Err(status.clone()), elapsed_ms }).collect(),
     };
     let mut by_repo: BTreeMap<String, Vec<Hit>> = BTreeMap::new();
@@ -497,13 +493,23 @@ fn split_by_repo(backend: BackendId, repos: &[Repo], timed: Timed<BackendAnswer>
     let split = repos
         .iter()
         .map(|repo| {
-            let hits = by_repo.remove(&repo.name).unwrap_or_default();
-            Timed { result: Ok(BackendAnswer { hits, stale: stale.clone(), partial: partial.clone() }), elapsed_ms }
+            let result = match unavailable.remove(&repo.name) {
+                Some(reason) => Err(BackendStatus::Unavailable { reason }),
+                None => {
+                    let hits = by_repo.remove(&repo.name).unwrap_or_default();
+                    Ok(BackendAnswer { hits, stale: stale.clone(), partial: partial.clone() })
+                }
+            };
+            Timed { result, elapsed_ms }
         })
         .collect();
     if !by_repo.is_empty() {
-        let unasked: Vec<&String> = by_repo.keys().collect();
-        warn!(backend = %backend, repos = ?unasked, "dropped hits of repositories that were not asked");
+        let dropped: Vec<&String> = by_repo.keys().collect();
+        warn!(
+            backend = %backend,
+            repos = ?dropped,
+            "dropped hits of repositories that were not asked or that the backend reported unavailable"
+        );
     }
     split
 }
