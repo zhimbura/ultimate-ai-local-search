@@ -282,17 +282,17 @@ mod tests {
     #[test]
     fn configured_workspace_containing_start_wins() {
         let (_dir, root) = tmp();
-        mkdir(&root, "kids/android/.git");
-        mkdir(&root, "kids/sdk/.git");
-        mkdir(&root, "kids/docs/.git");
-        mkdir(&root, "kids/android/core");
+        mkdir(&root, "work/android/.git");
+        mkdir(&root, "work/sdk/.git");
+        mkdir(&root, "work/docs/.git");
+        mkdir(&root, "work/android/core");
         let mut config = Config::default();
         config.workspaces.insert(
-            "kids".into(),
-            WorkspaceConfig { root: root.join("kids"), exclude: vec!["docs".into()], repos: vec![] },
+            "work".into(),
+            WorkspaceConfig { root: root.join("work"), exclude: vec!["docs".into()], repos: vec![] },
         );
-        let ws = discover_with_home(&root.join("kids/android/core"), &config, None).unwrap();
-        assert_eq!(ws.root, root.join("kids"));
+        let ws = discover_with_home(&root.join("work/android/core"), &config, None).unwrap();
+        assert_eq!(ws.root, root.join("work"));
         assert_eq!(names(&ws), vec!["android", "sdk"]);
     }
 
