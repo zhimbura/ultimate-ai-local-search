@@ -10,7 +10,8 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.88"
+# 1.89: std `File::try_lock` (single claude-context per machine). Builds use rust-toolchain.toml.
+rust-version = "1.89"
 license = "MIT"
 repository = "https://github.com/zhimbura/ultimate-ai-local-search"
 
