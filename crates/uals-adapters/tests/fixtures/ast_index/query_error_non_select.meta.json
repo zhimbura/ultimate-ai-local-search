@@ -1,0 +1,13 @@
+{
+  "cmd": "ast-index",
+  "args": [
+    "query",
+    "DELETE FROM files",
+    "--format",
+    "json"
+  ],
+  "project": "sample-android",
+  "exit_code": 1,
+  "stderr": "Error: Only SELECT, WITH, and EXPLAIN queries are allowed\n",
+  "duration_ms": 8
+}

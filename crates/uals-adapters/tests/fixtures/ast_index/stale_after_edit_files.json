@@ -1,0 +1,45 @@
+{
+  "columns": [
+    "path",
+    "mtime",
+    "size"
+  ],
+  "count": 7,
+  "rows": [
+    {
+      "mtime": 1794478986,
+      "path": "app/src/main/kotlin/sample/app/App.kt",
+      "size": 576
+    },
+    {
+      "mtime": 1794478986,
+      "path": "core/src/main/kotlin/sample/core/Analytics.kt",
+      "size": 303
+    },
+    {
+      "mtime": 1794478986,
+      "path": "core/src/main/kotlin/sample/core/RetryPolicy.kt",
+      "size": 543
+    },
+    {
+      "mtime": 1794478986,
+      "path": "core/src/test/kotlin/sample/core/RetryPolicyTest.kt",
+      "size": 381
+    },
+    {
+      "mtime": 1794478986,
+      "path": "network/src/main/kotlin/sample/network/ConfigLoader.kt",
+      "size": 1185
+    },
+    {
+      "mtime": 1794478986,
+      "path": "network/src/main/kotlin/sample/network/HostSelector.kt",
+      "size": 896
+    },
+    {
+      "mtime": 1794478986,
+      "path": "network/src/main/kotlin/sample/network/HostStore.kt",
+      "size": 347
+    }
+  ]
+}

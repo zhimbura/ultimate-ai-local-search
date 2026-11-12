@@ -1,0 +1,13 @@
+{
+  "cmd": "ast-index",
+  "args": [
+    "query",
+    "SELECT s.name AS child, i.parent_name, i.kind FROM inheritance i JOIN symbols s ON s.id = i.child_id ORDER BY s.name",
+    "--format",
+    "json"
+  ],
+  "project": "sample-android",
+  "exit_code": 0,
+  "stderr": "",
+  "duration_ms": 9
+}

@@ -1,0 +1,13 @@
+{
+  "cmd": "ast-index",
+  "args": [
+    "outline",
+    "network/src/main/kotlin/sample/network/HostSelector.kt",
+    "--format",
+    "json"
+  ],
+  "project": "sample-android",
+  "exit_code": 0,
+  "stderr": "",
+  "duration_ms": 15
+}

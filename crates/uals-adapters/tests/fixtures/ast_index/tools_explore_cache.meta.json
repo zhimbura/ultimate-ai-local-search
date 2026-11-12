@@ -1,0 +1,15 @@
+{
+  "cmd": "ast-index",
+  "args": [
+    "explore",
+    "lru",
+    "cache",
+    "eviction",
+    "--format",
+    "json"
+  ],
+  "project": "sample-tools",
+  "exit_code": 0,
+  "stderr": "",
+  "duration_ms": 11
+}

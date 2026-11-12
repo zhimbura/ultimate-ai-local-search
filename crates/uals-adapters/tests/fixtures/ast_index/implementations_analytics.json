@@ -1,0 +1,18 @@
+{
+  "schema_version": 2,
+  "items": [
+    {
+      "name": "LogAnalytics",
+      "kind": "class",
+      "line": 8,
+      "signature": "class LogAnalytics : Analytics {",
+      "path": "core/src/main/kotlin/sample/core/Analytics.kt"
+    }
+  ],
+  "pagination": {
+    "total": 1,
+    "returned": 1,
+    "truncated": false,
+    "limit": 20
+  }
+}

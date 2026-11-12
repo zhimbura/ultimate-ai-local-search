@@ -1,0 +1,4 @@
+Hierarchy for 'HostStore':
+
+  Children (1):
+    InMemoryHostStore [class]: network/src/main/kotlin/sample/network/HostStore.kt

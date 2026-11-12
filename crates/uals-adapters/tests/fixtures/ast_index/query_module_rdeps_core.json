@@ -1,0 +1,20 @@
+{
+  "columns": [
+    "module",
+    "depends_on",
+    "dep_kind"
+  ],
+  "count": 2,
+  "rows": [
+    {
+      "dep_kind": "implementation",
+      "depends_on": "core",
+      "module": "app"
+    },
+    {
+      "dep_kind": "implementation",
+      "depends_on": "core",
+      "module": "network"
+    }
+  ]
+}

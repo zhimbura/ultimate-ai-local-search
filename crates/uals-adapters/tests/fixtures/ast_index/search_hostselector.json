@@ -1,0 +1,74 @@
+{
+  "content_matches": [
+    {
+      "content": "class HostSelector(",
+      "line": 10,
+      "path": "network/src/main/kotlin/sample/network/HostSelector.kt"
+    },
+    {
+      "content": "* [RetryPolicy] and tries again on the next host from [HostSelector].",
+      "line": 13,
+      "path": "network/src/main/kotlin/sample/network/ConfigLoader.kt"
+    },
+    {
+      "content": "private val selector: HostSelector,",
+      "line": 16,
+      "path": "network/src/main/kotlin/sample/network/ConfigLoader.kt"
+    },
+    {
+      "content": "import sample.network.HostSelector",
+      "line": 6,
+      "path": "app/src/main/kotlin/sample/app/App.kt"
+    },
+    {
+      "content": "val selector = HostSelector(",
+      "line": 11,
+      "path": "app/src/main/kotlin/sample/app/App.kt"
+    }
+  ],
+  "files": [
+    "network/src/main/kotlin/sample/network/HostSelector.kt"
+  ],
+  "pagination": {
+    "content_matches": {
+      "limit": 20,
+      "returned": 5,
+      "total": 5,
+      "truncated": false
+    },
+    "files": {
+      "limit": 20,
+      "returned": 1,
+      "total": 1,
+      "truncated": false
+    },
+    "references": {
+      "limit": 20,
+      "returned": 1,
+      "total": 1,
+      "truncated": false
+    },
+    "symbols": {
+      "limit": 20,
+      "returned": 1,
+      "total": 1,
+      "truncated": false
+    }
+  },
+  "references": [
+    {
+      "name": "HostSelector",
+      "usage_count": 2
+    }
+  ],
+  "schema_version": 2,
+  "symbols": [
+    {
+      "kind": "class",
+      "line": 10,
+      "name": "HostSelector",
+      "path": "network/src/main/kotlin/sample/network/HostSelector.kt",
+      "signature": "class HostSelector("
+    }
+  ]
+}

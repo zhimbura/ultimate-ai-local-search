@@ -1,0 +1,25 @@
+{
+  "schema_version": 2,
+  "items": [
+    {
+      "name": "HostStore",
+      "kind": "interface",
+      "line": 4,
+      "signature": "interface HostStore {",
+      "path": "network/src/main/kotlin/sample/network/HostStore.kt"
+    },
+    {
+      "name": "InMemoryHostStore",
+      "kind": "class",
+      "line": 9,
+      "signature": "class InMemoryHostStore : HostStore {",
+      "path": "network/src/main/kotlin/sample/network/HostStore.kt"
+    }
+  ],
+  "pagination": {
+    "total": 2,
+    "returned": 2,
+    "truncated": false,
+    "limit": 20
+  }
+}

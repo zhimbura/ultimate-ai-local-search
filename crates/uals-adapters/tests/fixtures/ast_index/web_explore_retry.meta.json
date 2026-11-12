@@ -1,0 +1,15 @@
+{
+  "cmd": "ast-index",
+  "args": [
+    "explore",
+    "retry",
+    "with",
+    "backoff",
+    "--format",
+    "json"
+  ],
+  "project": "sample-web",
+  "exit_code": 0,
+  "stderr": "",
+  "duration_ms": 10
+}

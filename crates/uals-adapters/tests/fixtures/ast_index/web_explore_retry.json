@@ -1,0 +1,61 @@
+{
+  "dominant_language": "ts",
+  "files": [
+    {
+      "line": 5,
+      "path": "src/http/fetchWithRetry.ts",
+      "source": "    5\texport async function fetchWithRetry(\n    6\t  url: string,\n    7\t  attempts = 3,\n    8\t  baseDelayMs = 200,\n    9\t): Promise<Response> {\n   10\t  let lastError: unknown;\n   11\t  for (let attempt = 0; attempt < attempts; attempt++) {\n   12\t    try {\n   13\t      const response = await fetch(url);\n   14\t      if (response.status < 500) {\n   15\t        return response;\n   16\t      }\n   17\t      lastError = new Error(`server error ${response.status}`);\n   18\t    } catch (error) {\n   19\t      lastError = error;\n   20\t    }\n   21\t    await new Promise((resolve) => setTimeout(resolve, baseDelayMs * 2 ** attempt));\n   22\t  }\n   23\t  throw lastError;\n   24\t}\n",
+      "symbol": "fetchWithRetry"
+    },
+    {
+      "line": 1,
+      "outline": [
+        {
+          "end_line": 7,
+          "kind": "interface",
+          "line": 3,
+          "name": "Session"
+        },
+        {
+          "end_line": 21,
+          "kind": "function",
+          "line": 10,
+          "name": "ensureFreshSession"
+        }
+      ],
+      "outline_hidden": 0,
+      "path": "src/auth/session.ts",
+      "symbol": "../http/fetchWithRetry"
+    }
+  ],
+  "neighbours": [],
+  "query": "retry with backoff",
+  "symbols": [
+    {
+      "kind": "function",
+      "line": 5,
+      "name": "fetchWithRetry",
+      "path": "src/http/fetchWithRetry.ts",
+      "score": 18.650000000000002,
+      "vendor": false
+    },
+    {
+      "kind": "import",
+      "line": 1,
+      "name": "../http/fetchWithRetry",
+      "path": "src/auth/session.ts",
+      "score": 4.335,
+      "vendor": false
+    }
+  ],
+  "tests": [
+    {
+      "source": "src/http/fetchWithRetry.ts",
+      "tests": []
+    },
+    {
+      "source": "src/auth/session.ts",
+      "tests": []
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "schema_version": 2,
+  "items": [
+    {
+      "name": "HostSelector",
+      "line": 11,
+      "context": "val selector = HostSelector(",
+      "path": "app/src/main/kotlin/sample/app/App.kt"
+    },
+    {
+      "name": "HostSelector",
+      "line": 16,
+      "context": "private val selector: HostSelector,",
+      "path": "network/src/main/kotlin/sample/network/ConfigLoader.kt"
+    }
+  ],
+  "pagination": {
+    "total": 2,
+    "returned": 2,
+    "truncated": false,
+    "limit": 50
+  }
+}

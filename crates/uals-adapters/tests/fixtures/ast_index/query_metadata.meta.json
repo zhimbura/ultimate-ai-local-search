@@ -1,0 +1,13 @@
+{
+  "cmd": "ast-index",
+  "args": [
+    "query",
+    "SELECT key, value FROM metadata ORDER BY key",
+    "--format",
+    "json"
+  ],
+  "project": "sample-android",
+  "exit_code": 0,
+  "stderr": "",
+  "duration_ms": 11
+}

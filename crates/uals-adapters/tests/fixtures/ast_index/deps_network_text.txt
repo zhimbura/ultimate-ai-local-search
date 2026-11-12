@@ -1,0 +1,3 @@
+Dependencies of 'network' (1):
+  implementation:
+    core (core)

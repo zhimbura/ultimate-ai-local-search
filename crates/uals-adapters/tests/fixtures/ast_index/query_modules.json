@@ -1,0 +1,29 @@
+{
+  "columns": [
+    "id",
+    "name",
+    "path",
+    "kind"
+  ],
+  "count": 3,
+  "rows": [
+    {
+      "id": 2,
+      "kind": null,
+      "name": "app",
+      "path": "app"
+    },
+    {
+      "id": 1,
+      "kind": null,
+      "name": "core",
+      "path": "core"
+    },
+    {
+      "id": 3,
+      "kind": null,
+      "name": "network",
+      "path": "network"
+    }
+  ]
+}

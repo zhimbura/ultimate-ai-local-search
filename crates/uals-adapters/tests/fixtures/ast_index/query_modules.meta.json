@@ -1,0 +1,13 @@
+{
+  "cmd": "ast-index",
+  "args": [
+    "query",
+    "SELECT id, name, path, kind FROM modules ORDER BY name",
+    "--format",
+    "json"
+  ],
+  "project": "sample-android",
+  "exit_code": 0,
+  "stderr": "",
+  "duration_ms": 9
+}

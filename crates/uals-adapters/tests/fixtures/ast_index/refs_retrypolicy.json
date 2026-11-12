@@ -1,0 +1,54 @@
+{
+  "definitions": [
+    {
+      "kind": "class",
+      "line": 7,
+      "name": "RetryPolicy",
+      "path": "core/src/main/kotlin/sample/core/RetryPolicy.kt",
+      "signature": "class RetryPolicy("
+    }
+  ],
+  "imports": [],
+  "pagination": {
+    "definitions": {
+      "limit": 20,
+      "returned": 1,
+      "total": 1,
+      "truncated": false
+    },
+    "imports": {
+      "limit": 20,
+      "returned": 0,
+      "total": 0,
+      "truncated": false
+    },
+    "usages": {
+      "limit": 20,
+      "returned": 3,
+      "total": 3,
+      "truncated": false
+    }
+  },
+  "schema_version": 2,
+  "usages": [
+    {
+      "context": "val loader = ConfigLoader(selector, RetryPolicy(), HttpGet { url -> error(\"offline: $url\") })",
+      "line": 16,
+      "name": "RetryPolicy",
+      "path": "app/src/main/kotlin/sample/app/App.kt"
+    },
+    {
+      "context": "private val retry: RetryPolicy,",
+      "line": 17,
+      "name": "RetryPolicy",
+      "path": "network/src/main/kotlin/sample/network/ConfigLoader.kt"
+    },
+    {
+      "context": "val policy = RetryPolicy(maxAttempts = 5, baseDelayMs = 100, maxDelayMs = 300)",
+      "line": 9,
+      "name": "RetryPolicy",
+      "path": "core/src/test/kotlin/sample/core/RetryPolicyTest.kt",
+      "test": true
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "columns": [
+    "child",
+    "parent_name",
+    "kind"
+  ],
+  "count": 2,
+  "rows": [
+    {
+      "child": "InMemoryHostStore",
+      "kind": "implements",
+      "parent_name": "HostStore"
+    },
+    {
+      "child": "LogAnalytics",
+      "kind": "implements",
+      "parent_name": "Analytics"
+    }
+  ]
+}

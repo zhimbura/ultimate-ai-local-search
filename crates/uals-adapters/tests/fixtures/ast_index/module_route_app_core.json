@@ -1,0 +1,18 @@
+{
+  "from": "app",
+  "to": "core",
+  "paths": [
+    {
+      "hops": [
+        {
+          "from": "app",
+          "to": "core",
+          "kind": "implementation"
+        }
+      ],
+      "length": 1
+    }
+  ],
+  "count": 1,
+  "truncated": false
+}

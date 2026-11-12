@@ -1,0 +1,16 @@
+{
+  "cmd": "ast-index",
+  "args": [
+    "module-route",
+    "--from",
+    "app",
+    "--to",
+    "core",
+    "--format",
+    "json"
+  ],
+  "project": "sample-android",
+  "exit_code": 0,
+  "stderr": "",
+  "duration_ms": 7
+}

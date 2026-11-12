@@ -1,0 +1,30 @@
+{
+  "file": "sample_tools/cache.py",
+  "schema_version": 1,
+  "symbols": [
+    {
+      "end_line": 21,
+      "kind": "class",
+      "line": 4,
+      "name": "LruCache"
+    },
+    {
+      "end_line": 9,
+      "kind": "function",
+      "line": 7,
+      "name": "__init__"
+    },
+    {
+      "end_line": 15,
+      "kind": "function",
+      "line": 11,
+      "name": "get"
+    },
+    {
+      "end_line": 21,
+      "kind": "function",
+      "line": 17,
+      "name": "put"
+    }
+  ]
+}

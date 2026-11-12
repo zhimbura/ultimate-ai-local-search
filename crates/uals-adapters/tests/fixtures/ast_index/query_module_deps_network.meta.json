@@ -1,0 +1,13 @@
+{
+  "cmd": "ast-index",
+  "args": [
+    "query",
+    "SELECT m.name AS module, d.name AS depends_on, md.dep_kind FROM module_deps md JOIN modules m ON m.id = md.module_id JOIN modules d ON d.id = md.dep_module_id WHERE m.name = 'network' ORDER BY d.name",
+    "--format",
+    "json"
+  ],
+  "project": "sample-android",
+  "exit_code": 0,
+  "stderr": "",
+  "duration_ms": 10
+}

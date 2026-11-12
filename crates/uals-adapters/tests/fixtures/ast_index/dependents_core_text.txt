@@ -1,0 +1,4 @@
+Modules depending on 'core' (2):
+  via implementation (2):
+    app (app)
+    network (network)

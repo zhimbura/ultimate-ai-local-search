@@ -1,0 +1,61 @@
+{
+  "columns": [
+    "id",
+    "path",
+    "root_path",
+    "mtime",
+    "size"
+  ],
+  "count": 7,
+  "rows": [
+    {
+      "id": 4,
+      "mtime": 1794478971,
+      "path": "app/src/main/kotlin/sample/app/App.kt",
+      "root_path": "$WORKSPACE/sample-android",
+      "size": 576
+    },
+    {
+      "id": 3,
+      "mtime": 1794478971,
+      "path": "core/src/main/kotlin/sample/core/Analytics.kt",
+      "root_path": "$WORKSPACE/sample-android",
+      "size": 303
+    },
+    {
+      "id": 2,
+      "mtime": 1794478971,
+      "path": "core/src/main/kotlin/sample/core/RetryPolicy.kt",
+      "root_path": "$WORKSPACE/sample-android",
+      "size": 543
+    },
+    {
+      "id": 1,
+      "mtime": 1794478971,
+      "path": "core/src/test/kotlin/sample/core/RetryPolicyTest.kt",
+      "root_path": "$WORKSPACE/sample-android",
+      "size": 381
+    },
+    {
+      "id": 5,
+      "mtime": 1794478971,
+      "path": "network/src/main/kotlin/sample/network/ConfigLoader.kt",
+      "root_path": "$WORKSPACE/sample-android",
+      "size": 1185
+    },
+    {
+      "id": 7,
+      "mtime": 1794478971,
+      "path": "network/src/main/kotlin/sample/network/HostSelector.kt",
+      "root_path": "$WORKSPACE/sample-android",
+      "size": 896
+    },
+    {
+      "id": 6,
+      "mtime": 1794478971,
+      "path": "network/src/main/kotlin/sample/network/HostStore.kt",
+      "root_path": "$WORKSPACE/sample-android",
+      "size": 347
+    }
+  ]
+}

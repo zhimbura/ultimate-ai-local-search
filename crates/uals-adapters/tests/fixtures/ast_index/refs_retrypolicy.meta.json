@@ -1,0 +1,13 @@
+{
+  "cmd": "ast-index",
+  "args": [
+    "refs",
+    "RetryPolicy",
+    "--format",
+    "json"
+  ],
+  "project": "sample-android",
+  "exit_code": 0,
+  "stderr": "",
+  "duration_ms": 13
+}

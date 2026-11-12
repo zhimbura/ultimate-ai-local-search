@@ -1,0 +1,110 @@
+{
+  "columns": [
+    "path",
+    "name",
+    "kind",
+    "line",
+    "end_line"
+  ],
+  "count": 14,
+  "rows": [
+    {
+      "end_line": 18,
+      "kind": "class",
+      "line": 7,
+      "name": "RetryPolicy",
+      "path": "core/src/main/kotlin/sample/core/RetryPolicy.kt"
+    },
+    {
+      "end_line": 12,
+      "kind": "function",
+      "line": 12,
+      "name": "shouldRetry",
+      "path": "core/src/main/kotlin/sample/core/RetryPolicy.kt"
+    },
+    {
+      "end_line": 17,
+      "kind": "function",
+      "line": 14,
+      "name": "delayFor",
+      "path": "core/src/main/kotlin/sample/core/RetryPolicy.kt"
+    },
+    {
+      "end_line": 33,
+      "kind": "class",
+      "line": 10,
+      "name": "HostSelector",
+      "path": "network/src/main/kotlin/sample/network/HostSelector.kt"
+    },
+    {
+      "end_line": 15,
+      "kind": "property",
+      "line": 15,
+      "name": "failed",
+      "path": "network/src/main/kotlin/sample/network/HostSelector.kt"
+    },
+    {
+      "end_line": 23,
+      "kind": "function",
+      "line": 17,
+      "name": "pick",
+      "path": "network/src/main/kotlin/sample/network/HostSelector.kt"
+    },
+    {
+      "end_line": 32,
+      "kind": "function",
+      "line": 25,
+      "name": "markFailed",
+      "path": "network/src/main/kotlin/sample/network/HostSelector.kt"
+    },
+    {
+      "end_line": 7,
+      "kind": "interface",
+      "line": 4,
+      "name": "HostStore",
+      "path": "network/src/main/kotlin/sample/network/HostStore.kt"
+    },
+    {
+      "end_line": 5,
+      "kind": "function",
+      "line": 5,
+      "name": "load",
+      "path": "network/src/main/kotlin/sample/network/HostStore.kt"
+    },
+    {
+      "end_line": 6,
+      "kind": "function",
+      "line": 6,
+      "name": "save",
+      "path": "network/src/main/kotlin/sample/network/HostStore.kt"
+    },
+    {
+      "end_line": 17,
+      "kind": "class",
+      "line": 9,
+      "name": "InMemoryHostStore",
+      "path": "network/src/main/kotlin/sample/network/HostStore.kt"
+    },
+    {
+      "end_line": 10,
+      "kind": "property",
+      "line": 10,
+      "name": "host",
+      "path": "network/src/main/kotlin/sample/network/HostStore.kt"
+    },
+    {
+      "end_line": 12,
+      "kind": "function",
+      "line": 12,
+      "name": "load",
+      "path": "network/src/main/kotlin/sample/network/HostStore.kt"
+    },
+    {
+      "end_line": 16,
+      "kind": "function",
+      "line": 14,
+      "name": "save",
+      "path": "network/src/main/kotlin/sample/network/HostStore.kt"
+    }
+  ]
+}

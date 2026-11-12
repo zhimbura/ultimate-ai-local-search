@@ -1,0 +1,73 @@
+{
+  "dominant_language": "py",
+  "files": [
+    {
+      "line": 4,
+      "outline": [
+        {
+          "end_line": 21,
+          "kind": "class",
+          "line": 4,
+          "name": "LruCache"
+        },
+        {
+          "end_line": 9,
+          "kind": "function",
+          "line": 7,
+          "name": "__init__"
+        },
+        {
+          "end_line": 15,
+          "kind": "function",
+          "line": 11,
+          "name": "get"
+        },
+        {
+          "end_line": 21,
+          "kind": "function",
+          "line": 17,
+          "name": "put"
+        }
+      ],
+      "outline_hidden": 0,
+      "path": "sample_tools/cache.py",
+      "symbol": "LruCache"
+    },
+    {
+      "line": 1,
+      "path": "sample_tools/__init__.py",
+      "source": "    1\tfrom sample_tools.cache import LruCache\n",
+      "symbol": "sample_tools.cache"
+    }
+  ],
+  "neighbours": [],
+  "query": "lru cache eviction",
+  "symbols": [
+    {
+      "kind": "class",
+      "line": 4,
+      "name": "LruCache",
+      "path": "sample_tools/cache.py",
+      "score": 188.39999999999998,
+      "vendor": false
+    },
+    {
+      "kind": "import",
+      "line": 1,
+      "name": "sample_tools.cache",
+      "path": "sample_tools/__init__.py",
+      "score": 4.365,
+      "vendor": false
+    }
+  ],
+  "tests": [
+    {
+      "source": "sample_tools/cache.py",
+      "tests": []
+    },
+    {
+      "source": "sample_tools/__init__.py",
+      "tests": []
+    }
+  ]
+}
