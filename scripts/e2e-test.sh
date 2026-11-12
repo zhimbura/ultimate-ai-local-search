@@ -1,17 +1,20 @@
 #!/usr/bin/env bash
 # End-to-end acceptance test: create a tiny project → index it via the real
 # claude-context MCP → semantic search → assert → clean up (index + files).
-# Needs Node.js 18+ (the MCP server runs via npx). Run AFTER ./install.sh.
+# Needs Node.js 22+ (the MCP server runs via npx). Run AFTER ./install.sh.
 set -euo pipefail
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="$REPO_DIR/.env"
+# shellcheck source=lib/env.sh
+. "$REPO_DIR/scripts/lib/env.sh"
 
 [ -f "$ENV_FILE" ] || { echo "✗ no .env — run ./install.sh first" >&2; exit 1; }
-command -v node >/dev/null || { echo "✗ Node.js 18+ required (claude-context runs via npx). Install node and retry." >&2; exit 1; }
+command -v node >/dev/null || { echo "✗ Node.js 22+ required (claude-context runs via npx). Install node and retry." >&2; exit 1; }
+node_major="$(node --version | sed 's/^v//; s/\..*//')"
+[ "${node_major:-0}" -ge 22 ] 2>/dev/null || { echo "✗ Node $(node --version) is too old — Node.js 22+ required (claude-context needs require(ESM))." >&2; exit 1; }
 
 # export config so the spawned claude-context MCP picks it up
-# shellcheck disable=SC1090
-set -a; . "$ENV_FILE"; set +a
+env_load_file "$ENV_FILE"
 
 TMP="$(mktemp -d)"
 FIX="$TMP/sample-project"

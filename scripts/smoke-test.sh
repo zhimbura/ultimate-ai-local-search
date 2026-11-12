@@ -3,12 +3,14 @@
 # AND verify Milvus actually accepts inserts/search at that dimension.
 # A wrong dim makes every insert fail silently; this surfaces it in seconds.
 set -euo pipefail
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=lib/env.sh
+. "$REPO_DIR/scripts/lib/env.sh"
 
 ENV_FILE=""
 while [ $# -gt 0 ]; do case "$1" in --env-file) ENV_FILE="$2"; shift 2;; *) shift;; esac; done
 [ -n "$ENV_FILE" ] && [ -f "$ENV_FILE" ] || { echo "✗ env file not found: $ENV_FILE" >&2; exit 1; }
-# shellcheck disable=SC1090
-set -a; . "$ENV_FILE"; set +a
+env_load_file "$ENV_FILE"
 
 # proxy-safe curl: '*' is QUOTED inside the function so the shell never globs it
 # against files in the cwd (that bug skipped real requests in v1 of this script).
@@ -27,15 +29,22 @@ case "${EMBEDDING_PROVIDER:-}" in
       -H 'Content-Type: application/json' \
       -d "{\"model\":\"$EMBEDDING_MODEL\",\"prompt\":\"test\"}" 2>/dev/null | jq -r '.embedding|length' 2>/dev/null || true);;
   OpenAI|OpenRouter)
-    base="${OPENAI_BASE_URL:-https://api.openai.com/v1}"
-    [ "${EMBEDDING_PROVIDER}" = OpenRouter ] && base="${OPENAI_BASE_URL:-https://openrouter.ai/api/v1}"
+    base="${OPENAI_BASE_URL:-https://api.openai.com/v1}"; key="${OPENAI_API_KEY:-x}"
+    if [ "${EMBEDDING_PROVIDER}" = OpenRouter ]; then
+      base="${OPENAI_BASE_URL:-https://openrouter.ai/api/v1}"; key="${OPENROUTER_API_KEY:-x}"
+    fi
     actual_dim=$(_curl "$base/embeddings" \
-      -H 'Content-Type: application/json' -H "Authorization: Bearer ${OPENAI_API_KEY:-x}" \
+      -H 'Content-Type: application/json' -H "Authorization: Bearer $key" \
       -d "{\"model\":\"$EMBEDDING_MODEL\",\"input\":\"test\"}" 2>/dev/null | jq -r '.data[0].embedding|length' 2>/dev/null || true);;
   VoyageAI)
     actual_dim=$(_curl "https://api.voyageai.com/v1/embeddings" \
       -H 'Content-Type: application/json' -H "Authorization: Bearer ${VOYAGEAI_API_KEY:-x}" \
       -d "{\"model\":\"$EMBEDDING_MODEL\",\"input\":[\"test\"]}" 2>/dev/null | jq -r '.data[0].embedding|length' 2>/dev/null || true);;
+  Gemini)
+    # embedContent returns {"embedding":{"values":[...]}}; key goes in a header, not the URL
+    actual_dim=$(_curl "https://generativelanguage.googleapis.com/v1beta/models/${EMBEDDING_MODEL#models/}:embedContent" \
+      -H 'Content-Type: application/json' -H "x-goog-api-key: ${GEMINI_API_KEY:-x}" \
+      -d "{\"content\":{\"parts\":[{\"text\":\"test\"}]}}" 2>/dev/null | jq -r '.embedding.values|length' 2>/dev/null || true);;
   *) echo "• dim auto-check skipped for provider '${EMBEDDING_PROVIDER:-?}' (verify manually)";;
 esac
 
