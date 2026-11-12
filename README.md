@@ -1,163 +1,382 @@
-# ultimate-ai-local-search
+# uals
 
-One-command **local code search for AI coding agents** — three complementary tiers, no lock-in:
+uals (ultimate-ai-local-search) is one code search for AI coding agents. It is a Rust MCP server and a command line tool.
 
-| Tier | Tool | Best for |
-|------|------|----------|
-| 1 | **ast-index** | symbols & structure — classes, functions, usages, call-tree (fast, exact) |
-| 2 | **claude-context + Milvus** | semantic "find by meaning" — concepts when you don't know the symbol name |
-| 3 | **rg/grep** | exact text — strings, regex, error messages, non-code files |
+It searches every repository in a folder at once, with three backends: symbols (ast-index), text (an in-process search built on the ripgrep crates) and meaning (Semble by default, claude-context with Milvus as an option). It fuses the answers into one ranked list with code snippets.
 
-Embeddings can run **fully local** (Ollama / LM Studio) or via a **cloud provider** (OpenAI / VoyageAI / Gemini / OpenRouter) — you choose at install time. "Local" in the name = the vector DB and index live on your machine; the search never leaves it unless you pick a cloud embedder.
+uals is not a hosted service. It has no account, no server of its own and no telemetry. It opens no network ports.
 
-> Why it exists: wiring claude-context + Milvus + a local embedder by hand is a minefield — the classic failure is an **embedding-dimension mismatch** that makes every insert silently fail (indexing reports "done", search returns nothing). This repo encodes the working setup and a **smoke test that catches that bug at install time**.
+## How it works
 
-![Deployment architecture: an AI agent calls ast-index, claude-context (MCP) and rg/grep on the local machine; claude-context uses a local Ollama/LM Studio or a cloud embedder, and Milvus runs in Docker with etcd and minio](docs/architecture.svg)
+```mermaid
+flowchart LR
+    agent["AI agent"] -->|"MCP over stdio"| uals["uals mcp"]
+    uals --> ast["ast-index<br/>symbols"]
+    uals --> lex["lexical<br/>text"]
+    uals --> sem["semantic<br/>Semble or claude-context"]
+    ast --> fusion["fusion<br/>weighted RRF"]
+    lex --> fusion
+    sem --> fusion
+    fusion --> answer["one ranked answer<br/>with snippets"]
+    answer --> agent
+```
 
-## Quick start
+**Query kinds.** uals decides the kind of a query from its text. The `kind` parameter overrides this.
+
+| Query | Kind | Backends asked (fusion weight) |
+|---|---|---|
+| `/retry.*/` | regex | lexical (1.0) |
+| `"exact text"` | literal | lexical (1.0) |
+| `HostSelector`, `mark_failed`, `sample.core.Analytics`, `retry()` | identifier | ast-index (1.0), lexical (0.7), semantic (0.3) |
+| `retry`, `where is the retry logic` | natural | ast-index (0.7), semantic (1.0) |
+
+A single token is an identifier when it has an uppercase letter, `_`, `$`, a separator (`.`, `::`, `#`) or `()`. One plain lowercase word is a natural query. A weight of 0 means the backend is not asked. The weights are in the config (`fusion.weights`).
+
+**Fusion.** Every backend gives one list over all repositories. A hit adds `weight / (k + rank + 1)` to its score, with `k = 60`. Raw backend scores do not count. Ranks that come from one repository at a time are interleaved: the first hits of all repositories, then the second hits.
+
+**Merge by symbol.** Hits that point into the same enclosing symbol (class, function) become one result, whichever backend found them. Hits outside any known symbol join when their line ranges are at most 3 lines apart. A result lists its sources, for example `ast-index#1 lexical#1 semble#2`.
+
+**Pinning.** For identifier queries, up to 3 results that define the exact name come first.
+
+**Output limit and paging.** A page has 12 results by default and at most 30. The answer ends with `next: offset=N` when more results remain. One answer is cut to 24 000 characters: snippets go first, from the last result upwards, then whole results. The first result always stays.
+
+**Backend status.** Every answer has a `backends:` line. It lists each repository and each backend with its state (`ok`, `stale`, `partial`, `timeout`, `unavailable`, `failed`), the reason and the time.
+
+**Partial answers.** Each backend has a deadline per call: ast-index 2 s, lexical 1.5 s, semantic 4 s (5 s for the first call). A backend that misses its deadline or fails loses only its own results. The answer goes out without them, and the `backends:` line says why.
+
+## Install
 
 ```bash
 git clone https://github.com/zhimbura/ultimate-ai-local-search.git
 cd ultimate-ai-local-search
-./install.sh            # interactive: pick a provider
-# or non-interactive:
-./install.sh --provider ollama --yes
+./install.sh
 ```
 
-Windows (PowerShell, Docker Desktop + WSL2):
+Then restart your agent. `install.sh` runs on macOS and Linux from a checkout.
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\install.ps1
-```
+**What it installs and where:**
 
-The installer: checks deps → installs/sets up your embedder → starts Milvus (Docker) → merges the `claude-context` MCP block into `~/.claude.json` (backup first) → runs a smoke test. Then **restart your agent** and index a project.
+- The `uals` binary in `~/.local/bin`: a release archive checked by SHA-256, or built from this checkout with `--from-source`.
+- ast-index 3.56.0, unless ast-index 3.56.0 or newer is already on `PATH`.
+- The semantic backend. For `semble` (default): uv 0.10.5 when uv is missing, then `uv tool install 'semble[mcp]==0.7.3'`. For `claude-context`: see below.
+- `~/.config/uals/config.toml` with absolute tool paths, only when no config exists. An existing config is never changed. API keys stay out of it.
+- The `uals` entry in the Claude Code config (`~/.claude.json`), with a timestamped backup.
+- `~/.local/share/uals/install-manifest`: a record of what the installer created, used by `uninstall.sh`.
 
-## Requirements
+At the end it runs `uals doctor` and exits with its code. It never edits shell rc files: if `~/.local/bin` is not on your `PATH`, add it yourself.
 
-- **Docker** (Desktop / OrbStack / Engine) running — for Milvus.
-- **Node.js 22+** (for `npx @zilliz/claude-context-mcp`; older versions fail with `ERR_REQUIRE_ESM`).
-- macOS or Linux for `install.sh`; Windows via `install.ps1`.
-- On **macOS**, Homebrew is used for `ast-index`/`jq`/`ollama`. On **Linux** none of that needs brew — `ast-index` is fetched as a prebuilt binary, Ollama via its install script, `jq`/`curl` via apt.
+**Flags:**
 
-## Providers
+| Flag | Meaning |
+|---|---|
+| `--semantic semble\|claude-context\|none` | Semantic backend. Default: `semble`. |
+| `-y`, `--yes` | Never prompt. |
+| `--from-source` | Build uals from this checkout with cargo (`--locked`). |
+| `--version <tag>` | Release to install. Default: the latest GitHub release. Before the first release, use `--from-source`. |
+| `--bin-dir <dir>` | Where binaries go. Default: `~/.local/bin`. |
+| `--skip-ast-index` | Do not install ast-index. |
+| `--no-mcp` | Do not register uals in the Claude Code config. |
+| `--remove-claude-context` | Remove direct claude-context MCP entries from that config. |
+| `--no-doctor` | Do not run `uals doctor` at the end. |
+| `--provider`, `--model`, `--dimension` | claude-context only: the embedder (`ollama`, `lmstudio`, `openai`, `voyageai`, `gemini`, `openrouter`). |
+| `-h`, `--help` | Show the help. |
 
-| Choice | Provider | Default model | Dim | Notes |
-|--------|----------|---------------|-----|-------|
-| 1 | Ollama (local) | `nomic-embed-text` | 768 | headless, simplest, free |
-| 2 | LM Studio (local) | `text-embedding-nomic-embed-text-v1.5` | 768 | OpenAI-compatible REST :1234 |
-| 3 | OpenAI | `text-embedding-3-small` | 1536 | needs `OPENAI_API_KEY` |
-| 4 | VoyageAI | `voyage-code-3` | 1024 | best quality for code |
-| 5 | Gemini | `text-embedding-004` | 768 | needs `GEMINI_API_KEY` |
-| 6 | OpenRouter | `openai/text-embedding-3-small` | 1536 | proxy to many providers |
+Environment: `UALS_DOWNLOAD_BASE` (release download base URL, for tests), `CLAUDE_CONFIG` (the Claude Code config; default `~/.claude.json`) and the API keys of the embedder providers.
 
-Switch later by editing `.env` and re-running `./install.sh` (or `scripts/configure-mcp.sh`).
+**Re-run safety.** You can run `install.sh` again. It skips what is installed, keeps your config and records only what it created.
 
-## How your agent uses it
+**The claude-context option.** `./install.sh --semantic claude-context` also sets up:
 
-Once the MCP is loaded, the agent has these tools:
+- Docker with one Milvus container (`docker-compose.yml`), bound to `127.0.0.1` only.
+- An embedder: Ollama or LM Studio on your machine, or a cloud provider with your key.
+- Node 22.12.0 or newer, and `@zilliz/claude-context-mcp` 0.1.15 installed with npm into `~/.local/share/uals/claude-context`. uals never runs `npx` at run time.
 
-- `index_codebase` — index a project (path = absolute root)
-- `get_indexing_status` — progress / completion
-- `search_code` — semantic search (Tier 2)
+Only one uals process at a time may run claude-context. Milvus is slower to set up than Semble, and on the benchmark below it was not better. Pick it only if you have a reason.
 
-For Tier 1 it calls the `ast-index` CLI; for Tier 3, `rg`/`grep`. The routing policy lives in [`rules/`](rules/) — copy `rules/AGENTS.snippet.md` into your project's `AGENTS.md` (or the compact `rules/CLAUDE.snippet.md` into `CLAUDE.md`).
+## Use
 
-## Testing
+### MCP tools
 
-- **Smoke test** — runs automatically at the end of `install.sh`. Verifies your model's embedding dimension matches the configured one, and that Milvus accepts inserts + search at that dimension. Re-run anytime:
-  ```bash
-  bash scripts/smoke-test.sh --env-file .env
-  ```
-- **Tier 1 (ast-index)** — `./scripts/ast-test.sh`. Builds an index over a sample project and asserts symbol search finds a known function/symbol. Skips cleanly if ast-index isn't installed.
-- **Tier 2 end-to-end** — `./scripts/e2e-test.sh` (needs **Node.js 22+**). Creates a tiny sample project, indexes it through the **real claude-context MCP**, runs a semantic search ("retry with exponential backoff" → expects `retry.js`), asserts the hit, then cleans up index + files. Exercises the full agent path, not just Milvus.
+The server name is `uals`. Claude Code shows the tools as `mcp__uals__search`, `mcp__uals__usages` and `mcp__uals__status`.
 
-## Managing the stack
+**`search`**
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `query` | required | What to look for. See the query kinds above. |
+| `workspace` | see below | The folder whose repositories are searched. |
+| `repos` | all | Names of the repositories to search, as `status` lists them. |
+| `kind` | `auto` | `auto`, `identifier`, `natural`, `regex` or `literal`. |
+| `paths` | every file | Globs relative to each repository root, gitignore style: `src/**/*.kt` selects, `!**/test/**` excludes. |
+| `limit` | 12 | Results per page. At most 30. |
+| `offset` | 0 | Results to skip: the `next: offset=N` of the previous page. |
+| `format` | `concise` | `concise`, `detailed` (adds scores, raw source ranks and longer snippets) or `json`. |
+
+**`usages`** lists every usage of a symbol, grouped by repository and file. It uses the ast-index index of a repository when there is one, and a whole-word text search otherwise. Each repository names the source that answered.
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `symbol` | required | The symbol, for example `HostSelector` or `markFailed`. |
+| `workspace`, `repos` | as in `search` | |
+| `limit` | 100 | Usages per page. At most 1000. |
+| `offset` | 0 | Usages to skip. |
+| `format` | `concise` | As in `search`. |
+
+**`status`** shows, for every repository, whether each backend has an index, when it was updated, and why a backend is not available. Parameters: `workspace`, `repos`, `format`.
+
+### Command line
+
+The commands take the same parameters as the tools and print the same text. List-valued parameters are repeated flags (`--repo`, `--path`).
 
 ```bash
-docker compose --env-file .env ps         # status of etcd + minio + milvus
-docker compose --env-file .env logs milvus
-docker compose --env-file .env down       # stop (keeps indexed data)
-./uninstall.sh                            # stop + remove MCP entry (keeps volumes)
-./uninstall.sh --purge                    # also delete indexed vectors (irreversible)
+uals search HostSelector                          # an identifier
+uals search "where is the retry logic"            # by meaning
+uals search '/retry\(.*\)/' --path 'src/**/*.kt'  # a regex in some files
+uals search '"connection refused"' --limit 5      # an exact string
+uals search HostSelector --repo android --format json
+uals usages markFailed --workspace ~/code
+uals status
+uals refresh                  # update the indexes
+uals refresh --full           # rebuild them
+uals workspace                # print the repositories uals found, as JSON
+uals doctor                   # check the installation
+uals mcp                      # run the MCP server on stdin and stdout
+uals hook post-edit           # Claude Code hook, reads JSON on stdin
 ```
+
+`uals refresh` exits with 1 when a backend failed. A backend that is unavailable is reported but is not a failure. `uals doctor` takes `--format concise|detailed|json`. The global option `--config <file>` works with every command.
+
+### Which folder is searched
+
+1. The `workspace` parameter or the `--workspace` flag.
+2. In the MCP server: the first local root folder of the client, when the client lists its roots within 2 seconds.
+3. `$UALS_WORKSPACE`.
+4. The folder the process runs in.
+
+uals finds the repositories of that folder like this. The first rule that applies wins:
+
+1. A configured workspace (`[workspaces.<name>]`) whose root is the folder or one of its parents.
+2. The nearest folder at or above it with `.git` (never the home folder or `/`): that one repository.
+3. Repositories below the folder, up to 2 levels down: folders with `.git`, `settings.gradle(.kts)`, `build.gradle(.kts)`, `pom.xml`, `package.json`, `Cargo.toml`, `go.mod`, `pyproject.toml`, `setup.py`, `Package.swift` or `pubspec.yaml`. Hidden folders and `build`, `node_modules`, `target`, `dist`, `out`, `vendor`, `Pods`, `DerivedData` are skipped.
+4. The folder itself, when it has one of these markers.
+
+`uals workspace` shows the result.
+
+### Register the MCP server by hand
+
+`install.sh` does this for you. For Claude Code:
+
+```bash
+claude mcp add --scope user uals -- ~/.local/bin/uals mcp
+```
+
+Or add this to the `mcpServers` object in `~/.claude.json`, with the absolute path of the binary:
+
+```json
+{
+  "mcpServers": {
+    "uals": {
+      "type": "stdio",
+      "command": "/absolute/path/to/uals",
+      "args": ["mcp"],
+      "env": {}
+    }
+  }
+}
+```
+
+For any other MCP client, start `uals mcp` as a stdio server with the same command and arguments. Put variables such as `UALS_WORKSPACE`, `UALS_CONFIG` or `UALS_LOG` in the `env` object.
+
+## Configuration
+
+uals reads one TOML file. It looks for it in this order:
+
+1. `--config <file>`
+2. `$UALS_CONFIG`
+3. `$XDG_CONFIG_HOME/uals/config.toml`
+4. `~/.config/uals/config.toml`
+
+A missing default file means all defaults. A missing file named with `--config` is an error. Every key has a default, so the file lists only what you change. An unknown key is an error.
+
+**Secrets never go into the file.** List the names of environment variables in `pass_env`: uals copies them from its own environment to the backend process.
+
+The values below are the defaults, except where a comment says otherwise.
+
+```toml
+[semantic]
+default = "semble"              # "semble", "claude-context" or "none"
+
+[semantic.semble]
+command = ["semble"]            # the Semble MCP server (stdio)
+env = {}                        # literal values only, no secrets
+pass_env = []
+# content = "code"              # "code", "docs", "config" or "all"; unset: Semble's own default
+
+[semantic.claude_context]       # used only when default = "claude-context"
+node = "node"
+# entry = "/absolute/path/to/claude-context-mcp/dist/index.js"   # default: the npm install under ~/.local/share/uals/claude-context
+env = { MILVUS_ADDRESS = "127.0.0.1:19530" }   # example; the default is an empty table
+pass_env = ["OPENAI_API_KEY"]                  # example; the default is an empty list
+ignore_patterns = ["**/build/**", "**/node_modules/**", "**/.gradle/**"]
+custom_extensions = [".kts"]
+
+[ast_index]
+binary = "ast-index"
+update_on_start = true          # update existing ast-index indexes when `uals mcp` starts
+
+[lexical]
+max_matches_per_file = 10
+max_hits_per_file = 3
+max_candidates = 500
+max_line_chars = 300
+max_file_size_bytes = 2097152   # larger files are skipped
+# [[lexical.downrank]]          # paths whose hits rank lower; setting this replaces the built-in rules
+# pattern = '(^|/)generated/'
+# factor = 0.3                  # in (0, 1]
+
+[deadlines]
+ast_index_ms = 2000
+lexical_ms = 1500
+semantic_ms = 4000
+semantic_cold_ms = 5000         # the first semantic call
+
+[fusion]
+rrf_k = 60.0
+fetch_factor = 5                # each backend is asked for output.max_limit * fetch_factor hits per repository
+max_pinned = 3
+merge_gap_lines = 3
+
+[fusion.weights.identifier]     # a tier you write lists all three weights: omitted ones become 0
+ast_index = 1.0
+lexical = 0.7
+semantic = 0.3
+
+[fusion.weights.natural]
+ast_index = 0.7
+lexical = 0.0
+semantic = 1.0
+
+[fusion.weights.regex]
+ast_index = 0.0
+lexical = 1.0
+semantic = 0.0
+
+[fusion.weights.literal]
+ast_index = 0.0
+lexical = 1.0
+semantic = 0.0
+
+[output]
+default_limit = 12
+max_limit = 30
+max_snippet_lines = 20
+max_output_chars = 24000
+
+# Optional: name a workspace, or list its repositories yourself.
+# [workspaces.work]
+# root = "/absolute/path/to/work"
+# exclude = ["docs"]            # folders discovery skips
+# [[workspaces.work.repos]]     # when set, discovery is skipped
+# name = "android"
+# path = "android"              # absolute, or relative to root
+```
+
+The lexical `downrank` list has built-in rules for build output, generated code, tests, translations and tool folders. See `crates/uals-core/src/config.rs` for the list.
+
+## Keeping indexes fresh
+
+- **On start.** When `uals mcp` starts, and `ast_index.update_on_start` is true, it updates the ast-index index of every repository that already has one. It does not create indexes. It does not prepare the home folder, `/` or a folder above the home folder, and it does not prepare a workspace with more than 16 repositories (its backends start on first use).
+- **By hand.** `uals refresh` updates the indexes of all backends. `uals refresh --full` rebuilds them. Use `--workspace` and `--repo <name>` to narrow it. ast-index needs this once per repository: it never creates an index by itself. Semble builds its index on the first search.
+- **After each edit (optional).** `uals hook post-edit` is a Claude Code `PostToolUse` hook. It reads the hook input on stdin, finds the repository of the edited file and runs an incremental `ast-index update` there. It does nothing when the repository has no index or the file is in no repository. Add it to `~/.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|MultiEdit|Write|NotebookEdit",
+        "hooks": [
+          { "type": "command", "command": "uals hook post-edit" }
+        ]
+      }
+    ]
+  }
+}
+```
+
+If `uals` is not on the `PATH` of Claude Code, write the full path in `command`. The hook stops its update after 50 seconds, before the default hook timeout of Claude Code (60 seconds).
 
 ## Troubleshooting
 
-**Indexing says "completed" but `search_code` returns nothing (and Milvus `rowCount` is 0).**
-This is the dimension-mismatch bug. The Milvus collection was created with one vector dimension, but your model emits another, so every insert is rejected. Diagnose:
+- `uals doctor` checks the config, ast-index, the semantic backend and the MCP registration. One line per check: `✓` ok, `!` warning, `✗` failure, `-` skipped. It exits with 1 when a check failed.
+- `uals status` shows what each backend knows about each repository. `not indexed (no index; run ...)` means run `uals refresh`.
+- `uals workspace` shows which repositories uals found. If the list is wrong, pass `--workspace` or add a `[workspaces.<name>]` entry.
+- Logs go to stderr, never to stdout (stdout carries the MCP protocol). The default level is `warn`. For more: `UALS_LOG=debug uals search HostSelector`. In an MCP client, set `UALS_LOG` in the `env` of the server entry and read the client's MCP log.
+- A `backends:` line with `timeout` means that backend missed its deadline. The first Semble search of a repository builds its index and can be slow; raise `deadlines.semantic_cold_ms` or run `uals refresh` first.
+
+## Privacy
+
+- Everything runs on your machine. The MCP transport is stdio. uals opens no ports.
+- Milvus (claude-context option only) listens on `127.0.0.1` only. `uals doctor` probes Milvus and a local embedder over plain HTTP on `127.0.0.1`.
+- `install.sh` downloads from: GitHub releases (the uals archive and ast-index), PyPI through uv (Semble), npm (`@zilliz/claude-context-mcp`) and Docker Hub (the Milvus image). When uv is missing, `install.sh` also installs it; the script names the source. The uals archive is checked by SHA-256.
+- Semble downloads its embedding model on first use.
+- With claude-context and a cloud embedder (OpenAI, VoyageAI, Gemini, OpenRouter), code chunks are sent to that provider. With Ollama or LM Studio they stay on your machine.
+- uals sends no telemetry.
+- The benchmark queries are private. Only aggregate numbers are published.
+
+## Benchmark
+
+The semantic backend was chosen with a rule written before the measurement: claude-context becomes the default only if it beats Semble on natural-language queries, with the lower bound of the 95% confidence interval above 0. It did not. Semble stays the default.
+
+MRR of the first expected file, 40 queries of half B of a private gold set over 4 repositories:
+
+| type | n | no semantics | Semble | claude-context |
+|---|---:|---:|---:|---:|
+| identifier | 10 | 1.000 | 0.950 | 0.950 |
+| natural | 10 | 0.053 | 0.008 | 0.021 |
+| cross_repo | 10 | 0.361 | 0.392 | 0.317 |
+| config | 10 | 0.000 | 0.013 | 0.000 |
+| all | 40 | 0.354 | 0.341 | 0.322 |
+
+On this set no semantic backend beats fused search without semantics, and every configuration misses most natural queries. Setup, weights and notes: [docs/semantic-gate.md](docs/semantic-gate.md).
+
+## Uninstall
 
 ```bash
-# real model dimension (Ollama example)
-curl -s --noproxy '*' http://127.0.0.1:11434/api/embeddings \
-  -d '{"model":"nomic-embed-text","prompt":"test"}' | jq '.embedding|length'
-# collection dimension
-curl -s --noproxy '*' http://127.0.0.1:19530/v2/vectordb/collections/describe \
-  -H 'Content-Type: application/json' -d '{"collectionName":"<name>"}' \
-  | jq '.data.fields[] | select(.type|test("FloatVector")) | .params'
+./uninstall.sh              # undo what the install manifest records
+./uninstall.sh --yes        # without prompts
+./uninstall.sh --purge      # also delete the Milvus volume (your claude-context index)
 ```
 
-If they differ: set `EMBEDDING_DIMENSION` (and the correct `EMBEDDING_MODEL`) in `.env`, then
-`./uninstall.sh --purge && ./install.sh` to recreate the collection. `scripts/smoke-test.sh` checks this for you.
+It removes the uals entry from the Claude Code config, restores claude-context entries that the installer removed, deletes the files the installer created, removes uv and Semble when the installer installed them, and stops the Docker stack when the installer started it. `--purge` is irreversible.
 
-> Gotcha for OpenAI-compatible providers: claude-context reads the model from **`EMBEDDING_MODEL`** (not `OPENAI_EMBEDDING_MODEL`). A wrong var name → it falls back to `text-embedding-3-small` (dim 1536) regardless of what your local server actually loads. The installer always sets `EMBEDDING_MODEL`.
+## Development
 
-**`localhost` flaky / connection hangs.** Use `127.0.0.1`, not `localhost` — on some machines `localhost` resolves to IPv6 `::1` first and stalls. All defaults here use `127.0.0.1`.
-
-**Milvus won't go healthy.** It's three containers (etcd + minio + milvus); first boot can take 1–2 min. Check `docker compose --env-file .env logs milvus`.
-
-**LM Studio: "No models loaded".** The embedding model must be loaded and the server running: `lms get <model>` then `lms server start`.
-
-## Architecture — what goes where
-
-```mermaid
-flowchart TB
-    subgraph LOCAL["💻 Local machine"]
-        AGENT["AI Agent · Claude Code / Cursor"]
-        AST["Tier 1 · ast-index<br/>CLI + SQLite"]
-        CC["Tier 2 · claude-context MCP<br/>npx · Node 22+"]
-        GREP["Tier 3 · rg / grep"]
-        EMB["Embedder<br/>Ollama :11434 / LM Studio :1234"]
-        subgraph DOCKER["🐳 Docker · Milvus stack"]
-            MILVUS["milvus :19530"]
-            ETCD["etcd :2379"]
-            MINIO["minio :9000"]
-        end
-    end
-    subgraph CLOUD["☁️ Cloud — optional embedder"]
-        API["OpenAI / VoyageAI / Gemini / OpenRouter"]
-    end
-    AGENT -->|"MCP · stdio"| CC
-    AGENT -->|spawns CLI| AST
-    AGENT -->|spawns CLI| GREP
-    CC -->|"HTTP · embeddings"| EMB
-    CC -. "HTTPS (if cloud)" .-> API
-    CC -->|"gRPC :19530"| MILVUS
-    MILVUS -->|metadata| ETCD
-    MILVUS -->|"objects (S3)"| MINIO
-    classDef tier fill:#eef2ff,stroke:#6366f1,color:#312e81;
-    classDef infra fill:#ecfdf5,stroke:#10b981,color:#064e3b;
-    classDef cloud fill:#fef3c7,stroke:#f59e0b,color:#713f12;
-    class AST,CC,GREP tier
-    class EMB,MILVUS,ETCD,MINIO infra
-    class API cloud
+```bash
+cargo build --locked
+cargo test --workspace --locked
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo fmt --all --check
+cargo deny check                 # licenses, advisories, sources (deny.toml)
+scripts/check-private.sh         # no absolute home paths or private names in tracked files
+git config core.hooksPath .githooks   # run check-private.sh before every commit
 ```
 
-## Picking a tier
+`rust-toolchain.toml` pins the Rust toolchain. CI runs fmt, clippy and tests on Linux and macOS, plus cargo-deny, `check-private.sh` and shellcheck.
 
-```mermaid
-flowchart TD
-    Q(["Search query"]) --> D{"What are you<br/>looking for?"}
-    D -->|a symbol name| A["ast-index · Tier 1"]
-    D -->|a concept, by meaning| V["claude-context vector · Tier 2"]
-    D -->|exact string / regex / config| G["rg / grep · Tier 3"]
-    classDef t1 fill:#eef2ff,stroke:#6366f1,color:#312e81;
-    classDef t2 fill:#fef3c7,stroke:#f59e0b,color:#713f12;
-    classDef t3 fill:#f1f5f9,stroke:#64748b,color:#1e293b;
-    class A t1
-    class V t2
-    class G t3
-```
+**Crates:**
 
-## License
+| Crate | Role |
+|---|---|
+| `crates/uals-core` | Types, config, query classification, workspace discovery, fusion, merge and output. No I/O to backends. |
+| `crates/uals-adapters` | The backends: ast-index, lexical search, Semble, claude-context, and the MCP child process they use. |
+| `crates/uals` | The binary: the CLI, the MCP server, the orchestrator and the hook. |
+| `crates/uals-bench` | `uals-bench`: runs a gold query set, compares runs and writes reports. |
 
-MIT © 2026 zhimbura. Bundles/configures third-party tools (ast-index, claude-context, Milvus, Ollama/LM Studio) under their own licenses.
+**Test fixtures:** a sample workspace of three small repositories is in `tests/fixtures/workspace/`. Recorded outputs of ast-index, Semble and claude-context are in `crates/uals-adapters/tests/fixtures/`. Golden cases for classification and fusion are in `crates/uals-core/tests/golden/`. Test files with `live` in the name need the real tools.
+
+## Platforms and license
+
+macOS and Linux. Windows is not supported yet. Release binaries: macOS (arm64, x86_64) and Linux with musl (x86_64, arm64).
+
+MIT. See [LICENSE](LICENSE). uals configures third-party tools (ast-index, Semble, claude-context, Milvus, Ollama, LM Studio) that have their own licenses.
