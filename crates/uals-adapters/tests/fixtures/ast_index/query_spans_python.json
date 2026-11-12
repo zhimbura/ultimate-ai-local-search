@@ -1,0 +1,10 @@
+{
+  "columns": ["path", "name", "kind", "line", "end_line"],
+  "count": 4,
+  "rows": [
+    {"end_line": 1, "kind": "import", "line": 1, "name": "LruCache", "path": "sample_tools/__init__.py"},
+    {"end_line": 20, "kind": "class", "line": 4, "name": "LruCache", "path": "sample_tools/cache.py"},
+    {"end_line": null, "kind": "function", "line": 9, "name": "get", "path": "sample_tools/cache.py"},
+    {"end_line": 3, "kind": "package", "line": 1, "name": "sample_tools", "path": "sample_tools/cache.py"}
+  ]
+}
