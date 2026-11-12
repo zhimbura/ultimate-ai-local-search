@@ -23,6 +23,8 @@ struct FakeCaller {
     calls: Mutex<Vec<(String, Value)>>,
     /// Calls about this path never answer.
     hung_path: Mutex<Option<String>>,
+    /// Stopped by the first call: Milvus goes down while the server handles it.
+    milvus_to_stop: Mutex<Option<FakeMilvus>>,
 }
 
 impl FakeCaller {
@@ -41,6 +43,11 @@ impl FakeCaller {
 
     fn hang_on(self: &Arc<Self>, path: &str) -> &Arc<Self> {
         *self.hung_path.lock().unwrap() = Some(path.to_string());
+        self
+    }
+
+    fn stop_milvus_on_call(self: &Arc<Self>, milvus: FakeMilvus) -> &Arc<Self> {
+        *self.milvus_to_stop.lock().unwrap() = Some(milvus);
         self
     }
 
@@ -69,6 +76,7 @@ impl McpToolCaller for FakeCaller {
     async fn call_tool(&self, name: &str, arguments: Value) -> Result<ToolOutput, BackendError> {
         let hung = self.hung_path.lock().unwrap().as_deref() == arguments["path"].as_str();
         self.calls.lock().unwrap().push((name.to_string(), arguments));
+        drop(self.milvus_to_stop.lock().unwrap().take());
         if hung {
             std::future::pending::<()>().await;
         }
@@ -441,24 +449,40 @@ async fn a_reply_without_text_is_a_failure() {
 }
 
 #[tokio::test]
-async fn recorded_milvus_crashes_are_unavailable() {
+async fn a_dead_server_is_unavailable_with_its_own_text_while_milvus_runs() {
     let milvus = FakeMilvus::start();
-    // `TransportClosed` as rmcp reported it when claude-context died without Milvus.
+    // `TransportClosed` as rmcp reported it when claude-context died.
+    let closed = unavailable(load_fixture("milvus_down_search_code_after_1s").unwrap_err());
+
     let caller = FakeCaller::new();
     caller.reply("search_code", "milvus_down_search_code_after_1s");
     let error = backend(&caller, &milvus).search(&repo(), &request(10)).await.unwrap_err();
-    assert!(unavailable(error).contains("Transport closed"));
+    assert_eq!(unavailable(error), closed);
 
     let caller = FakeCaller::new();
     caller.reply("get_indexing_status", "milvus_down_first_call_get_indexing_status");
     let state = backend(&caller, &milvus).index_state(&repo()).await;
     assert!(!state.indexed);
-    assert!(state.detail.unwrap().contains("not running"));
+    assert_eq!(state.detail, Some(closed.clone()));
 
     let caller = FakeCaller::new();
     caller.reply("get_indexing_status", "milvus_hung_first_call_get_indexing_status");
     let error = backend(&caller, &milvus).refresh(&repo(), false).await.unwrap_err();
-    assert!(unavailable(error).contains("not running"));
+    assert_eq!(unavailable(error), closed);
+}
+
+#[tokio::test]
+async fn a_server_that_dies_as_milvus_stops_names_milvus_as_the_cause() {
+    let milvus = FakeMilvus::start();
+    let address = milvus.address.clone();
+    let caller = FakeCaller::new();
+    caller.reply("search_code", "milvus_down_search_code_after_1s").stop_milvus_on_call(milvus);
+    let backend = ClaudeContextBackend::new(caller.clone(), config_with(&address));
+
+    let message = unavailable(backend.search(&repo(), &request(10)).await.unwrap_err());
+
+    assert!(message.starts_with(&format!("Milvus is not reachable at {address}")), "{message}");
+    assert!(message.ends_with("the claude-context server exits without Milvus (Transport closed)"), "{message}");
 }
 
 #[tokio::test]
@@ -471,8 +495,8 @@ async fn errors_from_the_caller_keep_their_kind_and_text() {
     caller.reply_with("search_code", Err(BackendError::Failed("Transport closed".into())));
     let backend = backend(&caller, &milvus);
 
-    let gone = unavailable(backend.search(&repo(), &request(10)).await.unwrap_err());
-    assert!(gone.contains("server gone") && gone.contains("Milvus"), "{gone}");
+    // Milvus runs, so the server's own reason is the whole message.
+    assert_eq!(unavailable(backend.search(&repo(), &request(10)).await.unwrap_err()), "server gone");
     assert_eq!(failed(backend.search(&repo(), &request(10)).await.unwrap_err()), "protocol error");
     assert_eq!(failed(backend.search(&repo(), &request(10)).await.unwrap_err()), "Transport closed");
 }

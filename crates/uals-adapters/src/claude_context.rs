@@ -11,8 +11,9 @@
 //!   `pass_env`, else `127.0.0.1:19530`; 300 ms). Without Milvus the server process crashes about
 //!   150 ms after start and every call dies with `TransportClosed`, so a failed probe answers
 //!   `Unavailable` and no tool is called.
-//! - A closed transport (`TransportClosed`) reaches the adapter as `Unavailable` from the caller; the
-//!   adapter adds that the server exits when Milvus is down.
+//! - A closed transport (`TransportClosed`) reaches the adapter as `Unavailable` from the caller.
+//!   On any `Unavailable` from the caller the adapter probes Milvus again: when Milvus is down, the
+//!   message names it as the cause; otherwise the message passes unchanged.
 //!
 //! # Tools used
 //!
@@ -144,9 +145,25 @@ impl ClaudeContextBackend {
         self.probe_milvus().await.map_err(BackendError::Unavailable)
     }
 
-    /// Calls a server tool; a dead server is reported as `Unavailable`.
+    /// Calls a server tool. The server exits when Milvus is down, so an unavailable server is
+    /// reported with Milvus as the cause when Milvus does not answer either.
     async fn call(&self, tool: &str, arguments: serde_json::Value) -> Result<ToolOutput, BackendError> {
-        self.caller.call_tool(tool, arguments).await.map_err(add_milvus_hint_to_unavailable)
+        match self.caller.call_tool(tool, arguments).await {
+            Err(BackendError::Unavailable(message)) => {
+                Err(BackendError::Unavailable(self.with_milvus_cause(message).await))
+            }
+            result => result,
+        }
+    }
+
+    /// `message` of an unavailable server, led by the probe failure when Milvus is down.
+    async fn with_milvus_cause(&self, message: String) -> String {
+        match self.probe_milvus().await {
+            Ok(()) => message,
+            Err(milvus) => {
+                format!("{milvus}; the claude-context server exits without Milvus ({})", abbreviate(&message))
+            }
+        }
     }
 
     /// The indexing status of the repository.
@@ -413,17 +430,6 @@ fn joined_text(output: &ToolOutput) -> Result<String, BackendError> {
         return Err(BackendError::Failed("claude-context returned no text".into()));
     }
     Ok(output.texts.join("\n"))
-}
-
-/// The caller reports a dead server as `Unavailable`; the message says why it matters here.
-fn add_milvus_hint_to_unavailable(error: BackendError) -> BackendError {
-    match error {
-        BackendError::Unavailable(message) => BackendError::Unavailable(format!(
-            "the claude-context server is not running ({}); it exits when Milvus is down",
-            abbreviate(&message)
-        )),
-        other => other,
-    }
 }
 
 /// The user's home directory (`HOME`, or `USERPROFILE` on Windows).

@@ -177,7 +177,11 @@ pub struct SearchRequest {
     /// How many hits to return for this repository: `output.max_limit × fusion.fetch_factor`,
     /// the same for every page of a query.
     pub fetch_limit: usize,
-    /// Optional globs relative to the repository root. Empty means the whole repository.
+    /// Gitignore-style globs, matched against the path relative to the repository root. A glob
+    /// that starts with `!` deselects. A glob matches a file when it matches the file or one of
+    /// its folders, and the last glob that matches decides; a file no glob matches is not
+    /// selected. When every glob is a negation, selection starts from every file. Empty means the
+    /// whole repository.
     #[serde(default)]
     pub paths: Vec<String>,
 }
