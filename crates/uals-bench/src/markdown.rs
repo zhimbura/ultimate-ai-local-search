@@ -105,7 +105,7 @@ pub fn render(reports: &[Report]) -> String {
         }
         for r in reports.iter().filter(|r| !r.usages.is_empty()) {
             let _ = write!(out, "\n### Usages per symbol: {}\n\n", r.name);
-            out.push_str("| id | file R | file P | line R | line P | expected lines | found lines |\n|---|---:|---:|---:|---:|---:|---:|---:|\n");
+            out.push_str("| id | file R | file P | line R | line P | expected lines | found lines |\n|---|---:|---:|---:|---:|---:|---:|\n");
             for u in &r.usages {
                 if u.failed {
                     let _ = writeln!(out, "| {} | err | err | err | err | - | - |", u.id);

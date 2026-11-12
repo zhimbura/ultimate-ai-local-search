@@ -23,6 +23,12 @@ pub trait Engine {
     /// receives for one response.
     fn output(&self) -> &OutputConfig;
 
+    /// Brings the engine to the state in which it answers at its best, e.g. waits until its
+    /// indexes are built. Does nothing by default.
+    fn warm_up(&self) -> impl Future<Output = Result<()>> + Send {
+        async { Ok(()) }
+    }
+
     /// Runs a search for `query` (kind detected when `None`) returning at most `limit` hits.
     fn search(
         &self,
@@ -155,6 +161,13 @@ impl Engine for AnyEngine {
         match self {
             AnyEngine::Mock(engine) => engine.output(),
             AnyEngine::Real(engine) => engine.output(),
+        }
+    }
+
+    async fn warm_up(&self) -> Result<()> {
+        match self {
+            AnyEngine::Mock(engine) => engine.warm_up().await,
+            AnyEngine::Real(engine) => engine.warm_up().await,
         }
     }
 

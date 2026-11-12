@@ -80,12 +80,12 @@ pub struct UsageSummary {
     pub line_precision: f64,
 }
 
-/// Wall time of the search calls, in milliseconds. `cold_ms` is the first successful call of the
-/// run; it depends on the query order and on which backends were already warm.
+/// Wall time of the search calls, in milliseconds. `cold_ms` is the first selected query on the
+/// engine before its warm-up; it depends on the query order and on which backends were already warm.
 /// `first_*` is over the first call of every query; `warm_*` over the repeated calls.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Latency {
-    /// The first successful call of this run; `None` when every call failed.
+    /// The first selected query on the engine before its warm-up; `None` when that call failed.
     pub cold_ms: Option<f64>,
     /// Median of the first calls.
     pub first_p50_ms: Option<f64>,
