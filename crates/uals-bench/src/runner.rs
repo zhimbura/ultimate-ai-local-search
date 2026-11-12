@@ -6,15 +6,19 @@ use anyhow::Result;
 
 use crate::engine::Engine;
 use crate::gold::{GoldQuery, GoldUsages, Half, QueryType};
-use crate::metrics::{first_correct_rank, score_usages, tokens_of};
+use crate::metrics::{UsageScore, first_correct_rank, score_usages, tokens_of};
 use crate::report::{Filters, QueryResult, Report, SCHEMA_VERSION, summarize};
 
+/// Settings of one run.
 #[derive(Debug, Clone)]
 pub struct RunOptions {
+    /// Name of the run, shown in reports.
     pub name: String,
     /// Label of the engine for the report, e.g. `mock:responses.json`.
     pub engine: String,
+    /// Only the queries of this half; all halves when `None`.
     pub half: Option<Half>,
+    /// Only queries of these types; all types when empty.
     pub types: Vec<QueryType>,
     /// How many extra passes over all queries to time as warm calls.
     pub warm_repeats: usize,
@@ -42,63 +46,10 @@ pub async fn run<E: Engine>(
     options: &RunOptions,
 ) -> Result<Report> {
     let selected = filter_queries(queries, options.half, &options.types);
-    let mut results = Vec::with_capacity(selected.len());
-    let mut cold_ms = None;
-    for gold in &selected {
-        let started = Instant::now();
-        let outcome = engine.search(&gold.query, None, options.limit).await;
-        let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
-        cold_ms.get_or_insert(elapsed_ms);
-        results.push(match outcome {
-            Ok(response) => QueryResult {
-                id: gold.id.clone(),
-                kind: gold.kind,
-                half: gold.half,
-                rank_primary: first_correct_rank(engine.repos(), &response.hits, &gold.expected, false),
-                rank_any: first_correct_rank(engine.repos(), &response.hits, &gold.expected, true),
-                tokens: tokens_of(&response),
-                latency_ms: elapsed_ms,
-                failed: false,
-            },
-            Err(error) => {
-                eprintln!("query {}: {error:#}", gold.id);
-                QueryResult {
-                    id: gold.id.clone(),
-                    kind: gold.kind,
-                    half: gold.half,
-                    rank_primary: None,
-                    rank_any: None,
-                    tokens: 0,
-                    latency_ms: elapsed_ms,
-                    failed: true,
-                }
-            }
-        });
-    }
-
-    let mut warm_ms = Vec::new();
-    for _ in 0..options.warm_repeats {
-        for (gold, result) in selected.iter().zip(&results) {
-            if result.failed {
-                continue;
-            }
-            let started = Instant::now();
-            if engine.search(&gold.query, None, options.limit).await.is_ok() {
-                warm_ms.push(started.elapsed().as_secs_f64() * 1000.0);
-            }
-        }
-    }
-
-    let mut usage_scores = Vec::with_capacity(usages.len());
-    for gold in usages {
-        match engine.usages(&gold.symbol, options.usages_limit).await {
-            Ok(response) => usage_scores.push(score_usages(engine.repos(), gold, &response)),
-            Err(error) => {
-                eprintln!("usages {}: {error:#}", gold.id);
-                usage_scores.push(score_usages(engine.repos(), gold, &empty_usages(&gold.symbol)));
-            }
-        }
-    }
+    let results = run_first_pass(engine, &selected, options.limit).await;
+    let cold_ms = results.first().map(|result| result.latency_ms);
+    let warm_ms = time_warm_passes(engine, &selected, &results, options).await;
+    let usage_scores = score_all_usages(engine, usages, options.usages_limit).await;
 
     let summary = summarize(&results, &usage_scores, cold_ms, &warm_ms);
     Ok(Report {
@@ -114,6 +65,84 @@ pub async fn run<E: Engine>(
     })
 }
 
+/// Milliseconds since `started`.
+fn elapsed_ms(started: Instant) -> f64 {
+    started.elapsed().as_secs_f64() * 1000.0
+}
+
+/// Runs each query once and scores the response; a failed call becomes a miss.
+async fn run_first_pass<E: Engine>(engine: &E, selected: &[&GoldQuery], limit: usize) -> Vec<QueryResult> {
+    let mut results = Vec::with_capacity(selected.len());
+    for gold in selected {
+        let started = Instant::now();
+        let outcome = engine.search(&gold.query, None, limit).await;
+        let latency_ms = elapsed_ms(started);
+        let mut result = QueryResult {
+            id: gold.id.clone(),
+            kind: gold.kind,
+            half: gold.half,
+            rank_primary: None,
+            rank_any: None,
+            tokens: 0,
+            latency_ms,
+            failed: false,
+        };
+        match outcome {
+            Ok(response) => {
+                result.rank_primary = first_correct_rank(engine.repos(), &response.hits, &gold.expected, false);
+                result.rank_any = first_correct_rank(engine.repos(), &response.hits, &gold.expected, true);
+                result.tokens = tokens_of(&response);
+            }
+            Err(error) => {
+                eprintln!("query {}: {error:#}", gold.id);
+                result.failed = true;
+            }
+        }
+        results.push(result);
+    }
+    results
+}
+
+/// Times `options.warm_repeats` extra passes over the queries that did not fail the first pass.
+/// `results[i]` is the first-pass result of `selected[i]`.
+async fn time_warm_passes<E: Engine>(
+    engine: &E,
+    selected: &[&GoldQuery],
+    results: &[QueryResult],
+    options: &RunOptions,
+) -> Vec<f64> {
+    let mut warm_ms = Vec::new();
+    for _ in 0..options.warm_repeats {
+        for (gold, result) in selected.iter().zip(results) {
+            if result.failed {
+                continue;
+            }
+            let started = Instant::now();
+            if engine.search(&gold.query, None, options.limit).await.is_ok() {
+                warm_ms.push(elapsed_ms(started));
+            }
+        }
+    }
+    warm_ms
+}
+
+/// Scores the usages of every gold symbol; a failed call scores as an empty answer.
+async fn score_all_usages<E: Engine>(engine: &E, usages: &[GoldUsages], limit: usize) -> Vec<UsageScore> {
+    let mut scores = Vec::with_capacity(usages.len());
+    for gold in usages {
+        let response = match engine.usages(&gold.symbol, limit).await {
+            Ok(response) => response,
+            Err(error) => {
+                eprintln!("usages {}: {error:#}", gold.id);
+                empty_usages(&gold.symbol)
+            }
+        };
+        scores.push(score_usages(engine.repos(), gold, &response));
+    }
+    scores
+}
+
+/// The answer that counts for a usages call that failed: nothing found, marked incomplete.
 fn empty_usages(symbol: &str) -> uals_core::types::UsagesResponse {
     uals_core::types::UsagesResponse {
         symbol: symbol.to_string(),

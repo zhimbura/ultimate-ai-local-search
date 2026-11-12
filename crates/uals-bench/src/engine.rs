@@ -16,6 +16,7 @@ pub trait Engine {
     /// The repositories of the workspace; their roots turn absolute hit paths into relative ones.
     fn repos(&self) -> &[Repo];
 
+    /// Runs a search for `query` (kind detected when `None`) returning at most `limit` hits.
     fn search(
         &self,
         query: &str,
@@ -23,6 +24,7 @@ pub trait Engine {
         limit: usize,
     ) -> impl Future<Output = Result<SearchResponse>> + Send;
 
+    /// Finds the usages of `symbol`, at most `limit` of them.
     fn usages(&self, symbol: &str, limit: usize) -> impl Future<Output = Result<UsagesResponse>> + Send;
 }
 
@@ -35,18 +37,23 @@ pub trait Engine {
 /// ```
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MockEngine {
+    /// The workspace repositories.
     pub repos: Vec<Repo>,
+    /// Canned search responses by query text.
     #[serde(default)]
     pub search: HashMap<String, SearchResponse>,
+    /// Canned usages responses by symbol.
     #[serde(default)]
     pub usages: HashMap<String, UsagesResponse>,
 }
 
 impl MockEngine {
+    /// Parses a mock responses document.
     pub fn from_json(text: &str) -> Result<Self> {
         serde_json::from_str(text).context("invalid mock responses JSON")
     }
 
+    /// Reads and parses a mock responses file.
     pub fn from_file(path: &Path) -> Result<Self> {
         let text = std::fs::read_to_string(path).with_context(|| format!("cannot read {}", path.display()))?;
         Self::from_json(&text).with_context(|| format!("in {}", path.display()))
@@ -80,6 +87,7 @@ impl Engine for MockEngine {
 /// An engine picked on the command line.
 #[derive(Debug, Clone)]
 pub enum AnyEngine {
+    /// Replays canned responses.
     Mock(MockEngine),
 }
 

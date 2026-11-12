@@ -10,21 +10,27 @@ use serde::{Deserialize, Serialize};
 use crate::gold::{Half, QueryType};
 use crate::metrics::{RankStats, UsageScore, mean, percentile, rank_stats};
 
+/// The report format version; `Report::load` rejects other versions.
 pub const SCHEMA_VERSION: u32 = 1;
 
 /// Which part of the gold set a run covered.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Filters {
+    /// Only this half was run; all halves when `None`.
     pub half: Option<Half>,
+    /// Only these types were run; all types when empty.
     pub types: Vec<QueryType>,
 }
 
 /// The outcome of one query.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct QueryResult {
+    /// The gold query id.
     pub id: String,
+    /// The query type.
     #[serde(rename = "type")]
     pub kind: QueryType,
+    /// The gold set half of the query.
     pub half: Half,
     /// 1-based rank of the first hit matching a `primary` entry.
     pub rank_primary: Option<u32>,
@@ -41,20 +47,30 @@ pub struct QueryResult {
 /// Aggregates over a group of queries.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Group {
+    /// Number of queries.
     pub n: usize,
+    /// Number of queries whose call failed.
     pub failed: usize,
+    /// Ranks counting `primary` entries only.
     pub primary: RankStats,
+    /// Ranks counting `primary` and `secondary` entries.
     pub with_secondary: RankStats,
+    /// Mean response size in tokens (characters / 4).
     pub mean_tokens: f64,
 }
 
 /// Usage scores averaged over symbols (each symbol weighs the same).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct UsageSummary {
+    /// Number of symbols averaged.
     pub symbols: usize,
+    /// Mean of `UsageScore::file_recall`.
     pub file_recall: f64,
+    /// Mean of `UsageScore::file_precision`.
     pub file_precision: f64,
+    /// Mean of `UsageScore::line_recall`.
     pub line_recall: f64,
+    /// Mean of `UsageScore::line_precision`.
     pub line_precision: f64,
 }
 
@@ -62,36 +78,59 @@ pub struct UsageSummary {
 /// `first_*` is over the first call of every query; `warm_*` over the repeated calls.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Latency {
+    /// The first call of the run.
     pub cold_ms: Option<f64>,
+    /// Median of the first calls.
     pub first_p50_ms: Option<f64>,
+    /// 95th percentile of the first calls.
     pub first_p95_ms: Option<f64>,
+    /// Number of repeated calls timed.
     pub warm_samples: usize,
+    /// Median of the repeated calls.
     pub warm_p50_ms: Option<f64>,
+    /// 95th percentile of the repeated calls.
     pub warm_p95_ms: Option<f64>,
 }
 
+/// The aggregates of a run.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Summary {
+    /// All queries of the run.
     pub overall: Group,
+    /// Per query type, keyed by `QueryType::as_str`.
     pub by_type: BTreeMap<String, Group>,
+    /// Per half, keyed by `Half::as_str`.
     pub by_half: BTreeMap<String, Group>,
+    /// `None` when the run had no gold usages.
     pub usages: Option<UsageSummary>,
+    /// Timings of the search calls.
     pub latency: Latency,
 }
 
+/// Everything one run produced.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Report {
+    /// Equals `SCHEMA_VERSION`.
     pub schema_version: u32,
+    /// Name of the run.
     pub name: String,
+    /// Label of the engine that answered.
     pub engine: String,
+    /// Which part of the gold set was run.
     pub filters: Filters,
+    /// Hits requested per query.
     pub limit: usize,
+    /// Extra timed passes over all queries.
     pub warm_repeats: usize,
+    /// One result per selected query, in gold order.
     pub queries: Vec<QueryResult>,
+    /// One score per gold symbol.
     pub usages: Vec<UsageScore>,
+    /// The aggregates of `queries` and `usages`.
     pub summary: Summary,
 }
 
+/// Aggregates `queries` into one group.
 pub fn group_of(queries: &[&QueryResult]) -> Group {
     let ranks = |f: fn(&QueryResult) -> Option<u32>| queries.iter().map(|q| f(q)).collect::<Vec<_>>();
     let tokens: Vec<f64> = queries.iter().map(|q| q.tokens as f64).collect();
@@ -104,6 +143,7 @@ pub fn group_of(queries: &[&QueryResult]) -> Group {
     }
 }
 
+/// The mean usage scores; `None` when there are none.
 fn usage_summary(scores: &[UsageScore]) -> Option<UsageSummary> {
     if scores.is_empty() {
         return None;
@@ -145,6 +185,7 @@ pub fn summarize(queries: &[QueryResult], usages: &[UsageScore], cold_ms: Option
 }
 
 impl Report {
+    /// Reads a report from `path`; fails on unreadable files and unsupported schema versions.
     pub fn load(path: &Path) -> Result<Report> {
         let text = std::fs::read_to_string(path).with_context(|| format!("cannot read {}", path.display()))?;
         let report: Report =
@@ -159,6 +200,7 @@ impl Report {
         Ok(report)
     }
 
+    /// Writes the report to `path` as pretty JSON.
     pub fn save(&self, path: &Path) -> Result<()> {
         let text = serde_json::to_string_pretty(self)?;
         std::fs::write(path, text + "\n").with_context(|| format!("cannot write {}", path.display()))

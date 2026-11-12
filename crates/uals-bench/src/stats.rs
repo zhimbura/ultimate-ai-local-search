@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::metrics::mean;
 
+/// How many bootstrap resamples to draw.
 pub const RESAMPLES: usize = 10_000;
 /// Fixed seed: the same inputs always give the same interval.
 pub const SEED: u64 = 0x5EED_0FA1;
@@ -13,8 +14,11 @@ pub const SEED: u64 = 0x5EED_0FA1;
 /// Result of a paired bootstrap of `mean(b) - mean(a)`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Bootstrap {
+    /// Number of pairs.
     pub n: usize,
+    /// Mean of the first sample.
     pub mean_a: f64,
+    /// Mean of the second sample.
     pub mean_b: f64,
     /// `mean_b - mean_a`.
     pub diff: f64,

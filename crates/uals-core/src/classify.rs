@@ -1,5 +1,5 @@
-//! Query classification. `classify` is implemented by track T6; the rules below and the cases in
-//! `tests/golden/classify.json` are the contract. `bare_name` is part of the frozen core.
+//! Query classification. The rules below and the cases in `tests/golden/classify.json` are the
+//! contract.
 //!
 //! `classify(raw, None)` trims `raw`, then the first matching rule wins:
 //! 1. **Regex**: starts and ends with `/`, with at least one character between. Text: the inside.
@@ -24,6 +24,7 @@ use crate::types::QueryKind;
 /// A classified query.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Classified {
+    /// The kind that was detected, or the one the caller forced.
     pub kind: QueryKind,
     /// The text sent to backends as `SearchRequest::query`.
     pub text: String,
@@ -45,6 +46,7 @@ pub fn classify(raw: &str, forced: Option<QueryKind>) -> Classified {
     }
 }
 
+/// Applies the rules in order; the first match wins.
 fn detect(trimmed: &str) -> Classified {
     if let Some(inside) = regex_inside(trimmed) {
         return Classified { kind: QueryKind::Regex, text: inside.to_string() };
@@ -84,13 +86,16 @@ fn is_identifier(token: &str) -> bool {
         if rest.is_empty() {
             break;
         }
-        let Some(after_separator) = rest.strip_prefix("::").or_else(|| rest.strip_prefix(['.', '#'])) else {
-            return false;
-        };
+        let Some(after_separator) = skip_separator(rest) else { return false };
         has_separator = true;
         rest = after_separator;
     }
     has_call || has_separator || body.chars().any(|c| c == '_' || c == '$' || c.is_ascii_uppercase())
+}
+
+/// The text after one leading `::`, `.` or `#`, or `None` when `text` does not start with one.
+fn skip_separator(text: &str) -> Option<&str> {
+    text.strip_prefix("::").or_else(|| text.strip_prefix(['.', '#']))
 }
 
 /// The text after one leading segment, or `None` when `text` does not start with a segment.

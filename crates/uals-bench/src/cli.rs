@@ -16,10 +16,12 @@ use crate::runner::{RunOptions, run};
 #[derive(Debug, Parser)]
 #[command(name = "uals-bench", version, about)]
 pub struct Cli {
+    /// The subcommand to run.
     #[command(subcommand)]
     pub command: Command,
 }
 
+/// The `--half` choice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum HalfFilter {
     #[value(name = "A")]
@@ -30,6 +32,7 @@ pub enum HalfFilter {
     All,
 }
 
+/// The subcommands of `uals-bench`.
 #[derive(Debug, Subcommand)]
 pub enum Command {
     /// Run a gold set against an engine and write a report.
@@ -88,6 +91,7 @@ pub enum Command {
     },
 }
 
+/// Reads and validates a gold JSONL file; errors name the file and line.
 fn read_gold<T>(path: &Path) -> Result<Vec<T>>
 where
     T: crate::gold::Record + for<'de> serde::Deserialize<'de>,
@@ -97,36 +101,16 @@ where
     parse_jsonl(&text, &name)
 }
 
+/// Runs the subcommand of `cli`.
 pub async fn execute(cli: Cli) -> Result<()> {
     match cli.command {
         Command::Run { gold, usages, engine, name, out, half, types, warm_repeats, limit, usages_limit } => {
             let queries: Vec<GoldQuery> = read_gold(&gold)?;
             let usage_gold: Vec<GoldUsages> = usages.as_deref().map(read_gold).transpose()?.unwrap_or_default();
             let backend = AnyEngine::from_spec(&engine)?;
-            let options = RunOptions {
-                name,
-                engine,
-                half: match half {
-                    HalfFilter::A => Some(Half::A),
-                    HalfFilter::B => Some(Half::B),
-                    HalfFilter::All => None,
-                },
-                types,
-                warm_repeats,
-                limit,
-                usages_limit,
-            };
+            let options = RunOptions { name, engine, half: half.into(), types, warm_repeats, limit, usages_limit };
             let report = run(&backend, &queries, &usage_gold, &options).await?;
-            let overall = &report.summary.overall;
-            eprintln!(
-                "{}: {} queries, MRR {:.3}, Hit@1 {:.3}, Hit@10 {:.3}, {} failed",
-                report.name,
-                overall.n,
-                overall.primary.mrr,
-                overall.primary.hit_at_1,
-                overall.primary.hit_at_10,
-                overall.failed
-            );
+            eprintln!("{}", overall_line(&report));
             match out {
                 Some(path) => report.save(&path)?,
                 None => println!("{}", serde_json::to_string_pretty(&report)?),
@@ -154,6 +138,31 @@ pub async fn execute(cli: Cli) -> Result<()> {
     Ok(())
 }
 
+impl From<HalfFilter> for Option<Half> {
+    fn from(filter: HalfFilter) -> Self {
+        match filter {
+            HalfFilter::A => Some(Half::A),
+            HalfFilter::B => Some(Half::B),
+            HalfFilter::All => None,
+        }
+    }
+}
+
+/// The one-line summary of a run that goes to stderr.
+fn overall_line(report: &Report) -> String {
+    let overall = &report.summary.overall;
+    format!(
+        "{}: {} queries, MRR {:.3}, Hit@1 {:.3}, Hit@10 {:.3}, {} failed",
+        report.name,
+        overall.n,
+        overall.primary.mrr,
+        overall.primary.hit_at_1,
+        overall.primary.hit_at_10,
+        overall.failed
+    )
+}
+
+/// Parses the command line and runs it.
 pub async fn main() -> Result<()> {
     execute(Cli::parse()).await
 }

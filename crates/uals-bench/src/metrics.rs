@@ -68,9 +68,13 @@ pub fn mean(values: &[f64]) -> f64 {
 /// Hit@k and MRR over a group of queries.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 pub struct RankStats {
+    /// Share of queries with a correct hit at rank 1.
     pub hit_at_1: f64,
+    /// Share of queries with a correct hit within the top 5.
     pub hit_at_5: f64,
+    /// Share of queries with a correct hit within the top 10.
     pub hit_at_10: f64,
+    /// Mean reciprocal rank.
     pub mrr: f64,
 }
 
@@ -94,17 +98,27 @@ pub fn tokens_of<T: Serialize>(value: &T) -> u64 {
 /// Recall and precision of one symbol's usages, by file and by line.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UsageScore {
+    /// The gold usages id.
     pub id: String,
+    /// Expected files that were found, over expected files.
     pub file_recall: f64,
+    /// Expected files that were found, over found files.
     pub file_precision: f64,
+    /// Expected lines that were found, over expected lines.
     pub line_recall: f64,
+    /// Expected lines that were found, over found lines.
     pub line_precision: f64,
+    /// Number of expected files.
     pub expected_files: usize,
+    /// Number of found files.
     pub found_files: usize,
+    /// Number of expected lines.
     pub expected_lines: usize,
+    /// Number of found lines.
     pub found_lines: usize,
 }
 
+/// `part / whole`; 0 when `whole` is 0.
 fn ratio(part: usize, whole: usize) -> f64 {
     if whole == 0 { 0.0 } else { part as f64 / whole as f64 }
 }

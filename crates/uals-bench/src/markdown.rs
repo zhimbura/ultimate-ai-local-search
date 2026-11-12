@@ -4,14 +4,17 @@ use std::fmt::Write as _;
 
 use crate::report::{Group, Report};
 
+/// A millisecond value with two decimals, or `-` when missing.
 fn opt(value: Option<f64>) -> String {
     value.map_or_else(|| "-".to_string(), |v| format!("{v:.2}"))
 }
 
+/// A rank, or `-` when there is none.
 fn rank_cell(rank: Option<u32>) -> String {
     rank.map_or_else(|| "-".to_string(), |r| r.to_string())
 }
 
+/// The header of a quality table; latency columns only when `with_latency`.
 fn quality_header(out: &mut String, with_latency: bool) {
     out.push_str("| run | n | failed | Hit@1 | Hit@5 | Hit@10 | MRR | MRR+sec | tokens |");
     out.push_str(if with_latency { " cold ms | warm p50 ms | warm p95 ms |\n" } else { "\n" });
@@ -19,6 +22,7 @@ fn quality_header(out: &mut String, with_latency: bool) {
     out.push_str(if with_latency { "---:|---:|---:|\n" } else { "\n" });
 }
 
+/// One row of a quality table; the latency cells only when `latency` carries the report.
 fn quality_row(out: &mut String, name: &str, g: &Group, latency: Option<&Report>) {
     let _ = write!(
         out,

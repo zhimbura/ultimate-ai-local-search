@@ -1,4 +1,4 @@
-//! Output for agents and people. Implemented by track T6; the formats below are the contract.
+//! Output for agents and people. The formats below are the contract.
 //!
 //! **Search, `Concise` (default):**
 //! ```text
@@ -39,7 +39,7 @@
 //! ```
 //! `incomplete` replaces `complete` when any repository answered partially.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -47,20 +47,26 @@ use serde::{Deserialize, Serialize};
 use crate::config::OutputConfig;
 use crate::types::{
     BackendReport, BackendStatus, FusedHit, LineRange, QueryKind, RepoUsages, SearchResponse, Snippet, SymbolKind,
-    UsagesResponse,
+    Usage, UsagesResponse,
 };
 
 /// Snippet lines longer than this many characters are cut.
 const MAX_LINE_CHARS: usize = 200;
+/// Between the parts of a header or hit line.
 const SEPARATOR: &str = " · ";
+/// `Detailed` shows this many times the snippet lines of the other formats.
+const DETAILED_SNIPPET_FACTOR: usize = 2;
 
 /// Output format of the `search` and `usages` tools.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Format {
     #[default]
+    /// Compact text for agents.
     Concise,
+    /// Concise plus scores, raw source ranks and longer snippets.
     Detailed,
+    /// The response as compact JSON.
     Json,
 }
 
@@ -68,7 +74,7 @@ pub enum Format {
 /// `hit.focus_line` as the range allows, at most `max_snippet_lines` lines for `Concise` and
 /// `Json` and `2 × max_snippet_lines` for `Detailed`.
 pub fn snippet_range(hit: &FusedHit, format: Format, config: &OutputConfig) -> LineRange {
-    let factor = if format == Format::Detailed { 2 } else { 1 };
+    let factor = if format == Format::Detailed { DETAILED_SNIPPET_FACTOR } else { 1 };
     let capacity = config.max_snippet_lines.saturating_mul(factor);
     let capacity = u32::try_from(capacity).unwrap_or(u32::MAX).max(1);
     let lines = hit.lines;
@@ -90,6 +96,8 @@ pub fn page<T>(items: Vec<T>, offset: usize, limit: usize) -> (Vec<T>, Option<us
     (items, next)
 }
 
+/// Renders a search response in `format`, trimmed to `config.max_output_chars` (see the module
+/// docs for the budget rule).
 pub fn render_search(response: &SearchResponse, format: Format, config: &OutputConfig) -> String {
     let render = |view: &SearchResponse| match format {
         Format::Json => to_json(view),
@@ -114,6 +122,8 @@ pub fn render_search(response: &SearchResponse, format: Format, config: &OutputC
     text
 }
 
+/// Renders a usages response in `format`, keeping as many usages as fit in `config.max_output_chars`
+/// (at least one).
 pub fn render_usages(response: &UsagesResponse, format: Format, config: &OutputConfig) -> String {
     let render = |view: &UsagesResponse| match format {
         Format::Json => to_json(view),
@@ -138,10 +148,12 @@ pub fn render_usages(response: &UsagesResponse, format: Format, config: &OutputC
     render(&keep_usages(response, low))
 }
 
+/// Compact JSON of `value`; an encoding failure becomes a JSON error object.
 fn to_json<T: Serialize>(value: &T) -> String {
     serde_json::to_string(value).unwrap_or_else(|err| format!("{{\"error\":\"cannot encode the response: {err}\"}}"))
 }
 
+/// The query kind as written in headers.
 fn kind_name(kind: QueryKind) -> &'static str {
     match kind {
         QueryKind::Identifier => "identifier",
@@ -151,6 +163,7 @@ fn kind_name(kind: QueryKind) -> &'static str {
     }
 }
 
+/// The symbol kind as written in hit lines.
 fn symbol_kind_name(kind: SymbolKind) -> &'static str {
     match kind {
         SymbolKind::Class => "class",
@@ -168,6 +181,7 @@ fn symbol_kind_name(kind: SymbolKind) -> &'static str {
 
 // ---- search ----
 
+/// The `Concise` or `Detailed` text of a search response.
 fn search_text(response: &SearchResponse, format: Format) -> String {
     let shown = response.hits.len();
     let range =
@@ -193,6 +207,7 @@ fn search_text(response: &SearchResponse, format: Format) -> String {
     lines.join("\n")
 }
 
+/// One numbered line of a hit: location, symbol, flags and sources.
 fn hit_line(number: usize, hit: &FusedHit, format: Format) -> String {
     let mut parts = vec![hit.repo.clone(), format!("{}:{}-{}", hit.path.display(), hit.lines.start, hit.lines.end)];
     if let Some(symbol) = &hit.symbol {
@@ -227,6 +242,7 @@ fn push_snippet(out: &mut Vec<String>, snippet: &Snippet) {
     }
 }
 
+/// `line` cut to `MAX_LINE_CHARS` characters, with `…` marking the cut.
 fn cut_line(line: &str) -> String {
     match line.char_indices().nth(MAX_LINE_CHARS) {
         Some((end, _)) => format!("{}…", &line[..end]),
@@ -234,6 +250,7 @@ fn cut_line(line: &str) -> String {
     }
 }
 
+/// The `backends:` line: every repository with the statuses of its backends.
 fn backends_line(reports: &[BackendReport]) -> String {
     let mut by_repo: Vec<(&str, Vec<String>)> = Vec::new();
     for report in reports {
@@ -247,6 +264,7 @@ fn backends_line(reports: &[BackendReport]) -> String {
     format!("backends: {}", repos.join("; "))
 }
 
+/// `backend state (reason) Nms` for one backend report.
 fn report_text(report: &BackendReport) -> String {
     let (state, reason) = match &report.status {
         BackendStatus::Ok => ("ok", None),
@@ -262,6 +280,7 @@ fn report_text(report: &BackendReport) -> String {
 
 // ---- usages ----
 
+/// The number of usages across all repositories of `response`.
 fn shown_usages(response: &UsagesResponse) -> usize {
     response.repos.iter().map(|repo| repo.usages.len()).sum()
 }
@@ -281,15 +300,19 @@ fn keep_usages(response: &UsagesResponse, keep: usize) -> UsagesResponse {
     view
 }
 
-fn usages_text(response: &UsagesResponse, format: Format) -> String {
-    let shown = shown_usages(response);
-    let files: usize = response
+/// The number of files with usages, counted per repository.
+fn count_files(response: &UsagesResponse) -> usize {
+    response
         .repos
         .iter()
-        .map(|repo| {
-            repo.usages.iter().map(|usage| usage.path.as_path()).collect::<std::collections::BTreeSet<_>>().len()
-        })
-        .sum();
+        .map(|repo| repo.usages.iter().map(|usage| usage.path.as_path()).collect::<BTreeSet<_>>().len())
+        .sum()
+}
+
+/// The `Concise` or `Detailed` text of a usages response.
+fn usages_text(response: &UsagesResponse, format: Format) -> String {
+    let shown = shown_usages(response);
+    let files = count_files(response);
     let count = if shown < response.total { format!("{shown} of {}", response.total) } else { shown.to_string() };
     let state = if response.complete { "complete" } else { "incomplete" };
     let mut lines =
@@ -304,6 +327,7 @@ fn usages_text(response: &UsagesResponse, format: Format) -> String {
     lines.join("\n")
 }
 
+/// `repo (source)`, with the status note after the source when the answer is not plain.
 fn repo_heading(repo: &RepoUsages) -> String {
     match status_note(&repo.status) {
         Some(note) => format!("{} ({}: {note})", repo.repo, repo.source),
@@ -323,18 +347,9 @@ fn status_note(status: &BackendStatus) -> Option<String> {
     }
 }
 
+/// Adds the usages of `repo`, grouped by file in order of first appearance.
 fn push_usage_rows(out: &mut Vec<String>, repo: &RepoUsages, format: Format) {
-    let mut by_path: BTreeMap<&Path, Vec<&crate::types::Usage>> = BTreeMap::new();
-    let mut order: Vec<&Path> = Vec::new();
-    for usage in &repo.usages {
-        let entry = by_path.entry(usage.path.as_path()).or_default();
-        if entry.is_empty() {
-            order.push(usage.path.as_path());
-        }
-        entry.push(usage);
-    }
-    for path in order {
-        let usages = &by_path[path];
+    for (path, usages) in group_by_path(repo) {
         if format == Format::Detailed {
             out.push(format!("  {}", path.display()));
             for usage in usages {
@@ -346,4 +361,18 @@ fn push_usage_rows(out: &mut Vec<String>, repo: &RepoUsages, format: Format) {
             out.push(format!("  {}: {}", path.display(), numbers.join(", ")));
         }
     }
+}
+
+/// The usages of `repo` by file, files in order of first appearance, usages in input order.
+fn group_by_path(repo: &RepoUsages) -> Vec<(&Path, Vec<&Usage>)> {
+    let mut files: Vec<(&Path, Vec<&Usage>)> = Vec::new();
+    let mut index_of: BTreeMap<&Path, usize> = BTreeMap::new();
+    for usage in &repo.usages {
+        let index = *index_of.entry(usage.path.as_path()).or_insert_with(|| {
+            files.push((usage.path.as_path(), Vec::new()));
+            files.len() - 1
+        });
+        files[index].1.push(usage);
+    }
+    files
 }

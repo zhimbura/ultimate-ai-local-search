@@ -1,5 +1,5 @@
-//! Grouping hits that point to the same code. Implemented by track T6; the rules below and the
-//! cases in `tests/golden/fusion/` are the contract.
+//! Grouping hits that point to the same code. The rules below and the cases in
+//! `tests/golden/fusion/` are the contract.
 //!
 //! Each hit (repo, path, lines) gets a merge unit. Only spans of the same repo and path count:
 //! 1. Among the spans that share at least one line with the hit, the one with the highest
@@ -23,6 +23,7 @@ use crate::types::{Hit, LineRange, SymbolKind, SymbolSpan};
 /// Hits that share a merge unit.
 #[derive(Debug, Clone, PartialEq)]
 pub struct HitGroup {
+    /// Name of the repository the hits belong to.
     pub repo: String,
     /// Absolute path.
     pub path: PathBuf,
@@ -30,6 +31,7 @@ pub struct HitGroup {
     pub lines: LineRange,
     /// The span's symbol; `None` for a window.
     pub symbol: Option<String>,
+    /// The kind of `symbol`; `None` for a window.
     pub symbol_kind: Option<SymbolKind>,
     /// The group's hits, in input order.
     pub hits: Vec<Hit>,
@@ -38,35 +40,61 @@ pub struct HitGroup {
 /// A span and its position in the input slice.
 type IndexedSpan<'a> = (usize, &'a SymbolSpan);
 
+/// Hits that no span shares a line with, per file (repo and path).
+type LooseHits = BTreeMap<(String, PathBuf), Vec<Hit>>;
+
 /// Groups `hits` by merge unit. Groups come out sorted by repo, path and start line.
 pub fn group(hits: Vec<Hit>, spans: &[SymbolSpan], gap: u32) -> Vec<HitGroup> {
+    let (hits_by_span, loose) = assign_hits_to_spans(hits, spans);
+
+    let mut groups = span_groups(spans, hits_by_span);
+    groups.extend(window_groups(loose, gap));
+    groups.sort_by(|a, b| {
+        (&a.repo, &a.path, a.lines.start, a.lines.end).cmp(&(&b.repo, &b.path, b.lines.start, b.lines.end))
+    });
+    groups
+}
+
+/// Rule 1: each hit goes to the span it overlaps best. Returns the hits of every span (indexed like
+/// `spans`) and the hits that no span touches, which rule 2 handles.
+fn assign_hits_to_spans(hits: Vec<Hit>, spans: &[SymbolSpan]) -> (Vec<Vec<Hit>>, LooseHits) {
     let mut spans_by_file: BTreeMap<(&str, &Path), Vec<IndexedSpan>> = BTreeMap::new();
     for (index, span) in spans.iter().enumerate() {
         spans_by_file.entry((span.repo.as_str(), span.path.as_path())).or_default().push((index, span));
     }
 
-    // Rule 1: a hit joins the span it overlaps best. What no span touches goes to rule 2, per file.
-    let mut span_hits: Vec<Vec<Hit>> = vec![Vec::new(); spans.len()];
-    let mut loose: BTreeMap<(String, PathBuf), Vec<Hit>> = BTreeMap::new();
+    let mut hits_by_span: Vec<Vec<Hit>> = vec![Vec::new(); spans.len()];
+    let mut loose = LooseHits::new();
     for hit in hits {
         let candidates = spans_by_file.get(&(hit.repo.as_str(), hit.path.as_path()));
         match candidates.and_then(|candidates| best_span(hit.lines, candidates)) {
-            Some(index) => span_hits[index].push(hit),
+            Some(index) => hits_by_span[index].push(hit),
             None => loose.entry((hit.repo.clone(), hit.path.clone())).or_default().push(hit),
         }
     }
+    (hits_by_span, loose)
+}
 
-    let mut groups: Vec<HitGroup> = Vec::new();
-    for (span, hits) in spans.iter().zip(span_hits).filter(|(_, hits)| !hits.is_empty()) {
-        groups.push(HitGroup {
+/// One group per span that received at least one hit.
+fn span_groups(spans: &[SymbolSpan], hits_by_span: Vec<Vec<Hit>>) -> Vec<HitGroup> {
+    spans
+        .iter()
+        .zip(hits_by_span)
+        .filter(|(_, hits)| !hits.is_empty())
+        .map(|(span, hits)| HitGroup {
             repo: span.repo.clone(),
             path: span.path.clone(),
             lines: span.lines,
             symbol: Some(span.name.clone()),
             symbol_kind: Some(span.kind),
             hits,
-        });
-    }
+        })
+        .collect()
+}
+
+/// Rule 2: one group per line window of the hits that no span touches.
+fn window_groups(loose: LooseHits, gap: u32) -> Vec<HitGroup> {
+    let mut groups = Vec::new();
     for ((repo, path), hits) in loose {
         for (lines, hits) in chain_windows(hits, gap) {
             groups.push(HitGroup {
@@ -79,9 +107,6 @@ pub fn group(hits: Vec<Hit>, spans: &[SymbolSpan], gap: u32) -> Vec<HitGroup> {
             });
         }
     }
-    groups.sort_by(|a, b| {
-        (&a.repo, &a.path, a.lines.start, a.lines.end).cmp(&(&b.repo, &b.path, b.lines.start, b.lines.end))
-    });
     groups
 }
 

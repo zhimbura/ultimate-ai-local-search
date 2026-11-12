@@ -14,17 +14,26 @@ use crate::stats::{Bootstrap, RESAMPLES, SEED, paired_bootstrap};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Serialize, Deserialize)]
 #[value(rename_all = "kebab-case")]
 pub enum Metric {
+    /// Reciprocal rank of the first `primary` hit.
     Mrr,
+    /// Reciprocal rank of the first `primary` or `secondary` hit.
     MrrAny,
+    /// A `primary` hit at rank 1.
     Hit1,
+    /// A `primary` or `secondary` hit at rank 1.
     Hit1Any,
+    /// A `primary` hit in the top 5.
     Hit5,
+    /// A `primary` or `secondary` hit in the top 5.
     Hit5Any,
+    /// A `primary` hit in the top 10.
     Hit10,
+    /// A `primary` or `secondary` hit in the top 10.
     Hit10Any,
 }
 
 impl Metric {
+    /// The name used on the command line and in tables.
     pub fn name(self) -> &'static str {
         match self {
             Metric::Mrr => "mrr",
@@ -38,6 +47,7 @@ impl Metric {
         }
     }
 
+    /// The value of this metric for one query.
     pub fn value(self, q: &QueryResult) -> f64 {
         let (rank, k) = match self {
             Metric::Mrr => return reciprocal_rank(q.rank_primary),
@@ -54,9 +64,11 @@ impl Metric {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// The comparison of one group of queries.
 pub struct GroupComparison {
     /// `overall` or a query type.
     pub group: String,
+    /// The bootstrap of the group.
     #[serde(flatten)]
     pub result: Bootstrap,
 }
@@ -64,14 +76,23 @@ pub struct GroupComparison {
 /// `diff` is always `b - a`: positive means run B is better.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Comparison {
+    /// Name of run A.
     pub a: String,
+    /// Name of run B.
     pub b: String,
+    /// The compared metric.
     pub metric: Metric,
+    /// Number of queries present in both runs.
     pub paired: usize,
+    /// Queries only run A has.
     pub only_in_a: usize,
+    /// Queries only run B has.
     pub only_in_b: usize,
+    /// Bootstrap resamples drawn.
     pub resamples: usize,
+    /// Seed of the resampling.
     pub seed: u64,
+    /// `overall` first, then one entry per query type.
     pub groups: Vec<GroupComparison>,
 }
 
