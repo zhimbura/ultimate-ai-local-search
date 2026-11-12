@@ -57,8 +57,9 @@ Then restart your agent. `install.sh` runs on macOS and Linux from a checkout.
 **What it installs and where:**
 
 - The `uals` binary in `~/.local/bin`: a release archive checked by SHA-256, or built from this checkout with `--from-source`.
-- ast-index 3.56.0, unless ast-index 3.56.0 or newer is already on `PATH`.
-- The semantic backend. For `semble` (default): uv 0.10.5 when uv is missing, then `uv tool install 'semble[mcp]==0.7.3'`. For `claude-context`: see below.
+- ast-index 3.56.0 in the same folder, unless ast-index 3.56.0 or newer is already on `PATH`.
+- The semantic backend. For `semble` (default): uv 0.10.5 in the same folder when uv is missing, then `uv tool install 'semble[mcp]==0.7.3'`, with the `semble` command in the same folder. For `claude-context`: see below.
+- A file in that folder that the installer did not put there is moved aside to `<name>.bak.<time>` first. `uninstall.sh` puts it back.
 - `~/.config/uals/config.toml` with absolute tool paths, only when no config exists. An existing config is never changed. API keys stay out of it.
 - The `uals` entry in the Claude Code config (`~/.claude.json`), with a timestamped backup.
 - `~/.local/share/uals/install-manifest`: a record of what the installer created, used by `uninstall.sh`.
@@ -81,7 +82,7 @@ At the end it runs `uals doctor` and exits with its code. It never edits shell r
 | `--provider`, `--model`, `--dimension` | claude-context only: the embedder (`ollama`, `lmstudio`, `openai`, `voyageai`, `gemini`, `openrouter`). |
 | `-h`, `--help` | Show the help. |
 
-Environment: `UALS_DOWNLOAD_BASE` (release download base URL, for tests), `CLAUDE_CONFIG` (the Claude Code config; default `~/.claude.json`) and the API keys of the embedder providers.
+Environment: `UALS_DOWNLOAD_BASE` (release download base URL, for tests), `CLAUDE_CONFIG` (the Claude Code config; default `~/.claude.json`), `UALS_CONFIG` (the uals config to write). For the claude-context option also: the API keys of the embedder providers, `OLLAMA_HOST`, `MILVUS_PORT`, `MILVUS_HEALTH_PORT` and `MILVUS_VERSION` (see `.env.example`).
 
 **Re-run safety.** You can run `install.sh` again. It skips what is installed, keeps your config and records only what it created.
 
@@ -90,6 +91,7 @@ Environment: `UALS_DOWNLOAD_BASE` (release download base URL, for tests), `CLAUD
 - Docker with one Milvus container (`docker-compose.yml`), bound to `127.0.0.1` only.
 - An embedder: Ollama or LM Studio on your machine, or a cloud provider with your key.
 - Node 22.12.0 or newer, and `@zilliz/claude-context-mcp` 0.1.15 installed with npm into `~/.local/share/uals/claude-context`. uals never runs `npx` at run time.
+- `.env` in the checkout (mode 600, gitignored): the Milvus and embedder settings and the API key. A cloud API key goes into the `env` of the uals entry in the Claude Code config, never into `config.toml`.
 
 Only one uals process at a time may run claude-context. Milvus is slower to set up than Semble, and on the benchmark below it was not better. Pick it only if you have a reason.
 
@@ -318,7 +320,8 @@ If `uals` is not on the `PATH` of Claude Code, write the full path in `command`.
 
 - Everything runs on your machine. The MCP transport is stdio. uals opens no ports.
 - Milvus (claude-context option only) listens on `127.0.0.1` only. `uals doctor` probes Milvus and a local embedder over plain HTTP on `127.0.0.1`.
-- `install.sh` downloads from: GitHub releases (the uals archive and ast-index), PyPI through uv (Semble), npm (`@zilliz/claude-context-mcp`) and Docker Hub (the Milvus image). When uv is missing, `install.sh` also installs it; the script names the source. The uals archive is checked by SHA-256.
+- `install.sh` downloads from: GitHub releases (the uals archive, ast-index, and uv when it is missing), PyPI through uv (Semble), uv's Python builds on GitHub (only when no Python 3.10 or newer is found), npm (`@zilliz/claude-context-mcp`) and Docker Hub (the Milvus image). The uals archive and uv are checked against their published SHA-256 files. ast-index has no checksum files, so `install.sh` holds the SHA-256 of each ast-index archive.
+- For the claude-context option only, `install.sh` can also install an embedder: Ollama (Homebrew on macOS, the ollama.com install script on Linux) or LM Studio (Homebrew on macOS).
 - Semble downloads its embedding model on first use.
 - With claude-context and a cloud embedder (OpenAI, VoyageAI, Gemini, OpenRouter), code chunks are sent to that provider. With Ollama or LM Studio they stay on your machine.
 - uals sends no telemetry.
@@ -348,7 +351,7 @@ On this set no semantic backend beats fused search without semantics, and every 
 ./uninstall.sh --purge      # also delete the Milvus volume (your claude-context index)
 ```
 
-It removes the uals entry from the Claude Code config, restores claude-context entries that the installer removed, deletes the files the installer created, removes uv and Semble when the installer installed them, and stops the Docker stack when the installer started it. `--purge` is irreversible.
+It removes the uals entry from the Claude Code config, restores claude-context entries that the installer removed, deletes the files the installer created (`.env` too), puts back files the installer moved aside, removes uv and Semble when the installer installed them, and stops the Docker stack when the installer started it. `--purge` is irreversible.
 
 ## Development
 
