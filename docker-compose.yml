@@ -7,6 +7,7 @@ services:
   etcd:
     container_name: uals-etcd
     image: quay.io/coreos/etcd:${ETCD_VERSION:-v3.5.18}
+    restart: unless-stopped
     environment:
       - ETCD_AUTO_COMPACTION_MODE=revision
       - ETCD_AUTO_COMPACTION_RETENTION=1000
@@ -27,6 +28,7 @@ services:
   minio:
     container_name: uals-minio
     image: minio/minio:${MINIO_VERSION:-RELEASE.2023-03-20T20-16-18Z}
+    restart: unless-stopped
     environment:
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin
@@ -45,6 +47,7 @@ services:
   milvus:
     container_name: uals-milvus
     image: milvusdb/milvus:${MILVUS_VERSION:-v2.5.6}
+    restart: unless-stopped
     command: ["milvus", "run", "standalone"]
     security_opt:
       - seccomp:unconfined
@@ -60,9 +63,10 @@ services:
       timeout: 20s
       retries: 5
     ports:
-      # Only Milvus is exposed to the host. etcd/minio stay on the internal network.
-      - "${MILVUS_PORT:-19530}:19530"
-      - "${MILVUS_HEALTH_PORT:-9091}:9091"
+      # Only Milvus is exposed, and only on loopback: Milvus has no auth, so 0.0.0.0 would open it to the LAN.
+      # etcd/minio stay on the internal network.
+      - "127.0.0.1:${MILVUS_PORT:-19530}:19530"
+      - "127.0.0.1:${MILVUS_HEALTH_PORT:-9091}:9091"
     depends_on:
       etcd:
         condition: service_healthy
