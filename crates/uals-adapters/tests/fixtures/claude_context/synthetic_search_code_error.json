@@ -1,0 +1,9 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "Error searching code: Embedding request failed: connection refused Please check if the codebase has been indexed first."
+    }
+  ],
+  "isError": true
+}

@@ -1,0 +1,9 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "Error: Path '/work/sample-android' does not exist. Original input: '/work/sample-android'"
+    }
+  ],
+  "isError": true
+}

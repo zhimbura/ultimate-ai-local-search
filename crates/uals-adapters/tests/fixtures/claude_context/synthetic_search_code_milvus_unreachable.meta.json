@@ -1,0 +1,12 @@
+{
+  "server": "claude-context 0.1.15",
+  "tool": "search_code",
+  "arguments": {
+    "path": "/work/sample-android",
+    "query": "retry with exponential backoff",
+    "limit": 10
+  },
+  "synthetic": true,
+  "source": "dist/handlers.js:739-745",
+  "notes": "Synthetic: built from the format strings in handlers.js (Milvus was down, no live recording). isError: true; Milvus went away after the probe."
+}

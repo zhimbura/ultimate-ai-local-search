@@ -1,0 +1,8 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "Found 3 results for query: \"retry with exponential backoff\" in codebase '/work/sample-android'\n\n1. Code snippet (kotlin) [sample-android]\n   Location: core/src/main/kotlin/sample/core/RetryPolicy.kt:1-18\n   Rank: 1\n   Context: \n```kotlin\npackage sample.core\n\nclass RetryPolicy(private val maxAttempts: Int) {\n    fun delayMs(attempt: Int): Long = 100L shl attempt\n}\n```\n\n2. Code snippet (kotlin) [sample-android]\n   Location: network/src/main/kotlin/sample/network/HostSelector.kt:5-9\n   Rank: 2\n   Context: \n```kotlin\nclass HostSelector {\n    fun pick(): String = \"primary\"\n}\n```\n\n3. Code snippet (kotlin) [sample-android]\n   Location: network/src/main/kotlin/sample/network/ConfigLoader.kt:12-12\n   Rank: 3\n   Context: \n```kotlin\nfun load() = Unit\n```\n"
+    }
+  ]
+}

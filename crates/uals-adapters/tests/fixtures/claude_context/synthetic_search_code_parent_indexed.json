@@ -1,0 +1,8 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "Found 3 results for query: \"retry with exponential backoff\" in codebase '/work'\nRequested path '/work/sample-android' is covered by indexed codebase '/work'.\n\n1. Code snippet (kotlin) [work]\n   Location: sample-android/core/src/main/kotlin/sample/core/RetryPolicy.kt:1-18\n   Rank: 1\n   Context: \n```kotlin\nclass RetryPolicy\n```\n\n2. Code snippet (typescript) [work]\n   Location: sample-web/src/http/fetchWithRetry.ts:2-30\n   Rank: 2\n   Context: \n```typescript\nexport function fetchWithRetry() {}\n```\n\n3. Code snippet (kotlin) [work]\n   Location: sample-android/network/src/main/kotlin/sample/network/HostSelector.kt:5-9\n   Rank: 3\n   Context: \n```kotlin\nclass HostSelector\n```\n"
+    }
+  ]
+}

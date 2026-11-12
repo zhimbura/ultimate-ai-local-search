@@ -1,0 +1,9 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "Error: Codebase '/work/sample-android' is not indexed. Please index it first using the index_codebase tool."
+    }
+  ],
+  "isError": true
+}

@@ -1,0 +1,10 @@
+{
+  "server": "claude-context 0.1.15",
+  "tool": "get_indexing_status",
+  "arguments": {
+    "path": "/work/sample-android"
+  },
+  "synthetic": true,
+  "source": "dist/handlers.js:902-914",
+  "notes": "Synthetic: built from the format strings in handlers.js (Milvus was down, no live recording). Indexed."
+}

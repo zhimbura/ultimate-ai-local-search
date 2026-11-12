@@ -1,0 +1,12 @@
+{
+  "server": "claude-context 0.1.15",
+  "tool": "search_code",
+  "arguments": {
+    "path": "/work/sample-android",
+    "query": "retry with exponential backoff",
+    "limit": 10
+  },
+  "synthetic": true,
+  "source": "dist/handlers.js:598-605 and 711-713",
+  "notes": "Synthetic: built from the format strings in handlers.js (Milvus was down, no live recording). The parent folder /work is indexed as one codebase and covers the requested path; paths are relative to /work and one result belongs to a sibling repository."
+}

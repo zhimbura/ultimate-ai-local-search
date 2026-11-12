@@ -1,0 +1,18 @@
+{
+  "server": "claude-context 0.1.15",
+  "tool": "index_codebase",
+  "arguments": {
+    "path": "/work/sample-android",
+    "force": false,
+    "splitter": "ast",
+    "ignorePatterns": [
+      "**/build/**"
+    ],
+    "customExtensions": [
+      ".kts"
+    ]
+  },
+  "synthetic": true,
+  "source": "dist/handlers.js:479-489",
+  "notes": "Synthetic: built from the format strings in handlers.js (Milvus was down, no live recording). isError: true; Milvus went away after the probe."
+}

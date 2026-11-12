@@ -1,0 +1,8 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "❌ Codebase '/work/sample-android' indexing failed.\n🚨 Error: Embedding provider unreachable\n📊 Failed at: 12.0% progress\n🕐 Failed at: 11/12/2026, 10:15:30 AM\n💡 You can retry indexing by running the index_codebase command again."
+    }
+  ]
+}
