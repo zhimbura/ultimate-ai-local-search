@@ -6,6 +6,52 @@ It searches every repository in a folder at once, with three backends: symbols (
 
 uals is not a hosted service. It has no account, no server of its own and no telemetry. It opens no network ports.
 
+On 24 real code-search tasks, Claude Code with uals needed a third fewer turns, a fifth fewer tokens and two thirds less time, and found the right code more often. See [What it saves](#what-it-saves).
+
+## What it saves
+
+Claude Code (Sonnet) solved the same 24 code-search tasks with uals and without it, twice each. The code base: 4 private Android and Kotlin repositories in one folder, about 4 300 indexed source files. Without uals, the agent had the built-in Read, Grep and Glob tools and the ast-index command line. Everything else was the same in both runs: the model, the instructions, the hooks and the permissions.
+
+![Change with uals per task: tokens -22%, output tokens -38%, agent turns -35%, time -66%, cost -5%](docs/img/bench-change.svg)
+
+| Per task, mean | Without uals | With uals | Change |
+|---|---:|---:|---:|
+| Tokens processed (input, cache, output) | 238k | 185k | −22% |
+| Output tokens | 1 096 | 676 | −38% |
+| Agent turns | 5.6 | 3.7 | −35% |
+| Time to answer | 35 s | 12 s | −66% |
+| Cost | $0.139 | $0.132 | −5% (in the noise) |
+| Correct answers | 87% | 98% | +11 points |
+
+**Why the cost hardly changes.** Most of the cost of a short task is the first write of the system prompt and the tool list into the prompt cache, and that is the same with and without uals. uals cuts what grows while the agent works: turns, tool output that the model reads back, and the model's own text. In a long session the saving adds up, because the context of every later turn carries it.
+
+**Where the turns go.** Without uals, the agent searches one repository at a time and checks each hit by reading files. With uals, one call covers every repository and returns ranked hits with code, so the agent reads only the best file.
+
+```mermaid
+flowchart TB
+    subgraph before["Without uals: 5-6 turns"]
+        direction LR
+        q1["question"] --> s1["grep in one repo"] --> s2["ast-index in another"] --> s3["read candidate files"] --> s4["grep again"] --> a1["answer"]
+    end
+    subgraph after["With uals: 3-4 turns"]
+        direction LR
+        q2["question"] --> u["uals search<br/>all repos, 3 backends"] --> r["read the best file"] --> a2["answer"]
+    end
+    before ~~~ after
+```
+
+<p>
+  <img src="docs/img/bench-tokens.svg" alt="Tokens per task by task type, with and without uals" width="49%">
+  <img src="docs/img/bench-accuracy.svg" alt="Correct answers by task type, with and without uals" width="49%">
+</p>
+<p>
+  <img src="docs/img/bench-time.svg" alt="Time to answer by task type, with and without uals" width="49%">
+</p>
+
+The largest gain is on "list every usage of a symbol": 100% of the expected files found instead of 60%, in 16 s instead of 73 s. For config and build questions uals was not better: 90% against 100%, one miss in 10 runs.
+
+**Method.** 20 search tasks, 5 of each kind (identifier, plain words, cross-repository, config and build), come from half B of the gold set used in the [benchmark below](#search-quality-benchmark). 4 more tasks ask for every usage of a symbol. A search answer is correct when it names the expected file. For a usage task the score is the share of expected files the answer names. Each task ran twice in each arm, 96 runs in all, with `claude -p` and JSON output. The token counts come from that output. The changes in the chart are paired by task, and the whiskers show a 95% bootstrap confidence interval. The tasks and answers are private; only these aggregates are published. Measured on 13 November 2026 with Claude Code 2.1.304 and Claude Sonnet 5.5.
+
 ## How it works
 
 ```mermaid
@@ -19,6 +65,29 @@ flowchart LR
     sem --> fusion
     fusion --> answer["one ranked answer<br/>with snippets"]
     answer --> agent
+```
+
+One search, step by step:
+
+```mermaid
+sequenceDiagram
+    participant A as AI agent
+    participant U as uals
+    participant X as ast-index
+    participant L as lexical
+    participant S as Semble
+    A->>U: search "where is the retry logic"
+    U->>U: classify the query (natural)
+    par every repository, each backend with its own deadline
+        U->>X: symbols (2 s)
+        U->>L: text, when the query kind uses it (1.5 s)
+        U->>S: meaning (4 s)
+    end
+    X-->>U: ranked symbols
+    L-->>U: ranked lines
+    S-->>U: ranked chunks
+    U->>U: weighted RRF, merge hits of one symbol, pin definitions
+    U-->>A: one ranked page with snippets and a backends line
 ```
 
 **Query kinds.** uals decides the kind of a query from its text. The `kind` parameter overrides this.
@@ -337,9 +406,9 @@ If `uals` is not on the `PATH` of Claude Code, write the full path in `command`.
 - The benchmark queries are private. Only aggregate numbers are published.
 - CI checks tracked files only for absolute home paths (`/Users/…`, `/home/…`). Private names are caught only by the local pre-commit hook, which reads a deny-list on the developer's machine (`scripts/check-private.sh`). CI does not have that list.
 
-## Benchmark
+## Search quality benchmark
 
-The semantic backend was chosen with a rule written before the measurement: claude-context becomes the default only if it beats Semble on natural-language queries, with the lower bound of the 95% confidence interval above 0. It did not. Semble stays the default.
+This benchmark measures uals itself, without an agent. The semantic backend was chosen with a rule written before the measurement: claude-context becomes the default only if it beats Semble on natural-language queries, with the lower bound of the 95% confidence interval above 0. It did not. Semble stays the default.
 
 MRR of the first expected file, 40 queries of half B of a private gold set over 4 repositories:
 

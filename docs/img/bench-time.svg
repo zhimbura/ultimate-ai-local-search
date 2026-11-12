@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 350" width="760" height="350" role="img" aria-label="Time to answer">
+<title>Time to answer</title>
+<style>
+  .bg { fill: #ffffff; } .ink { fill: #1f2328; } .muted { fill: #59636e; } .grid { stroke: #d1d9e0; }
+  .base { fill: #9aa4ae; } .uals { fill: #2f81f7; } .good { fill: #1a7f37; } .flat { fill: #9a6700; }
+  .whisker { stroke: #1f2328; }
+  text { font-family: -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif; }
+  @media (prefers-color-scheme: dark) {
+    .bg { fill: #0d1117; } .ink { fill: #e6edf3; } .muted { fill: #9198a1; } .grid { stroke: #3d444d; }
+    .base { fill: #656c76; } .uals { fill: #4493f8; } .good { fill: #3fb950; } .flat { fill: #d29922; }
+    .whisker { stroke: #e6edf3; }
+  }
+</style>
+<rect class="bg" width="760" height="350" rx="8"/>
+<text class="ink" x="20" y="30" font-size="17" font-weight="600">Time to answer</text>
+<text class="muted" x="20" y="50" font-size="13">Mean seconds per task, by task type</text>
+<rect class="base" x="470" y="20" width="12" height="12" rx="2"/><text class="ink" x="488" y="30" font-size="13">without uals</text><rect class="uals" x="590" y="20" width="12" height="12" rx="2"/><text class="ink" x="608" y="30" font-size="13">with uals</text>
+<line class="grid" x1="60" x2="740" y1="290.0" y2="290.0"/>
+<text class="muted" x="52" y="294.0" font-size="11" text-anchor="end">0</text>
+<line class="grid" x1="60" x2="740" y1="240.0" y2="240.0"/>
+<text class="muted" x="52" y="244.0" font-size="11" text-anchor="end">20</text>
+<line class="grid" x1="60" x2="740" y1="190.0" y2="190.0"/>
+<text class="muted" x="52" y="194.0" font-size="11" text-anchor="end">40</text>
+<line class="grid" x1="60" x2="740" y1="140.0" y2="140.0"/>
+<text class="muted" x="52" y="144.0" font-size="11" text-anchor="end">60</text>
+<line class="grid" x1="60" x2="740" y1="90.0" y2="90.0"/>
+<text class="muted" x="52" y="94.0" font-size="11" text-anchor="end">80</text>
+<rect class="base" x="77.0" y="228.0" width="37.4" height="62.0" rx="3"/>
+<text class="ink" x="95.7" y="223.0" font-size="11" text-anchor="middle">25s</text>
+<rect class="uals" x="118.4" y="270.3" width="37.4" height="19.7" rx="3"/>
+<text class="ink" x="137.1" y="265.3" font-size="11" text-anchor="middle">8s</text>
+<text class="ink" x="116.4" y="310" font-size="12" text-anchor="middle">identifier</text>
+<rect class="base" x="190.3" y="177.7" width="37.4" height="112.3" rx="3"/>
+<text class="ink" x="209.0" y="172.7" font-size="11" text-anchor="middle">45s</text>
+<rect class="uals" x="231.7" y="261.9" width="37.4" height="28.1" rx="3"/>
+<text class="ink" x="250.4" y="256.9" font-size="11" text-anchor="middle">11s</text>
+<text class="ink" x="229.7" y="310" font-size="12" text-anchor="middle">plain words</text>
+<rect class="base" x="303.7" y="257.3" width="37.4" height="32.7" rx="3"/>
+<text class="ink" x="322.4" y="252.3" font-size="11" text-anchor="middle">13s</text>
+<rect class="uals" x="345.1" y="265.0" width="37.4" height="25.0" rx="3"/>
+<text class="ink" x="363.8" y="260.0" font-size="11" text-anchor="middle">10s</text>
+<text class="ink" x="343.1" y="310" font-size="12" text-anchor="middle">cross-repo</text>
+<rect class="base" x="417.0" y="222.8" width="37.4" height="67.2" rx="3"/>
+<text class="ink" x="435.7" y="217.8" font-size="11" text-anchor="middle">27s</text>
+<rect class="uals" x="458.4" y="254.0" width="37.4" height="36.0" rx="3"/>
+<text class="ink" x="477.1" y="249.0" font-size="11" text-anchor="middle">14s</text>
+<text class="ink" x="456.4" y="310" font-size="12" text-anchor="middle">config / build</text>
+<rect class="base" x="530.3" y="107.6" width="37.4" height="182.4" rx="3"/>
+<text class="ink" x="549.0" y="102.6" font-size="11" text-anchor="middle">73s</text>
+<rect class="uals" x="571.7" y="249.1" width="37.4" height="40.9" rx="3"/>
+<text class="ink" x="590.4" y="244.1" font-size="11" text-anchor="middle">16s</text>
+<text class="ink" x="569.7" y="310" font-size="12" text-anchor="middle">all usages</text>
+<rect class="base" x="643.7" y="202.5" width="37.4" height="87.5" rx="3"/>
+<text class="ink" x="662.4" y="197.5" font-size="11" text-anchor="middle">35s</text>
+<rect class="uals" x="685.1" y="260.5" width="37.4" height="29.5" rx="3"/>
+<text class="ink" x="703.8" y="255.5" font-size="11" text-anchor="middle">12s</text>
+<text class="ink" x="683.1" y="310" font-size="12" text-anchor="middle" font-weight="600">all tasks</text>
+</svg>
