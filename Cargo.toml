@@ -20,6 +20,7 @@ repository = "https://github.com/zhimbura/ultimate-ai-local-search"
 [workspace.dependencies]
 uals-core = { path = "crates/uals-core" }
 uals-adapters = { path = "crates/uals-adapters" }
+uals = { path = "crates/uals" }
 
 anyhow = "1.0.104"
 async-trait = "0.1.92"

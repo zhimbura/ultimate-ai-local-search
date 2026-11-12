@@ -10,6 +10,7 @@ publish = false
 
 [dependencies]
 uals-core.workspace = true
+uals.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 rand.workspace = true
