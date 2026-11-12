@@ -15,17 +15,49 @@ warn() { printf '%s\n' "${Y}!${N} $*" >&2; }
 die()  { printf '%s\n' "${R}✗ $*${N}" >&2; exit 1; }
 have() { command -v "$1" >/dev/null 2>&1; }
 
+# shellcheck source=scripts/lib/env.sh
+. "$REPO_DIR/scripts/lib/env.sh"
+
 # ─── flags / non-interactive ─────────────────────────────────────────────────
+usage() {
+  cat <<EOF
+Usage: ./install.sh [options]
+
+One-command local code search for AI agents: ast-index + claude-context/Milvus + rg/grep.
+Safe to re-run: an existing .env supplies the defaults (flags override it) and is
+backed up to .env.bak.<YYYYmmdd-HHMMSS> before being rewritten.
+
+Options:
+  --provider <name>   ollama | lmstudio | openai | voyageai | gemini | openrouter
+                      (default: from existing .env; with --yes and no .env: ollama)
+  --model <name>      embedding model (default: per-provider)
+  --dimension <n>     embedding dimension — must match the model (default: per-provider)
+  -y, --yes           non-interactive: never prompt; a missing cloud API key is an error
+  --no-smoke          skip the smoke test at the end
+  --skip-ast-index    do not install ast-index (Tier 1)
+  -h, --help          show this help
+
+Environment (flags win over env, env wins over .env):
+  PROVIDER, MODEL, DIMENSION, ASSUME_YES=1   same as the flags above
+  OPENAI_API_KEY, VOYAGEAI_API_KEY, GEMINI_API_KEY, OPENROUTER_API_KEY
+                                             cloud API key for the chosen provider
+  OLLAMA_HOST                                Ollama URL (default http://127.0.0.1:11434)
+  MILVUS_PORT, MILVUS_HEALTH_PORT, MILVUS_VERSION, ETCD_VERSION, MINIO_VERSION
+                                             Milvus stack settings (see .env.example)
+  AST_INDEX_VERSION                          prebuilt ast-index version on Linux without brew
+  CLAUDE_CONTEXT_VERSION                     pinned @zilliz/claude-context-mcp version
+EOF
+}
+
 PROVIDER="${PROVIDER:-}"; MODEL="${MODEL:-}"; DIMENSION="${DIMENSION:-}"
 ASSUME_YES="${ASSUME_YES:-0}"; DO_SMOKE=1; DO_AST=1
 while [ $# -gt 0 ]; do case "$1" in
-  --provider) PROVIDER="$2"; shift 2;;
-  --model) MODEL="$2"; shift 2;;
-  --dimension) DIMENSION="$2"; shift 2;;
+  --provider|--model|--dimension) [ $# -ge 2 ] || die "$1 needs a value"
+    case "$1" in --provider) PROVIDER="$2";; --model) MODEL="$2";; --dimension) DIMENSION="$2";; esac; shift 2;;
   --yes|-y) ASSUME_YES=1; shift;;
   --no-smoke) DO_SMOKE=0; shift;;
   --skip-ast-index) DO_AST=0; shift;;
-  -h|--help) grep -E '^# ' "$0" | sed 's/^# //'; exit 0;;
+  -h|--help) usage; exit 0;;
   *) die "unknown flag: $1";;
 esac; done
 
@@ -95,7 +127,30 @@ if [ "$DO_AST" = 1 ]; then
   fi
 fi
 
+# ─── existing .env → defaults (flags/env still win) ──────────────────────────
+ENV_PROVIDER=""
+if [ -f "$REPO_DIR/.env" ]; then
+  say "found existing .env — using it for defaults (flags override)"
+  env_load_file "$REPO_DIR/.env" defaults
+  case "${EMBEDDING_PROVIDER:-}" in
+    Ollama) ENV_PROVIDER=ollama;;
+    OpenAI) case "${OPENAI_BASE_URL:-}" in *:1234*) ENV_PROVIDER=lmstudio;; *) ENV_PROVIDER=openai;; esac;;
+    VoyageAI) ENV_PROVIDER=voyageai;;
+    Gemini) ENV_PROVIDER=gemini;;
+    OpenRouter) ENV_PROVIDER=openrouter;;
+  esac
+  [ -n "$PROVIDER" ] || PROVIDER="$ENV_PROVIDER"
+  # model/dimension in .env belong to its provider — reuse only when it is the one chosen
+  if [ -n "$PROVIDER" ] && [ "$PROVIDER" = "$ENV_PROVIDER" ]; then
+    MODEL="${MODEL:-${EMBEDDING_MODEL:-}}"; DIMENSION="${DIMENSION:-${EMBEDDING_DIMENSION:-}}"
+  fi
+fi
+
 # ─── provider selection ──────────────────────────────────────────────────────
+if [ -z "$PROVIDER" ] && [ "$ASSUME_YES" = 1 ]; then
+  PROVIDER=ollama
+  say "--yes: no provider given — defaulting to ollama"
+fi
 if [ -z "$PROVIDER" ]; then
   cat <<EOF
 
@@ -134,12 +189,19 @@ say "provider=${B}$PROVIDER${N} model=${B}$MODEL${N} dim=${B}$DIMENSION${N}"
 API_KEY_VAR=""; API_KEY_VAL=""
 case "$PROVIDER" in
   ollama)
+    ollama_up() { curl -fsS --noproxy '*' "$OLLAMA_HOST/api/tags" >/dev/null 2>&1; }
     if ! have ollama; then
       say "installing Ollama…"
-      if [ "$PLATFORM" = macos ] && have brew; then brew install ollama; ( ollama serve >/dev/null 2>&1 & )
+      if [ "$PLATFORM" = macos ] && have brew; then brew install ollama
       else curl -fsSL https://ollama.com/install.sh | sh; fi
     fi
-    have ollama && ! curl -fsS --noproxy '*' "$OLLAMA_HOST/api/tags" >/dev/null 2>&1 && ( ollama serve >/dev/null 2>&1 & ) && sleep 2 || true
+    if have ollama && ! ollama_up; then
+      say "starting Ollama…"
+      if [ "$PLATFORM" = macos ] && have brew; then brew services start ollama >/dev/null 2>&1 || ( ollama serve >/dev/null 2>&1 & )
+      else ( ollama serve >/dev/null 2>&1 & ); fi
+      for _ in $(seq 1 30); do ollama_up && break; sleep 1; done
+      ollama_up || die "Ollama API did not come up at $OLLAMA_HOST within 30s — start it manually ('ollama serve') and re-run"
+    fi
     say "pulling model $MODEL…"; ollama pull "$MODEL"
     ;;
   lmstudio)
@@ -153,19 +215,27 @@ case "$PROVIDER" in
     say "downloading model + starting LM Studio server…"
     "$LMS" get "$MODEL" 2>/dev/null || warn "could not auto-download '$MODEL' — load it in LM Studio manually"
     "$LMS" server start 2>/dev/null || warn "could not start LM Studio server — start it manually (port 1234)"
+    "$LMS" load "$MODEL" --yes 2>/dev/null || warn "could not load '$MODEL' — load it in LM Studio manually, else the server reports 'No models loaded'"
     ;;
-  openai)     API_KEY_VAR=OPENAI_API_KEY;     API_KEY_VAL="${OPENAI_API_KEY:-}";;
+  openai)     API_KEY_VAR=OPENAI_API_KEY;     API_KEY_VAL="${OPENAI_API_KEY:-}"
+              [ "$API_KEY_VAL" = lm-studio ] && API_KEY_VAL="";;   # placeholder left by an LM Studio .env
   voyageai)   API_KEY_VAR=VOYAGEAI_API_KEY;   API_KEY_VAL="${VOYAGEAI_API_KEY:-}";;
   gemini)     API_KEY_VAR=GEMINI_API_KEY;     API_KEY_VAL="${GEMINI_API_KEY:-}";;
   openrouter) API_KEY_VAR=OPENROUTER_API_KEY; API_KEY_VAL="${OPENROUTER_API_KEY:-}";;
 esac
 if [ -n "$API_KEY_VAR" ] && [ -z "$API_KEY_VAL" ]; then
+  [ "$ASSUME_YES" = 1 ] && die "$API_KEY_VAR is required for $PROVIDER (--yes disables the prompt): export it or put it in .env"
   read -rsp "Enter $API_KEY_VAR: " API_KEY_VAL; echo
   [ -n "$API_KEY_VAL" ] || die "$API_KEY_VAR is required for $PROVIDER"
 fi
 
 # ─── write .env ──────────────────────────────────────────────────────────────
 say "writing .env"
+if [ -f "$REPO_DIR/.env" ]; then
+  env_backup="$REPO_DIR/.env.bak.$(date +%Y%m%d-%H%M%S)"
+  cp -p "$REPO_DIR/.env" "$env_backup"; chmod 600 "$env_backup"
+  ok "previous .env backed up to ${env_backup##*/}"
+fi
 {
   echo "MILVUS_PORT=${MILVUS_PORT:-19530}"
   echo "MILVUS_HEALTH_PORT=${MILVUS_HEALTH_PORT:-9091}"
@@ -173,6 +243,8 @@ say "writing .env"
   echo "ETCD_VERSION=${ETCD_VERSION:-v3.5.18}"
   echo "MINIO_VERSION=${MINIO_VERSION:-RELEASE.2023-03-20T20-16-18Z}"
   echo "MILVUS_ADDRESS=127.0.0.1:${MILVUS_PORT:-19530}"
+  echo "AST_INDEX_VERSION=${AST_INDEX_VERSION:-3.48.0}"
+  echo "CLAUDE_CONTEXT_VERSION=${CLAUDE_CONTEXT_VERSION:-0.1.15}"
   echo "EMBEDDING_PROVIDER=$EMB_PROVIDER"
   echo "EMBEDDING_MODEL=$MODEL"
   echo "EMBEDDING_DIMENSION=$DIMENSION"

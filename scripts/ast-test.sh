@@ -4,9 +4,9 @@
 set -euo pipefail
 
 if ! command -v ast-index >/dev/null; then
-  echo "✗ ast-index not installed — Tier 1 unavailable." >&2
-  echo "  install.sh installs it (macOS: brew · Linux: prebuilt from github.com/defendend/Claude-ast-index-search/releases)." >&2
-  exit 1
+  echo "! ast-index not installed — skipping Tier 1 test."
+  echo "  install.sh installs it (macOS: brew · Linux: prebuilt from github.com/defendend/Claude-ast-index-search/releases)."
+  exit 0
 fi
 echo "── ast-index (Tier 1) test ────────────────────────────────"
 echo "▸ $(ast-index version 2>/dev/null || ast-index --version 2>/dev/null || echo ast-index)"

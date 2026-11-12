@@ -7,10 +7,10 @@
 param(
   [string]$Provider = "",
   [string]$Model = "",
-  [string]$Dimension = "",
-  [switch]$NoSmoke
+  [string]$Dimension = ""
 )
 $ErrorActionPreference = "Stop"
+$CcVersion = if($env:CLAUDE_CONTEXT_VERSION){ $env:CLAUDE_CONTEXT_VERSION } else { "0.1.15" }   # pinned, see .env.example
 $Repo = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $Repo
 
@@ -81,7 +81,7 @@ Say "writing .env"
 $lines = @(
   "MILVUS_PORT=19530","MILVUS_HEALTH_PORT=9091","MILVUS_VERSION=v2.5.6",
   "ETCD_VERSION=v3.5.18","MINIO_VERSION=RELEASE.2023-03-20T20-16-18Z",
-  "MILVUS_ADDRESS=127.0.0.1:19530",
+  "MILVUS_ADDRESS=127.0.0.1:19530","CLAUDE_CONTEXT_VERSION=$CcVersion",
   "EMBEDDING_PROVIDER=$EmbProvider","EMBEDDING_MODEL=$Model","EMBEDDING_DIMENSION=$Dimension"
 )
 if($BaseUrl){ $lines += "OPENAI_BASE_URL=$BaseUrl" }
@@ -112,8 +112,8 @@ if($BaseUrl){ $envObj.OPENAI_BASE_URL=$BaseUrl }
 if($Provider -eq "lmstudio"){ $envObj.OPENAI_API_KEY="lm-studio" }
 if($Provider -eq "ollama"){ $envObj.OLLAMA_HOST=$OllamaHost }
 if($ApiKeyVar){ $envObj[$ApiKeyVar]=$ApiKeyVal }
-$server = [ordered]@{ type="stdio"; command="npx"; args=@("-y","@zilliz/claude-context-mcp@latest"); env=$envObj }
-if(-not $j.mcpServers){ $j | Add-Member -NotePropertyName mcpServers -NotePropertyValue (@{}) -Force }
+$server = [ordered]@{ type="stdio"; command="npx"; args=@("-y","@zilliz/claude-context-mcp@$CcVersion"); env=$envObj }
+if(-not $j.mcpServers){ $j | Add-Member -NotePropertyName mcpServers -NotePropertyValue ([PSCustomObject]@{}) -Force }
 $j.mcpServers | Add-Member -NotePropertyName "claude-context" -NotePropertyValue $server -Force
 $j | ConvertTo-Json -Depth 30 | Set-Content $cfg
 Ok "claude-context MCP written to $cfg (restart your agent)"

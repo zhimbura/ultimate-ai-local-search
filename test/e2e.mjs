@@ -15,7 +15,7 @@ const CALL_TIMEOUT_MS = 60_000;
 
 // Spawn the MCP server; it inherits embedding/Milvus config from process.env.
 // detached:true → own process group, so we can kill the whole npx→node tree on exit
-const srv = spawn('npx', ['-y', '@zilliz/claude-context-mcp@latest'], {
+const srv = spawn('npx', ['-y', `@zilliz/claude-context-mcp@${process.env.CLAUDE_CONTEXT_VERSION || '0.1.15'}`], {
   stdio: ['pipe', 'pipe', 'inherit'], env: process.env, detached: true,
 });
 

@@ -1,12 +1,12 @@
 {
-  "_comment": "Sample claude-context MCP block. install.sh merges the right variant into ~/.claude.json automatically. This file is for manual setup / reference. Use 127.0.0.1, never localhost.",
+  "_comment": "Sample claude-context MCP block. install.sh merges the right variant into ~/.claude.json automatically. The version is pinned (CLAUDE_CONTEXT_VERSION in .env). This file is for manual setup / reference. Use 127.0.0.1, never localhost.",
 
   "_ollama_example": {
     "mcpServers": {
       "claude-context": {
         "type": "stdio",
         "command": "npx",
-        "args": ["-y", "@zilliz/claude-context-mcp@latest"],
+        "args": ["-y", "@zilliz/claude-context-mcp@0.1.15"],
         "env": {
           "MILVUS_ADDRESS": "127.0.0.1:19530",
           "EMBEDDING_PROVIDER": "Ollama",
@@ -23,7 +23,7 @@
       "claude-context": {
         "type": "stdio",
         "command": "npx",
-        "args": ["-y", "@zilliz/claude-context-mcp@latest"],
+        "args": ["-y", "@zilliz/claude-context-mcp@0.1.15"],
         "env": {
           "MILVUS_ADDRESS": "127.0.0.1:19530",
           "EMBEDDING_PROVIDER": "OpenAI",
@@ -40,7 +40,7 @@
       "claude-context": {
         "type": "stdio",
         "command": "npx",
-        "args": ["-y", "@zilliz/claude-context-mcp@latest"],
+        "args": ["-y", "@zilliz/claude-context-mcp@0.1.15"],
         "env": {
           "MILVUS_ADDRESS": "127.0.0.1:19530",
           "EMBEDDING_PROVIDER": "OpenAI",
