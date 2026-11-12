@@ -29,6 +29,7 @@ fn claude_context(http: &FakeHttp, overrides: &[(&str, &str)]) -> (Sandbox, std:
     (sandbox, config)
 }
 
+/// Whether a process with this id runs (`kill -0` sends no signal).
 fn process_exists(pid: &str) -> bool {
     std::process::Command::new("kill").args(["-0", pid]).output().unwrap().status.success()
 }
@@ -677,7 +678,7 @@ fn the_real_semble_answers_a_search() {
     let config = sandbox.config("[semantic]\ndefault = \"semble\"\n\n[semantic.semble]\npass_env = [\"HF_HOME\", \"HF_ENDPOINT\", \"HF_HUB_OFFLINE\"]\n");
     let huggingface = std::env::var_os("HF_HOME")
         .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| dirs_home().join(".cache/huggingface"));
+        .unwrap_or_else(|| real_home().join(".cache/huggingface"));
 
     let run = sandbox.doctor_with(Some(&config), &[], &[("HF_HOME", &huggingface)]);
 
@@ -693,6 +694,6 @@ fn which_semble() -> std::path::PathBuf {
         .expect("live test needs `semble` on PATH (install Semble 0.7.x)")
 }
 
-fn dirs_home() -> std::path::PathBuf {
+fn real_home() -> std::path::PathBuf {
     std::path::PathBuf::from(std::env::var_os("HOME").expect("HOME"))
 }

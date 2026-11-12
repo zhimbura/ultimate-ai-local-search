@@ -142,6 +142,7 @@ pub async fn diagnose(explicit_config: Option<&Path>) -> Report {
 
 /// The config, when it loads, and the check that tells which file it came from.
 fn check_config(explicit: Option<&Path>) -> (Option<Config>, Check) {
+    // The file `Config::load` reads: the explicit one, else the default one when it exists.
     let file = explicit.map(Path::to_path_buf).or_else(|| Config::default_path().filter(|path| path.exists()));
     match Config::load(explicit) {
         Ok(config) => {
@@ -157,19 +158,17 @@ fn check_config(explicit: Option<&Path>) -> (Option<Config>, Check) {
     }
 }
 
+/// ast-index is optional: without it, or with an old one, uals still searches, so every problem
+/// is a warning.
 async fn check_ast_index(config: &AstIndexConfig) -> Check {
     const NAME: &str = "ast-index";
-    let install = "run install.sh to install ast-index";
+    let install_hint = "run install.sh to install ast-index";
     let Some(path) = resolve_program(&config.binary) else {
-        return Check::warn(NAME, format!("{} not found: symbol search is off", config.binary), install);
+        return Check::warn(NAME, format!("{} not found: symbol search is off", config.binary), install_hint);
     };
-    let text = match program_version(&path, &[]).await {
-        Ok(text) => text,
-        Err(error) => return Check::warn(NAME, format!("cannot run {}: {error}", path.display()), install),
-    };
-    match Version::parse(&text) {
-        None => Check::warn(NAME, format!("{}: unrecognised version {text:?}", path.display()), install),
-        Some(version) if version < AST_INDEX_TESTED => Check::warn(
+    match read_version(&path).await {
+        Err(problem) => Check::warn(NAME, problem, install_hint),
+        Ok(version) if version < AST_INDEX_TESTED => Check::warn(
             NAME,
             format!(
                 "{version} at {} is older than {AST_INDEX_TESTED}; uals was tested with {AST_INDEX_TESTED}",
@@ -177,37 +176,43 @@ async fn check_ast_index(config: &AstIndexConfig) -> Check {
             ),
             "run install.sh to update ast-index",
         ),
-        Some(version) => Check::ok(NAME, format!("{version} at {}", path.display())),
+        Ok(version) => Check::ok(NAME, format!("{version} at {}", path.display())),
     }
 }
 
 /// Whether Claude Code knows uals, and whether a second claude-context server runs next to it.
+/// Every problem is a warning: uals works without being registered.
 fn check_mcp(semantic: SemanticChoice) -> Check {
     const NAME: &str = "mcp";
-    let register = format!(
+    let register_hint = format!(
         "scripts/configure-mcp.sh --uals-bin {}",
         std::env::current_exe().map_or_else(|_| "<path to uals>".to_owned(), |path| path.display().to_string())
     );
     let Some(path) = claude_config_path() else {
-        return Check::warn(NAME, "cannot find the home folder, so the Claude Code config is unknown", register);
+        return Check::warn(NAME, "cannot find the home folder, so the Claude Code config is unknown", register_hint);
     };
     let text = match std::fs::read_to_string(&path) {
         Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Check::warn(NAME, format!("{} does not exist: uals is not registered", path.display()), register);
+            return Check::warn(
+                NAME,
+                format!("{} does not exist: uals is not registered", path.display()),
+                register_hint,
+            );
         }
-        Err(error) => return Check::warn(NAME, format!("cannot read {}: {error}", path.display()), register),
+        Err(error) => return Check::warn(NAME, format!("cannot read {}: {error}", path.display()), register_hint),
     };
     let registrations = match serde_json::from_str::<Value>(&text) {
-        Ok(value) => Registrations::of(&value),
-        Err(error) => return Check::warn(NAME, format!("{} is not valid JSON: {error}", path.display()), register),
+        Ok(value) => Registrations::from_config(&value),
+        Err(error) => {
+            return Check::warn(NAME, format!("{} is not valid JSON: {error}", path.display()), register_hint);
+        }
     };
-    let twice = semantic == SemanticChoice::ClaudeContext && registrations.claude_context;
-    let (mut detail, mut hints) = match registrations.where_uals() {
-        Some(place) => (format!("uals is registered in {} ({place})", path.display()), vec![]),
-        None => (format!("uals is not registered in {}", path.display()), vec![register]),
+    let (mut detail, mut hints) = match registrations.uals_places() {
+        Some(places) => (format!("uals is registered in {} ({places})", path.display()), vec![]),
+        None => (format!("uals is not registered in {}", path.display()), vec![register_hint]),
     };
-    if twice {
+    if semantic == SemanticChoice::ClaudeContext && registrations.claude_context {
         detail.push_str(
             "; claude-context is also registered directly, and two claude-context servers race on ~/.context",
         );
@@ -235,7 +240,7 @@ struct Registrations {
 }
 
 impl Registrations {
-    fn of(config: &Value) -> Self {
+    fn from_config(config: &Value) -> Self {
         let has = |servers: Option<&Value>, name: &str| servers.is_some_and(|servers| servers.get(name).is_some());
         let top = config.get("mcpServers");
         let projects: Vec<&Value> =
@@ -248,8 +253,8 @@ impl Registrations {
         }
     }
 
-    /// Where uals is registered, `None` when nowhere.
-    fn where_uals(&self) -> Option<String> {
+    /// Where uals is registered as text for a report, `None` when nowhere.
+    fn uals_places(&self) -> Option<String> {
         match (self.uals_top_level, self.uals_projects) {
             (false, 0) => None,
             (true, 0) => Some("top level".to_owned()),
@@ -292,6 +297,12 @@ impl std::fmt::Display for Version {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}.{}.{}", self.0[0], self.0[1], self.0[2])
     }
+}
+
+/// The version of the program at `path`, or the text of what went wrong, ready for a report line.
+pub(crate) async fn read_version(path: &Path) -> Result<Version, String> {
+    let text = program_version(path, &[]).await.map_err(|error| format!("cannot run {}: {error}", path.display()))?;
+    Version::parse(&text).ok_or_else(|| format!("{}: unrecognised version {text:?}", path.display()))
 }
 
 /// The executable `name` names: a path with folders as is, a bare name looked up in `PATH`.
@@ -369,11 +380,14 @@ mod tests {
             }
         });
 
-        let found = Registrations::of(&config);
+        let found = Registrations::from_config(&config);
 
         assert_eq!(found, Registrations { uals_top_level: false, uals_projects: 2, claude_context: true });
-        assert_eq!(found.where_uals().as_deref(), Some("2 projects"));
-        assert_eq!(Registrations::of(&json!({"mcpServers": {"uals": {}}})).where_uals().as_deref(), Some("top level"));
-        assert_eq!(Registrations::of(&json!({})).where_uals(), None);
+        assert_eq!(found.uals_places().as_deref(), Some("2 projects"));
+        assert_eq!(
+            Registrations::from_config(&json!({"mcpServers": {"uals": {}}})).uals_places().as_deref(),
+            Some("top level")
+        );
+        assert_eq!(Registrations::from_config(&json!({})).uals_places(), None);
     }
 }
