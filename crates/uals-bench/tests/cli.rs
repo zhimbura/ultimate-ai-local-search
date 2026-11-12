@@ -161,6 +161,11 @@ fn markdown_report_has_tables_and_no_code() {
         assert!(md.contains(needle), "missing {needle:?} in:\n{md}");
     }
     assert!(!md.contains("class ") && !md.contains("fun "), "no code in reports");
+    let lines: Vec<&str> = md.lines().collect();
+    for (header, separator) in lines.iter().zip(lines.iter().skip(1)).filter(|(_, next)| next.starts_with("|---")) {
+        let columns = |line: &str| line.matches('|').count();
+        assert_eq!(columns(header), columns(separator), "GFM needs equal columns:\n{header}\n{separator}");
+    }
     let json: Value = serde_json::from_str(&ok(&["report", a.to_str().unwrap(), "--json"])).unwrap();
     assert_eq!(json[0]["name"], "better");
 }
