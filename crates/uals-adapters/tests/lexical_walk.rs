@@ -350,6 +350,22 @@ async fn paths_restrict_the_walk_and_never_resurrect_ignored_files() {
 }
 
 #[tokio::test]
+async fn path_negations_deselect_inside_a_selected_folder_and_alone_start_from_everything() {
+    let dir = temp();
+    mark(dir.path(), "app/src/A.kt");
+    mark(dir.path(), "app/test/B.kt");
+    mark(dir.path(), "lib/C.kt");
+    let repo = repo(dir.path());
+    let mut request = request(QueryKind::Literal, NEEDLE);
+
+    request.paths = vec!["app".to_owned(), "!app/test".to_owned()];
+    assert_eq!(files(&repo, &try_find(&repo, &request).await.expect("ok")), ["app/src/A.kt"]);
+
+    request.paths = vec!["!app/test".to_owned()];
+    assert_eq!(files(&repo, &try_find(&repo, &request).await.expect("ok")), ["app/src/A.kt", "lib/C.kt"]);
+}
+
+#[tokio::test]
 async fn a_missing_root_is_unavailable() {
     let missing = Repo { name: "gone".to_owned(), root: "/definitely/not/here".into() };
     let result = backend().search(&missing, &request(QueryKind::Literal, NEEDLE)).await;

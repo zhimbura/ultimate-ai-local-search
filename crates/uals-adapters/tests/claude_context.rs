@@ -334,7 +334,7 @@ async fn search_applies_the_path_globs_of_the_request() {
     assert_eq!(names(backend.search(&repo(), &by_folder).await.unwrap()), vec!["RetryPolicy.kt"]);
 
     let mut bad = request(10);
-    bad.paths = vec!["[".into()];
+    bad.paths = vec!["[z-a]".into()];
     let error = backend.search(&repo(), &bad).await.unwrap_err();
     assert!(failed(error).contains("invalid path glob"));
     // The bad glob is rejected before the server is asked.

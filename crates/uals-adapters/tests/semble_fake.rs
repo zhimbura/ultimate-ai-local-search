@@ -389,3 +389,16 @@ async fn warm_ignores_failures() {
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert!(!backend.index_state(&repo("a")).await.indexed);
 }
+
+#[tokio::test]
+async fn path_negations_alone_drop_only_the_matching_hits() {
+    let replay = Replay::fixture("search_retry_backoff_one");
+    let mut request = request("retry with exponential backoff", 5);
+    request.paths = vec!["!app".to_owned()];
+    let answer = backend(&replay, None).search(&repo("sample-android"), &request).await.unwrap();
+
+    assert_eq!(answer.hits.len(), 4);
+    assert!(answer.hits.iter().all(|hit| !hit.path.to_str().unwrap().contains("/app/")));
+    let ranks: Vec<u32> = answer.hits.iter().map(|h| h.rank).collect();
+    assert_eq!(ranks, vec![0, 1, 2, 3]);
+}

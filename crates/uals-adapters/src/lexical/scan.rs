@@ -10,11 +10,12 @@ use std::time::Instant;
 use grep_regex::RegexMatcher;
 use grep_searcher::sinks::Lossy;
 use grep_searcher::{BinaryDetection, Searcher, SearcherBuilder};
-use ignore::gitignore::GitignoreBuilder;
 use ignore::overrides::OverrideBuilder;
 use ignore::{DirEntry, WalkBuilder, WalkState};
 use regex::Regex;
 use uals_core::backend::BackendError;
+
+use crate::path_filter::PathFilter;
 
 /// A line longer than this makes the searcher fail for that file (it is skipped, the query goes
 /// on). `max_file_size_bytes` normally keeps files far below it.
@@ -128,28 +129,17 @@ fn build_walker(root: &Path, only_paths: &[String], max_filesize: u64) -> Result
     builder.overrides(overrides.build().map_err(|err| BackendError::Failed(format!("ignore override: {err}")))?);
 
     // `paths` cannot be override globs: a whitelist override beats `.gitignore`, so `src/**`
-    // would bring back `src/build/`. A separate matcher only selects among the walked files.
-    let selector = if only_paths.is_empty() {
-        None
-    } else {
-        let mut globs = GitignoreBuilder::new(root);
-        for glob in only_paths {
-            globs
-                .add_line(None, glob)
-                .map_err(|err| BackendError::Failed(format!("invalid path glob {glob:?}: {err}")))?;
-        }
-        Some(globs.build().map_err(|err| BackendError::Failed(format!("invalid path globs: {err}")))?)
-    };
+    // would bring back `src/build/`. A separate filter only selects among the walked files.
+    let selector = PathFilter::new(only_paths)?;
+    let root = root.to_path_buf();
     builder.filter_entry(move |entry| {
         if entry.file_name() == ".git" {
             return false;
         }
-        match &selector {
-            Some(selector) if entry.file_type().is_some_and(|kind| kind.is_file()) => {
-                selector.matched_path_or_any_parents(entry.path(), false).is_ignore()
-            }
-            _ => true,
+        if selector.is_active() && entry.file_type().is_some_and(|kind| kind.is_file()) {
+            return selector.allows(entry.path().strip_prefix(&root).unwrap_or(entry.path()));
         }
+        true
     });
     Ok(builder)
 }

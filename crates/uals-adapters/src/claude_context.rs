@@ -57,7 +57,7 @@ use uals_core::backend::{BackendError, McpToolCaller, SearchBackend, ToolOutput}
 use uals_core::config::ClaudeContextConfig;
 use uals_core::types::{BackendAnswer, BackendId, Hit, IndexState, QueryKind, Repo, SearchRequest};
 
-use crate::ast_index::PathFilter;
+use crate::path_filter::PathFilter;
 
 use self::parse::{
     IndexReply, ParsedResult, SearchReply, StatusReply, abbreviate, parse_index, parse_search, parse_status,
@@ -195,7 +195,7 @@ impl SearchBackend for ClaudeContextBackend {
 
     async fn search(&self, repo: &Repo, request: &SearchRequest) -> Result<BackendAnswer, BackendError> {
         self.ensure_milvus().await?;
-        let filter = PathFilter::new(&repo.root, &request.paths)?;
+        let filter = PathFilter::new(&request.paths)?;
         let limit = request.fetch_limit.clamp(1, MAX_RESULTS);
         let arguments = json!({ "path": root_str(repo)?, "query": request.query, "limit": limit });
         let output = self.call("search_code", arguments).await?;

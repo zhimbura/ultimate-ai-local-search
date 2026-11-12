@@ -4,7 +4,6 @@
 //! `tests/fixtures/ast_index/`.
 
 mod parse;
-mod path_filter;
 mod runner;
 
 use std::collections::HashSet;
@@ -20,11 +19,11 @@ use uals_core::types::{
     Usage, UsageAnswer,
 };
 
+use crate::path_filter::PathFilter;
 use parse::{
     Explore, ExploreSymbol, QueryResult, STATE_SQL, SpanRow, StateRow, SymbolList, UsageItem, UsageList,
     normalize_kind, parse_json, spans_sql,
 };
-pub(crate) use path_filter::PathFilter;
 pub use runner::{AstIndexRunner, CommandOutput, ProcessRunner};
 
 /// Files per `IN (...)` list in one `spans` query.
@@ -80,7 +79,7 @@ impl AstIndexBackend {
         if name.is_empty() || limit == 0 {
             return Ok(Vec::new());
         }
-        let filter = PathFilter::new(&repo.root, &request.paths)?;
+        let filter = PathFilter::new(&request.paths)?;
         let mut definitions = self.find_definitions(repo, name, &filter).await?;
         definitions.truncate(limit);
         self.fill_end_lines(repo, &mut definitions).await;
@@ -178,7 +177,7 @@ impl AstIndexBackend {
         if request.fetch_limit == 0 || request.query.trim().is_empty() {
             return Ok(Vec::new());
         }
-        let filter = PathFilter::new(&repo.root, &request.paths)?;
+        let filter = PathFilter::new(&request.paths)?;
         let explored: Explore =
             self.run_json(repo, "explore", &["explore", "--format", "json", "--", request.query.trim()]).await?;
         let mut hits: Vec<Hit> = explored

@@ -9,8 +9,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::path_filter::PathFilter;
 use async_trait::async_trait;
-use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::Semaphore;
@@ -96,14 +96,14 @@ impl SearchBackend for SembleBackend {
     }
 
     async fn search(&self, repo: &Repo, request: &SearchRequest) -> Result<BackendAnswer, BackendError> {
-        let filter = path_filter(&request.paths)?;
+        let filter = PathFilter::new(&request.paths)?;
         let top_k =
-            if filter.is_some() { request.fetch_limit.saturating_mul(GLOB_OVERFETCH) } else { request.fetch_limit };
+            if filter.is_active() { request.fetch_limit.saturating_mul(GLOB_OVERFETCH) } else { request.fetch_limit };
         let results = self.inner.run_search(repo, &request.query, top_k).await?;
 
         let hits = results
             .into_iter()
-            .filter(|result| filter.as_ref().is_none_or(|filter| filter.matches(&result.file_path)))
+            .filter(|result| filter.allows(&result.file_path))
             .take(request.fetch_limit)
             .enumerate()
             .map(|(position, result)| Hit {
@@ -220,63 +220,4 @@ fn parse_inner_json(text: &str) -> Result<Value, BackendError> {
 /// The first non-blank line, trimmed.
 fn first_line(text: &str) -> &str {
     text.lines().map(str::trim).find(|line| !line.is_empty()).unwrap_or("")
-}
-
-/// Path globs of a request, gitignore style: relative to the repository root, `*.kt` matches in
-/// any folder, `src/**/*.kt` is anchored, a folder name matches everything below it.
-struct PathFilter(Gitignore);
-
-impl PathFilter {
-    /// Whether `relative_path` or one of its folders is selected.
-    fn matches(&self, relative_path: &str) -> bool {
-        self.0.matched_path_or_any_parents(relative_path, false).is_ignore()
-    }
-}
-
-/// `None` when `globs` is empty, so every path is allowed.
-fn path_filter(globs: &[String]) -> Result<Option<PathFilter>, BackendError> {
-    if globs.is_empty() {
-        return Ok(None);
-    }
-    let mut builder = GitignoreBuilder::new("");
-    // Only negations ("!x") would match nothing; start from "everything" then.
-    if globs.iter().all(|glob| glob.starts_with('!')) {
-        add_glob(&mut builder, "**")?;
-    }
-    for glob in globs {
-        add_glob(&mut builder, glob)?;
-    }
-    let gitignore = builder.build().map_err(|error| BackendError::Failed(format!("invalid path glob: {error}")))?;
-    Ok(Some(PathFilter(gitignore)))
-}
-
-fn add_glob(builder: &mut GitignoreBuilder, glob: &str) -> Result<(), BackendError> {
-    builder
-        .add_line(None, glob)
-        .map_err(|error| BackendError::Failed(format!("invalid path glob '{glob}': {error}")))?;
-    Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn matches(globs: &[&str], path: &str) -> bool {
-        let globs: Vec<String> = globs.iter().map(|g| (*g).to_owned()).collect();
-        path_filter(&globs).unwrap().is_none_or(|f| f.matches(path))
-    }
-
-    #[test]
-    fn globs_are_relative_to_the_repo_root() {
-        assert!(matches(&[], "a/b.kt"));
-        assert!(matches(&["*.kt"], "a/b.kt"));
-        assert!(!matches(&["*.kt"], "a/b.ts"));
-        assert!(matches(&["src/**/*.kt"], "src/x/y.kt"));
-        assert!(!matches(&["src/**/*.kt"], "other/src/x/y.kt"));
-        assert!(matches(&["core"], "core/src/A.kt"));
-        assert!(matches(&["*.kt", "!*Test.kt"], "a/B.kt"));
-        assert!(!matches(&["*.kt", "!*Test.kt"], "a/BTest.kt"));
-        assert!(matches(&["!*Test.kt"], "a/B.kt"));
-        assert!(!matches(&["!*Test.kt"], "a/BTest.kt"));
-    }
 }

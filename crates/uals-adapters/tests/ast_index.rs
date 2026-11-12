@@ -257,6 +257,22 @@ async fn path_globs_keep_only_matching_hits() {
 }
 
 #[tokio::test]
+async fn path_negations_alone_drop_only_the_matching_hits() {
+    let runner = Arc::new(
+        FakeRunner::new()
+            .on("symbol", recorded("symbol_hostselector.json"))
+            .on_query("FROM symbols", recorded("query_symbol_ranges.json"))
+            .on("usages", recorded("usages_test_first.json")),
+    );
+    let mut request = identifier("HostSelector", 10);
+    let all = backend(&runner).search(&repo(), &request).await.unwrap();
+    request.paths = vec!["!app".into()];
+    let rest = backend(&runner).search(&repo(), &request).await.unwrap();
+    assert_eq!(rest.hits.len(), all.hits.len() - 1);
+    assert!(rest.hits.iter().all(|hit| !hit.path.to_str().unwrap().contains("/app/")));
+}
+
+#[tokio::test]
 async fn natural_keeps_the_order_of_explore() {
     let runner = Arc::new(FakeRunner::new().on("explore", recorded("explore_retry_backoff.json")));
     let request = SearchRequest {
