@@ -50,7 +50,7 @@ pub fn backends(config: &Config) -> Backends {
 }
 
 /// The semantic backend `semantic.default` names, behind a `LazyCaller`; `None` for `none`.
-fn semantic_backend(config: &Config) -> Option<Arc<dyn SearchBackend>> {
+pub fn semantic_backend(config: &Config) -> Option<Arc<dyn SearchBackend>> {
     match config.semantic.default {
         SemanticChoice::None => None,
         SemanticChoice::Semble => {
