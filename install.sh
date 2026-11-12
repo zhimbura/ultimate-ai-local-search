@@ -6,9 +6,8 @@
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$REPO_DIR"
 
-# ─── pinned versions: this file is the only place that holds them ───────────
+# ─── pinned versions (the same ones are in 'uals doctor'; CI checks that they agree) ───
 UALS_REPO="zhimbura/ultimate-ai-local-search"
 AST_INDEX_VERSION="3.56.0"          # minimum; uals was tested with it
 SEMBLE_SPEC="semble[mcp]==0.7.3"
@@ -68,7 +67,7 @@ Options:
 Environment:
   UALS_DOWNLOAD_BASE   release download base URL (file:// works; for tests)
   CLAUDE_CONFIG        Claude Code config to edit (default: ~/.claude.json)
-  UALS_CONFIG          uals config to write (default: ~/.config/uals/config.toml)
+  UALS_CONFIG          uals config to write (default: ${XDG_CONFIG_HOME:-~/.config}/uals/config.toml)
   OPENAI_API_KEY, VOYAGEAI_API_KEY, GEMINI_API_KEY, OPENROUTER_API_KEY
                        cloud API key for the chosen claude-context provider
   OLLAMA_HOST          Ollama URL (default http://127.0.0.1:11434)
@@ -100,13 +99,16 @@ while [ $# -gt 0 ]; do case "$1" in
 esac; done
 
 case "$SEMANTIC" in semble|claude-context|none) ;; *) die "--semantic must be semble, claude-context or none";; esac
+if [ "$REMOVE_CC" = 1 ] && [ "$DO_MCP" = 0 ]; then
+  warn "--remove-claude-context has no effect with --no-mcp: the Claude Code config is not touched"
+fi
 if [ "$SEMANTIC" != claude-context ] && [ -n "$PROVIDER$MODEL$DIMENSION" ]; then
   warn "--provider/--model/--dimension only apply to --semantic claude-context: ignored"
 fi
 [ "$FROM_SOURCE" = 0 ] || [ -z "$VERSION" ] || die "--from-source and --version exclude each other"
 
 OS="$(uname -s)"; ARCH="$(uname -m)"
-case "$OS" in Darwin) PLATFORM=macos;; Linux) PLATFORM=linux;; *) die "unsupported OS: $OS (use install.ps1 on Windows)";; esac
+case "$OS" in Darwin) PLATFORM=macos;; Linux) PLATFORM=linux;; *) die "unsupported OS: $OS (Windows is not supported)";; esac
 case "$PLATFORM/$ARCH" in
   macos/arm64|macos/aarch64)  TARGET=aarch64-apple-darwin;      AST_ASSET=darwin-arm64;;
   macos/x86_64)               TARGET=x86_64-apple-darwin;       AST_ASSET=darwin-x86_64;;
@@ -116,23 +118,31 @@ case "$PLATFORM/$ARCH" in
 esac
 say "${B}uals${N} installer, platform: $PLATFORM/$ARCH"
 
-# Paths. The bin dir must be absolute: the config and the MCP entry store it.
+# Paths. They must be absolute: the config, the MCP entry and the manifest store them. A relative
+# path means relative to the folder the script was started from.
+abs_path() {
+  local p="$1" d
+  case "$p" in /*) ;; *) p="$PWD/$p";; esac
+  d="$(dirname "$p")"
+  if [ -d "$d" ]; then printf '%s/%s' "$(cd "$d" && pwd)" "$(basename "$p")"; else printf '%s' "$p"; fi
+}
 mkdir -p "$BIN_DIR" 2>/dev/null || true
 [ -d "$BIN_DIR" ] || die "cannot use bin dir: $BIN_DIR"
 BIN_DIR="$(cd "$BIN_DIR" && pwd)"
 DATA_DIR="$HOME/.local/share/uals"
 MANIFEST="$DATA_DIR/install-manifest"
-CLAUDE_CONFIG="${CLAUDE_CONFIG:-$HOME/.claude.json}"
-UALS_CONFIG_PATH="${UALS_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/uals/config.toml}"
+CLAUDE_CONFIG="$(abs_path "${CLAUDE_CONFIG:-$HOME/.claude.json}")"
+UALS_CONFIG_PATH="$(abs_path "${UALS_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/uals/config.toml}")"
 CC_DIR="$DATA_DIR/claude-context"
+SEMBLE_HOME="$DATA_DIR/semble"
 DOWNLOAD_BASE="${UALS_DOWNLOAD_BASE:-https://github.com/$UALS_REPO/releases/download}"
 
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
 # ─── manifest: one line per thing THIS installer created or started ──────────
-#   <kind> <value>   kinds: file, moved-aside, uv-installed, uv-tool, dir, emptydir, docker-stack,
-#                    config-file, mcp-entry, saved-mcp
+#   <kind> <value>   kinds: file, moved-aside, dir, emptydir, docker-stack, config-file,
+#                    mcp-entry, saved-mcp
 manifest_add() {
   local line="$1 $2"
   mkdir -p "$DATA_DIR"
@@ -175,7 +185,7 @@ toml_str() { printf '"%s"' "$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g')";
 install_bin() {
   local src="$1" dst="$2" kind="${3:-file}"
   if [ -e "$dst" ] && cmp -s "$src" "$dst"; then return 1; fi
-  if [ -e "$dst" ] && ! in_manifest "$kind" "$dst" && ! in_manifest file "$dst" && ! in_manifest uv-installed "$dst"; then
+  if [ -e "$dst" ] && ! in_manifest "$kind" "$dst" && ! in_manifest file "$dst"; then
     local bak; bak="$dst.bak.$(date +%Y%m%d-%H%M%S)"
     mv -f "$dst" "$bak" || die "cannot move $dst aside"
     manifest_add moved-aside "$bak"
@@ -214,7 +224,7 @@ install_uals() {
     have cargo || die "--from-source needs cargo (install Rust: https://rustup.rs)"
     [ -f "$REPO_DIR/Cargo.toml" ] || die "no Cargo.toml in $REPO_DIR: run install.sh from a checkout"
     say "building uals from source (cargo build --release --locked)…"
-    cargo build --release --locked -p uals
+    (cd "$REPO_DIR" && cargo build --release --locked -p uals)
     local built="$REPO_DIR/target/release/uals"
     [ -x "$built" ] || die "cargo did not produce $built"
     if install_bin "$built" "$UALS_BIN"; then ok "uals → $UALS_BIN (built from source)"
@@ -229,7 +239,7 @@ install_uals() {
     [ -n "$tag" ] || die "no uals release found on GitHub: use --from-source (needs cargo) or --version <tag>"
   fi
   case "$tag" in v*) ;; *) tag="v$tag";; esac
-  if [ -x "$UALS_BIN" ] && "$UALS_BIN" --version 2>/dev/null | grep -qF -- "${tag#v}"; then
+  if [ -x "$UALS_BIN" ] && [ "$("$UALS_BIN" --version 2>/dev/null | awk '{print $2; exit}')" = "${tag#v}" ]; then
     ok "uals ${tag#v} already installed ($UALS_BIN)"; return
   fi
 
@@ -267,35 +277,48 @@ if [ "$DO_AST" = 1 ]; then
 fi
 
 # ─── semantic backend: semble ────────────────────────────────────────────────
+# Semble lives in its own folder ($SEMBLE_HOME: uv tools, bin, managed Python, and uv itself when
+# it has to be downloaded), so uninstall.sh removes it with one folder and touches nothing of the
+# user's uv.
 SEMBLE_BIN=""
+semble_is_pinned() { [ -x "$1" ] && [ "$("$1" --version 2>/dev/null | first_version)" = "$SEMBLE_VERSION" ]; }
+
 install_semble() {
+  if have semble && semble_is_pinned "$(command -v semble)"; then
+    SEMBLE_BIN="$(command -v semble)"
+    ok "semble $SEMBLE_VERSION found on PATH ($SEMBLE_BIN): used as it is"
+    return
+  fi
+  if semble_is_pinned "$SEMBLE_HOME/bin/semble"; then
+    SEMBLE_BIN="$SEMBLE_HOME/bin/semble"
+    ok "semble $SEMBLE_VERSION already installed ($SEMBLE_BIN)"
+    return
+  fi
+  [ -d "$SEMBLE_HOME" ] || manifest_add dir "$SEMBLE_HOME"
+  mkdir -p "$SEMBLE_HOME"
+
   local uv_bin=""
-  if [ -x "$BIN_DIR/uv" ]; then uv_bin="$BIN_DIR/uv"; elif have uv; then uv_bin="$(command -v uv)"; fi
-  if [ -z "$uv_bin" ]; then
-    say "installing uv $UV_VERSION…"
+  if have uv; then
+    uv_bin="$(command -v uv)"
+  else
+    say "downloading uv $UV_VERSION…"
     local name="uv-$TARGET" dl="$TMP_ROOT/uv"
     fetch_archive "https://github.com/astral-sh/uv/releases/download/$UV_VERSION/$name.tar.gz" "$dl"
-    install_bin "$dl/$name/uvx" "$BIN_DIR/uvx" || true
-    install_bin "$dl/$name/uv" "$BIN_DIR/uv" uv-installed || true
-    uv_bin="$BIN_DIR/uv"
+    [ -f "$dl/$name/uv" ] || die "the archive has no $name/uv"
+    mkdir -p "$SEMBLE_HOME/uv"
+    install -m755 "$dl/$name/uv" "$SEMBLE_HOME/uv/uv" || die "cannot install uv into $SEMBLE_HOME/uv"
+    uv_bin="$SEMBLE_HOME/uv/uv"
     ok "uv $UV_VERSION → $uv_bin"
   fi
 
-  # was_installed: a semble tool exists already, so uninstall.sh must not remove it
-  local was_installed=0 tool_bin
-  if "$uv_bin" tool list 2>/dev/null | grep -q '^semble '; then was_installed=1; fi
-  if "$uv_bin" tool list 2>/dev/null | grep -qF "semble v$SEMBLE_VERSION"; then
-    tool_bin="$("$uv_bin" tool dir --bin)/semble"
-    ok "semble $SEMBLE_VERSION already installed"
-  else
-    say "installing $SEMBLE_SPEC…"
-    local log="$TMP_ROOT/uv-tool.log"
-    UV_TOOL_BIN_DIR="$BIN_DIR" "$uv_bin" tool install --force --python ">=3.10" "$SEMBLE_SPEC" >"$log" 2>&1 || { cat "$log" >&2; die "cannot install $SEMBLE_SPEC"; }
-    tool_bin="$BIN_DIR/semble"
-    [ "$was_installed" = 1 ] || manifest_add uv-tool "$BIN_DIR"
-    ok "semble $SEMBLE_VERSION → $tool_bin"
-  fi
-  SEMBLE_BIN="$tool_bin"
+  say "installing $SEMBLE_SPEC…"
+  local log="$TMP_ROOT/uv-tool.log"
+  UV_TOOL_DIR="$SEMBLE_HOME/tools" UV_TOOL_BIN_DIR="$SEMBLE_HOME/bin" \
+    UV_PYTHON_INSTALL_DIR="$SEMBLE_HOME/python" UV_PYTHON_BIN_DIR="$SEMBLE_HOME/python-bin" \
+    UV_CACHE_DIR="$TMP_ROOT/uv-cache" UV_LINK_MODE=copy \
+    "$uv_bin" tool install --force --python ">=3.10" "$SEMBLE_SPEC" >"$log" 2>&1 || { cat "$log" >&2; die "cannot install $SEMBLE_SPEC"; }
+  SEMBLE_BIN="$SEMBLE_HOME/bin/semble"
+  ok "semble $SEMBLE_VERSION → $SEMBLE_BIN"
 }
 [ "$SEMANTIC" != semble ] || install_semble
 
@@ -307,7 +330,7 @@ OLLAMA_WAIT_SECONDS=30
 MILVUS_WAIT_TRIES=60     # 3 s apart
 
 select_provider() {
-  local env_provider=""
+  local env_provider="" env_base_url=""
   if [ -f "$ENV_FILE" ]; then
     say "found existing .env: using it for defaults (flags override)"
     env_load_file "$ENV_FILE" defaults
@@ -318,6 +341,7 @@ select_provider() {
       Gemini) env_provider=gemini;;
       OpenRouter) env_provider=openrouter;;
     esac
+    [ "$env_provider" != openai ] || env_base_url="${OPENAI_BASE_URL:-}"   # a local OpenAI-compatible server
     [ -n "$PROVIDER" ] || PROVIDER="$env_provider"
     # model/dimension in .env belong to its provider: reuse only when it is the one chosen
     if [ -n "$PROVIDER" ] && [ "$PROVIDER" = "$env_provider" ]; then
@@ -351,18 +375,19 @@ EOF
     esac
   fi
 
-  # An empty OPENAI_BASE_URL left over from .env must not leak into the cloud providers.
+  # The address from .env belongs to the provider it was set for: it stays only for openai
+  # when .env says openai too (a custom server), and is dropped for every other provider.
   OPENAI_BASE_URL=""
   case "$PROVIDER" in
     ollama)     EMB_PROVIDER=Ollama;  MODEL="${MODEL:-nomic-embed-text}";               DIMENSION="${DIMENSION:-768}";;
     lmstudio)   EMB_PROVIDER=OpenAI;  MODEL="${MODEL:-text-embedding-nomic-embed-text-v1.5}"; DIMENSION="${DIMENSION:-768}"; OPENAI_BASE_URL="http://127.0.0.1:1234/v1";;
-    openai)     EMB_PROVIDER=OpenAI;  MODEL="${MODEL:-text-embedding-3-small}";          DIMENSION="${DIMENSION:-1536}";;
+    openai)     EMB_PROVIDER=OpenAI;  MODEL="${MODEL:-text-embedding-3-small}";          DIMENSION="${DIMENSION:-1536}"; OPENAI_BASE_URL="$env_base_url";;
     voyageai)   EMB_PROVIDER=VoyageAI;MODEL="${MODEL:-voyage-code-3}";                   DIMENSION="${DIMENSION:-1024}";;
     gemini)     EMB_PROVIDER=Gemini;  MODEL="${MODEL:-text-embedding-004}";              DIMENSION="${DIMENSION:-768}";;
     openrouter) EMB_PROVIDER=OpenRouter; MODEL="${MODEL:-openai/text-embedding-3-small}";DIMENSION="${DIMENSION:-1536}";;
     *) die "unknown provider: $PROVIDER";;
   esac
-  say "provider=${B}$PROVIDER${N} model=${B}$MODEL${N} dim=${B}$DIMENSION${N}"
+  say "provider=${B}$PROVIDER${N} model=${B}$MODEL${N} dim=${B}$DIMENSION${N}${OPENAI_BASE_URL:+ url=${B}$OPENAI_BASE_URL${N}}"
 }
 
 setup_provider() {
@@ -426,16 +451,22 @@ write_env_file() {
     [ -z "$API_KEY_VAR" ] || echo "$API_KEY_VAR=$API_KEY_VAL"
   } > "$new"
   if [ -f "$ENV_FILE" ] && cmp -s "$new" "$ENV_FILE"; then ok ".env already up to date"; return; fi
-  local existed=0
   if [ -f "$ENV_FILE" ]; then
-    existed=1
     local bak; bak="$ENV_FILE.bak.$(date +%Y%m%d-%H%M%S)"
-    cp -p "$ENV_FILE" "$bak"; chmod 600 "$bak"
-    ok "previous .env backed up to ${bak##*/}"
+    while [ -e "$bak" ]; do sleep 1; bak="$ENV_FILE.bak.$(date +%Y%m%d-%H%M%S)"; done
+    if in_manifest file "$ENV_FILE"; then
+      cp -p "$ENV_FILE" "$bak"; chmod 600 "$bak"
+      ok "previous .env backed up to ${bak##*/}"
+    else
+      mv -f "$ENV_FILE" "$bak" || die "cannot move $ENV_FILE aside"
+      chmod 600 "$bak"
+      manifest_add moved-aside "$bak"
+      warn "$ENV_FILE was not written by uals: moved to ${bak##*/} (uninstall.sh puts it back)"
+    fi
   fi
   ( umask 077; cat "$new" > "$ENV_FILE" )
   chmod 600 "$ENV_FILE"
-  [ "$existed" = 1 ] || manifest_add file "$ENV_FILE"
+  manifest_add file "$ENV_FILE"
   ok ".env written (chmod 600, gitignored)"
 }
 
@@ -453,8 +484,8 @@ start_milvus() {
     docker start uals-milvus >/dev/null
   else
     say "starting Milvus (one container, embedded etcd)…"
-    docker compose --env-file "$ENV_FILE" up -d
     manifest_add docker-stack "$REPO_DIR"
+    (cd "$REPO_DIR" && docker compose --env-file "$ENV_FILE" up -d)
   fi
   say "waiting for Milvus to become healthy (first run can take ~1-2 min)…"
   local i
@@ -534,14 +565,28 @@ note_diff() { # note_diff <label> <existing raw> <wanted raw>
   if [ "$2" != "$3" ]; then warn "  $1: config has ${2:-(default)}, the chosen options give $3"; fi
 }
 
+OLD_BACKEND=""
+# add_emptydirs <dir>: records every missing folder on the way to <dir> (outermost first) before it
+# is created, so uninstall.sh removes only the folders the install made, and only when empty.
+add_emptydirs() {
+  local d="$1" missing=() i
+  while [ ! -d "$d" ] && [ "$d" != / ]; do missing+=("$d"); d="$(dirname "$d")"; done
+  for ((i = ${#missing[@]} - 1; i >= 0; i--)); do manifest_add emptydir "${missing[$i]}"; done
+}
+
 write_or_compare_config() {
   if [ -f "$UALS_CONFIG_PATH" ]; then
     ok "uals config exists: left as it is ($UALS_CONFIG_PATH)"
     if [ -n "$AST_BIN" ]; then note_diff "ast_index.binary" "$(toml_get "$UALS_CONFIG_PATH" ast_index binary)" "$(toml_str "$AST_BIN")"; fi
-    note_diff "semantic.default" "$(toml_get "$UALS_CONFIG_PATH" semantic default)" "$(toml_str "$SEMANTIC")"
+    local have_sem; have_sem="$(toml_get "$UALS_CONFIG_PATH" semantic default)"
+    if [ "$have_sem" != "$(toml_str "$SEMANTIC")" ]; then
+      OLD_BACKEND="${have_sem:-(default)}"
+      warn "uals keeps using the old semantic backend ($OLD_BACKEND), not $SEMANTIC: set semantic.default = $(toml_str "$SEMANTIC") in $UALS_CONFIG_PATH, or remove that file and run the installer again"
+    fi
     if [ "$SEMANTIC" = semble ]; then note_diff "semantic.semble.command" "$(toml_get "$UALS_CONFIG_PATH" semantic.semble command)" "[$(toml_str "$SEMBLE_BIN")]"; fi
     return
   fi
+  add_emptydirs "$(dirname "$UALS_CONFIG_PATH")"
   mkdir -p "$(dirname "$UALS_CONFIG_PATH")"
   render_config > "$UALS_CONFIG_PATH"
   manifest_add config-file "$UALS_CONFIG_PATH"
@@ -550,16 +595,18 @@ write_or_compare_config() {
 write_or_compare_config
 
 # ─── MCP registration ────────────────────────────────────────────────────────
+mcp_entry() { [ -f "$CLAUDE_CONFIG" ] && jq -cS '.mcpServers.uals // empty' "$CLAUDE_CONFIG" 2>/dev/null; true; }
+saved_mcp() { [ ! -f "$DATA_DIR/removed-mcp/claude-context.json" ] || cat "$DATA_DIR/removed-mcp/claude-context.json"; }
 if [ "$DO_MCP" = 1 ]; then
-  had_entry=0; had_saved=0
-  if [ -f "$CLAUDE_CONFIG" ] && jq -e '.mcpServers.uals' "$CLAUDE_CONFIG" >/dev/null 2>&1; then had_entry=1; fi
-  [ ! -f "$DATA_DIR/removed-mcp/claude-context.json" ] || had_saved=1
+  entry_before="$(mcp_entry)"; saved_before="$(saved_mcp)"
   mcp_args=(--uals-bin "$UALS_BIN" --config "$CLAUDE_CONFIG")
+  # An entry that an earlier run of this installer wrote is ours: uninstall must not put it back.
+  if in_manifest mcp-entry "$CLAUDE_CONFIG"; then mcp_args+=(--no-save-previous); fi
   [ "$SEMANTIC" != claude-context ] || [ ! -f "$ENV_FILE" ] || mcp_args+=(--env-file "$ENV_FILE")
   [ "$REMOVE_CC" = 0 ] || mcp_args+=(--remove-claude-context)
   bash "$REPO_DIR/scripts/configure-mcp.sh" "${mcp_args[@]}"
-  [ "$had_entry" = 1 ] || manifest_add mcp-entry "$CLAUDE_CONFIG"
-  if [ "$had_saved" = 0 ] && [ -f "$DATA_DIR/removed-mcp/claude-context.json" ]; then manifest_add saved-mcp "$CLAUDE_CONFIG"; fi
+  [ "$(mcp_entry)" = "$entry_before" ] || manifest_add mcp-entry "$CLAUDE_CONFIG"
+  [ "$(saved_mcp)" = "$saved_before" ] || manifest_add saved-mcp "$CLAUDE_CONFIG"
 fi
 
 # ─── doctor ──────────────────────────────────────────────────────────────────
@@ -571,12 +618,18 @@ fi
 
 printf '\n%s\n' "${G}${B}Done.${N}"
 echo "Next steps:"
-echo "  1) ${B}Restart your AI agent${N} (Claude Code / etc.) so it loads the uals MCP server."
+step=1
+echo "  $step) ${B}Restart your AI agent${N} (Claude Code / etc.) so it loads the uals MCP server."
 case ":$PATH:" in
   *":$BIN_DIR:"*) ;;
-  *) echo "  2) $BIN_DIR is not on your PATH. To use the 'uals' command, add this line to your shell profile:"
+  *) step=$((step + 1))
+     echo "  $step) $BIN_DIR is not on your PATH. To use the 'uals' command, add this line to your shell profile:"
      echo "       export PATH=\"$BIN_DIR:\$PATH\"";;
 esac
+if [ -n "$OLD_BACKEND" ]; then
+  step=$((step + 1))
+  echo "  $step) uals still uses the old semantic backend ($OLD_BACKEND), not $SEMANTIC: set semantic.default = $(toml_str "$SEMANTIC") in $UALS_CONFIG_PATH, or remove that file and run the installer again."
+fi
 echo "Rules for agents: see ${B}$REPO_DIR/rules/${N}: copy the snippets into your project's AGENTS.md / CLAUDE.md."
 echo "Check the setup any time: ${B}$UALS_BIN doctor${N} · uninstall: ${B}$REPO_DIR/uninstall.sh${N}"
 exit "$rc"
