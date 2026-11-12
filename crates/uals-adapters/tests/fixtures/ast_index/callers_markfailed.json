@@ -1,0 +1,16 @@
+{
+  "items": [
+    {
+      "content": "                selector.markFailed(host)",
+      "line": 27,
+      "path": "network/src/main/kotlin/sample/network/ConfigLoader.kt"
+    }
+  ],
+  "pagination": {
+    "limit": 50,
+    "returned": 1,
+    "total": 1,
+    "truncated": false
+  },
+  "schema_version": 2
+}

@@ -1,0 +1,91 @@
+{
+  "dominant_language": "kt",
+  "files": [
+    {
+      "line": 7,
+      "outline": [
+        {
+          "end_line": 18,
+          "kind": "class",
+          "line": 7,
+          "name": "RetryPolicy"
+        },
+        {
+          "end_line": 12,
+          "kind": "function",
+          "line": 12,
+          "name": "shouldRetry"
+        },
+        {
+          "end_line": 17,
+          "kind": "function",
+          "line": 14,
+          "name": "delayFor"
+        }
+      ],
+      "outline_hidden": 0,
+      "path": "core/src/main/kotlin/sample/core/RetryPolicy.kt",
+      "symbol": "RetryPolicy"
+    },
+    {
+      "line": 6,
+      "outline": [
+        {
+          "end_line": 14,
+          "kind": "class",
+          "line": 6,
+          "name": "RetryPolicyTest"
+        },
+        {
+          "end_line": 13,
+          "kind": "function",
+          "line": 8,
+          "name": "delayDoublesAndIsCapped"
+        }
+      ],
+      "outline_hidden": 0,
+      "path": "core/src/test/kotlin/sample/core/RetryPolicyTest.kt",
+      "symbol": "RetryPolicyTest"
+    }
+  ],
+  "neighbours": [],
+  "query": "retry with backoff",
+  "symbols": [
+    {
+      "kind": "class",
+      "line": 7,
+      "name": "RetryPolicy",
+      "path": "core/src/main/kotlin/sample/core/RetryPolicy.kt",
+      "score": 57.785000000000004,
+      "vendor": false
+    },
+    {
+      "kind": "function",
+      "line": 12,
+      "name": "shouldRetry",
+      "path": "core/src/main/kotlin/sample/core/RetryPolicy.kt",
+      "score": 18.8,
+      "vendor": false
+    },
+    {
+      "kind": "class",
+      "line": 6,
+      "name": "RetryPolicyTest",
+      "path": "core/src/test/kotlin/sample/core/RetryPolicyTest.kt",
+      "score": 17.2575,
+      "vendor": false
+    }
+  ],
+  "tests": [
+    {
+      "source": "core/src/main/kotlin/sample/core/RetryPolicy.kt",
+      "tests": [
+        "core/src/test/kotlin/sample/core/RetryPolicyTest.kt"
+      ]
+    },
+    {
+      "source": "core/src/test/kotlin/sample/core/RetryPolicyTest.kt",
+      "tests": []
+    }
+  ]
+}

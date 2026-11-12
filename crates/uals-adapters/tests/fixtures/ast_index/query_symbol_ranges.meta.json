@@ -1,0 +1,13 @@
+{
+  "cmd": "ast-index",
+  "args": [
+    "query",
+    "SELECT f.path AS path, s.name, s.kind, s.line, s.end_line FROM symbols s JOIN files f ON f.id = s.file_id WHERE f.path IN ('network/src/main/kotlin/sample/network/HostSelector.kt','core/src/main/kotlin/sample/core/RetryPolicy.kt','network/src/main/kotlin/sample/network/HostStore.kt') ORDER BY f.path, s.line",
+    "--format",
+    "json"
+  ],
+  "project": "sample-android",
+  "exit_code": 0,
+  "stderr": "",
+  "duration_ms": 12
+}

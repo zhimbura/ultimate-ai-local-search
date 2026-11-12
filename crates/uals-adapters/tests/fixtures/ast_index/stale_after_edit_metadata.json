@@ -1,0 +1,41 @@
+{
+  "columns": [
+    "key",
+    "value"
+  ],
+  "count": 8,
+  "rows": [
+    {
+      "key": "build_files_fingerprint",
+      "value": "3:4d9af0bedb3247c3"
+    },
+    {
+      "key": "experimental_fast_rebuild",
+      "value": "0"
+    },
+    {
+      "key": "index_generation",
+      "value": "1"
+    },
+    {
+      "key": "last_modules_indexed_at",
+      "value": "1794478986773"
+    },
+    {
+      "key": "last_update_at",
+      "value": "1794478986773"
+    },
+    {
+      "key": "minified_filter",
+      "value": "1"
+    },
+    {
+      "key": "project_label",
+      "value": "Android (Kotlin/Java/JVM)"
+    },
+    {
+      "key": "project_root",
+      "value": "$WORKSPACE/sample-android"
+    }
+  ]
+}

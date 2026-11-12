@@ -1,0 +1,849 @@
+{
+  "file_words": {
+    "columns": [
+      {
+        "name": "file_id",
+        "not_null": false,
+        "primary_key": true,
+        "type": "INTEGER"
+      },
+      {
+        "name": "mtime",
+        "not_null": true,
+        "primary_key": false,
+        "type": "INTEGER"
+      },
+      {
+        "name": "size",
+        "not_null": true,
+        "primary_key": false,
+        "type": "INTEGER"
+      },
+      {
+        "name": "words",
+        "not_null": true,
+        "primary_key": false,
+        "type": "TEXT"
+      }
+    ],
+    "row_count": 7
+  },
+  "files": {
+    "columns": [
+      {
+        "name": "id",
+        "not_null": false,
+        "primary_key": true,
+        "type": "INTEGER"
+      },
+      {
+        "name": "path",
+        "not_null": true,
+        "primary_key": false,
+        "type": "TEXT"
+      },
+      {
+        "name": "root_path",
+        "not_null": true,
+        "primary_key": false,
+        "type": "TEXT"
+      },
+      {
+        "name": "mtime",
+        "not_null": true,
+        "primary_key": false,
+        "type": "INTEGER"
+      },
+      {
+        "name": "size",
+        "not_null": true,
+        "primary_key": false,
+        "type": "INTEGER"
+      }
+    ],
+    "row_count": 7
+  },
+  "git_commit_changes": {
+    "columns": [
+      {
+        "name": "commit_id",
+        "not_null": true,
+        "primary_key": true,
+        "type": "INTEGER"
+      },
+      {
+        "name": "path_id",
+        "not_null": true,
+        "primary_key": true,
+        "type": "INTEGER"
+      },
+      {
+        "name": "kind",
+        "not_null": true,
+        "primary_key": false,
+        "type": "INTEGER"
+      },
+      {
+        "name": "from_path_id",
+        "not_null": false,
+        "primary_key": false,
+        "type": "INTEGER"
+      },
+      {
+        "name": "added",
+        "not_null": true,
+        "primary_key": false,
+        "type": "INTEGER"
+      },
+      {
+        "name": "deleted",
+        "not_null": true,
+        "primary_key": false,
+        "type": "INTEGER"
+      }
+    ],
+    "row_count": 0
+  },
+  "git_commits": {
+    "columns": [
+      {
+        "name": "id",
+        "not_null": false,
+        "primary_key": true,
+        "type": "INTEGER"
+      },
+      {
+        "name": "sha",
+        "not_null": true,
+        "primary_key": false,
+        "type": "TEXT"
+      },
+      {
+        "name": "order_key",
+        "not_null": true,
+        "primary_key": false,
+        "type": "INTEGER"
+      },
+      {
+        "name": "live",
+        "not_null": true,
+        "primary_key": false,
+        "type": "INTEGER"
+      },
+      {
+        "name": "authored_at",
+        "not_null": false,
+        "primary_key": false,
+        "type": "INTEGER"
+      },
+      {
+        "name": "author",
+        "not_null": false,
+        "primary_key": false,
+        "type": "TEXT"
+      },
+      {
+        "name": "is_fix",
+        "not_null": false,
+        "primary_key": false,
+        "type": "INTEGER"
+      }
+    ],
+    "row_count": 0
+  },
+  "git_file_authors": {
+    "columns": [
+      {
+        "name": "path",
+        "not_null": true,
+        "primary_key": true,
+        "type": "TEXT"
+      },
+      {
+        "name": "author",
+        "not_null": true,
+        "primary_key": true,
+        "type": "TEXT"
+      }
+    ],
+    "row_count": 0
+  },
+  "git_file_stats": {
+    "columns": [
+      {
+        "name": "path",
+        "not_null": false,
+        "primary_key": true,
+        "type": "TEXT"
+      },
+      {
+        "name": "commits",
+        "not_null": true,
+        "primary_key": false,
+        "type": "INTEGER"
+      },
+      {
+        "name": "fix_commits",
+        "not_null": true,
+        "primary_key": false,
+        "type": "INTEGER"
+      },
+      {
+        "name": "lines_added",
+        "not_null": true,
+        "primary_key": false,
+        "type": "INTEGER"
+      },
+      {
+        "name": "lines_deleted",
+        "not_null": true,
+        "primary_key": false,
+        "type": "INTEGER"
+      },
+      {
+        "name": "first_commit_at",
+        "not_null": false,
+        "primary_key": false,
+        "type": "INTEGER"
+      },
+      {
+        "name": "last_commit_at",
+        "not_null": false,
+        "primary_key": false,
+        "type": "INTEGER"
+      },
+      {
+        "name": "current_lines",
+        "not_null": false,
+        "primary_key": false,
+        "type": "INTEGER"
+      }
+    ],
+    "row_count": 0
+  },
+  "git_paths": {
+    "columns": [
+      {
+        "name": "id",
+        "not_null": false,
+        "primary_key": true,
+        "type": "INTEGER"
+      },
+      {
+        "name": "hash",
+        "not_null": true,
+        "primary_key": false,
+        "type": "INTEGER"
+      },
+      {
+        "name": "path",
+        "not_null": true,
+        "primary_key": false,
+        "type": "TEXT"
+      }
+    ],
+    "row_count": 0
+  },
+  "inheritance": {
+    "columns": [
+      {
+        "name": "id",
+        "not_null": false,
+        "primary_key": true,
+        "type": "INTEGER"
+      },
+      {
+        "name": "child_id",
+        "not_null": true,
+        "primary_key": false,
+        "type": "INTEGER"
+      },
+      {
+        "name": "parent_name",
+        "not_null": true,
+        "primary_key": false,
+        "type": "TEXT"
+      },
+      {
+        "name": "kind",
+        "not_null": true,
+        "primary_key": false,
+        "type": "TEXT"
+      }
+    ],
+    "row_count": 2
+  },
+  "ios_asset_usages": {
+    "columns": [
+      {
+        "name": "id",
+        "not_null": false,
+        "primary_key": true,
+        "type": "INTEGER"
+      },
+      {
+        "name": "asset_id",
+        "not_null": false,
+        "primary_key": false,
+        "type": "INTEGER"
+      },
+      {
+        "name": "usage_file",
+        "not_null": true,
+        "primary_key": false,
+        "type": "TEXT"
+      },
+      {
+        "name": "usage_line",
+        "not_null": true,
+        "primary_key": false,
+        "type": "INTEGER"
+      },
+      {
+        "name": "usage_type",
+        "not_null": false,
+        "primary_key": false,
+        "type": "TEXT"
+      }
+    ],
+    "row_count": 0
+  },
+  "ios_assets": {
+    "columns": [
+      {
+        "name": "id",
+        "not_null": false,
+        "primary_key": true,
+        "type": "INTEGER"
+      },
+      {
+        "name": "module_id",
+        "not_null": false,
+        "primary_key": false,
+        "type": "INTEGER"
+      },
+      {
+        "name": "type",
+        "not_null": true,
+        "primary_key": false,
+        "type": "TEXT"
+      },
+      {
+        "name": "name",
+        "not_null": true,
+        "primary_key": false,
+        "type": "TEXT"
+      },
+      {
+        "name": "file_path",
+        "not_null": true,
+        "primary_key": false,
+        "type": "TEXT"
+      }
+    ],
+    "row_count": 0
+  },
+  "metadata": {
+    "columns": [
+      {
+        "name": "key",
+        "not_null": false,
+        "primary_key": true,
+        "type": "TEXT"
+      },
+      {
+        "name": "value",
+        "not_null": true,
+        "primary_key": false,
+        "type": "TEXT"
+      }
+    ],
+    "row_count": 8
+  },
+  "module_deps": {
+    "columns": [
+      {
+        "name": "id",
+        "not_null": false,
+        "primary_key": true,
+        "type": "INTEGER"
+      },
+      {
+        "name": "module_id",
+        "not_null": true,
+        "primary_key": false,
+        "type": "INTEGER"
+      },
+      {
+        "name": "dep_module_id",
+        "not_null": true,
+        "primary_key": false,
+        "type": "INTEGER"
+      },
+      {
+        "name": "dep_kind",
+        "not_null": false,
+        "primary_key": false,
+        "type": "TEXT"
+      }
+    ],
+    "row_count": 3
+  },
+  "modules": {
+    "columns": [
+      {
+        "name": "id",
+        "not_null": false,
+        "primary_key": true,
+        "type": "INTEGER"
+      },
+      {
+        "name": "name",
+        "not_null": true,
+        "primary_key": false,
+        "type": "TEXT"
+      },
+      {
+        "name": "path",
+        "not_null": true,
+        "primary_key": false,
+        "type": "TEXT"
+      },
+      {
+        "name": "kind",
+        "not_null": false,
+        "primary_key": false,
+        "type": "TEXT"
+      }
+    ],
+    "row_count": 3
+  },
+  "refs": {
+    "columns": [
+      {
+        "name": "id",
+        "not_null": false,
+        "primary_key": true,
+        "type": "INTEGER"
+      },
+      {
+        "name": "file_id",
+        "not_null": true,
+        "primary_key": false,
+        "type": "INTEGER"
+      },
+      {
+        "name": "name",
+        "not_null": true,
+        "primary_key": false,
+        "type": "TEXT"
+      },
+      {
+        "name": "line",
+        "not_null": true,
+        "primary_key": false,
+        "type": "INTEGER"
+      },
+      {
+        "name": "context",
+        "not_null": false,
+        "primary_key": false,
+        "type": "TEXT"
+      }
+    ],
+    "row_count": 48
+  },
+  "resource_usages": {
+    "columns": [
+      {
+        "name": "id",
+        "not_null": false,
+        "primary_key": true,
+        "type": "INTEGER"
+      },
+      {
+        "name": "resource_id",
+        "not_null": false,
+        "primary_key": false,
+        "type": "INTEGER"
+      },
+      {
+        "name": "usage_file",
+        "not_null": true,
+        "primary_key": false,
+        "type": "TEXT"
+      },
+      {
+        "name": "usage_line",
+        "not_null": true,
+        "primary_key": false,
+        "type": "INTEGER"
+      },
+      {
+        "name": "usage_type",
+        "not_null": false,
+        "primary_key": false,
+        "type": "TEXT"
+      }
+    ],
+    "row_count": 0
+  },
+  "resources": {
+    "columns": [
+      {
+        "name": "id",
+        "not_null": false,
+        "primary_key": true,
+        "type": "INTEGER"
+      },
+      {
+        "name": "module_id",
+        "not_null": false,
+        "primary_key": false,
+        "type": "INTEGER"
+      },
+      {
+        "name": "type",
+        "not_null": true,
+        "primary_key": false,
+        "type": "TEXT"
+      },
+      {
+        "name": "name",
+        "not_null": true,
+        "primary_key": false,
+        "type": "TEXT"
+      },
+      {
+        "name": "file_path",
+        "not_null": true,
+        "primary_key": false,
+        "type": "TEXT"
+      },
+      {
+        "name": "line",
+        "not_null": false,
+        "primary_key": false,
+        "type": "INTEGER"
+      }
+    ],
+    "row_count": 0
+  },
+  "storyboard_usages": {
+    "columns": [
+      {
+        "name": "id",
+        "not_null": false,
+        "primary_key": true,
+        "type": "INTEGER"
+      },
+      {
+        "name": "module_id",
+        "not_null": false,
+        "primary_key": false,
+        "type": "INTEGER"
+      },
+      {
+        "name": "file_path",
+        "not_null": true,
+        "primary_key": false,
+        "type": "TEXT"
+      },
+      {
+        "name": "line",
+        "not_null": true,
+        "primary_key": false,
+        "type": "INTEGER"
+      },
+      {
+        "name": "class_name",
+        "not_null": true,
+        "primary_key": false,
+        "type": "TEXT"
+      },
+      {
+        "name": "usage_type",
+        "not_null": false,
+        "primary_key": false,
+        "type": "TEXT"
+      },
+      {
+        "name": "storyboard_id",
+        "not_null": false,
+        "primary_key": false,
+        "type": "TEXT"
+      }
+    ],
+    "row_count": 0
+  },
+  "subtrees": {
+    "columns": [
+      {
+        "name": "id",
+        "not_null": false,
+        "primary_key": true,
+        "type": "INTEGER"
+      },
+      {
+        "name": "name",
+        "not_null": true,
+        "primary_key": false,
+        "type": "TEXT"
+      },
+      {
+        "name": "canonical_path",
+        "not_null": true,
+        "primary_key": false,
+        "type": "TEXT"
+      },
+      {
+        "name": "original_path",
+        "not_null": true,
+        "primary_key": false,
+        "type": "TEXT"
+      }
+    ],
+    "row_count": 0
+  },
+  "symbol_edges": {
+    "columns": [
+      {
+        "name": "source_id",
+        "not_null": true,
+        "primary_key": true,
+        "type": "INTEGER"
+      },
+      {
+        "name": "target_id",
+        "not_null": true,
+        "primary_key": true,
+        "type": "INTEGER"
+      },
+      {
+        "name": "confidence",
+        "not_null": true,
+        "primary_key": false,
+        "type": "INTEGER"
+      },
+      {
+        "name": "candidates",
+        "not_null": true,
+        "primary_key": false,
+        "type": "INTEGER"
+      },
+      {
+        "name": "ref_count",
+        "not_null": true,
+        "primary_key": false,
+        "type": "INTEGER"
+      },
+      {
+        "name": "line",
+        "not_null": true,
+        "primary_key": false,
+        "type": "INTEGER"
+      }
+    ],
+    "row_count": 0
+  },
+  "symbol_metrics": {
+    "columns": [
+      {
+        "name": "symbol_id",
+        "not_null": false,
+        "primary_key": true,
+        "type": "INTEGER"
+      },
+      {
+        "name": "fan_in",
+        "not_null": true,
+        "primary_key": false,
+        "type": "INTEGER"
+      },
+      {
+        "name": "fan_in_files",
+        "not_null": true,
+        "primary_key": false,
+        "type": "INTEGER"
+      },
+      {
+        "name": "fan_in_ambiguous",
+        "not_null": true,
+        "primary_key": false,
+        "type": "INTEGER"
+      },
+      {
+        "name": "fan_out",
+        "not_null": true,
+        "primary_key": false,
+        "type": "INTEGER"
+      },
+      {
+        "name": "fan_out_ambiguous",
+        "not_null": true,
+        "primary_key": false,
+        "type": "INTEGER"
+      },
+      {
+        "name": "dependents",
+        "not_null": true,
+        "primary_key": false,
+        "type": "INTEGER"
+      },
+      {
+        "name": "pagerank",
+        "not_null": true,
+        "primary_key": false,
+        "type": "REAL"
+      },
+      {
+        "name": "pagerank_pct",
+        "not_null": true,
+        "primary_key": false,
+        "type": "REAL"
+      }
+    ],
+    "row_count": 0
+  },
+  "symbols": {
+    "columns": [
+      {
+        "name": "id",
+        "not_null": false,
+        "primary_key": true,
+        "type": "INTEGER"
+      },
+      {
+        "name": "file_id",
+        "not_null": true,
+        "primary_key": false,
+        "type": "INTEGER"
+      },
+      {
+        "name": "name",
+        "not_null": true,
+        "primary_key": false,
+        "type": "TEXT"
+      },
+      {
+        "name": "qualified_name",
+        "not_null": false,
+        "primary_key": false,
+        "type": "TEXT"
+      },
+      {
+        "name": "kind",
+        "not_null": true,
+        "primary_key": false,
+        "type": "TEXT"
+      },
+      {
+        "name": "line",
+        "not_null": true,
+        "primary_key": false,
+        "type": "INTEGER"
+      },
+      {
+        "name": "end_line",
+        "not_null": false,
+        "primary_key": false,
+        "type": "INTEGER"
+      },
+      {
+        "name": "parent_id",
+        "not_null": false,
+        "primary_key": false,
+        "type": "INTEGER"
+      },
+      {
+        "name": "signature",
+        "not_null": false,
+        "primary_key": false,
+        "type": "TEXT"
+      }
+    ],
+    "row_count": 27
+  },
+  "transitive_deps": {
+    "columns": [
+      {
+        "name": "id",
+        "not_null": false,
+        "primary_key": true,
+        "type": "INTEGER"
+      },
+      {
+        "name": "module_id",
+        "not_null": true,
+        "primary_key": false,
+        "type": "INTEGER"
+      },
+      {
+        "name": "dependency_id",
+        "not_null": true,
+        "primary_key": false,
+        "type": "INTEGER"
+      },
+      {
+        "name": "depth",
+        "not_null": true,
+        "primary_key": false,
+        "type": "INTEGER"
+      },
+      {
+        "name": "path",
+        "not_null": false,
+        "primary_key": false,
+        "type": "TEXT"
+      }
+    ],
+    "row_count": 3
+  },
+  "xml_usages": {
+    "columns": [
+      {
+        "name": "id",
+        "not_null": false,
+        "primary_key": true,
+        "type": "INTEGER"
+      },
+      {
+        "name": "module_id",
+        "not_null": false,
+        "primary_key": false,
+        "type": "INTEGER"
+      },
+      {
+        "name": "file_path",
+        "not_null": true,
+        "primary_key": false,
+        "type": "TEXT"
+      },
+      {
+        "name": "line",
+        "not_null": true,
+        "primary_key": false,
+        "type": "INTEGER"
+      },
+      {
+        "name": "class_name",
+        "not_null": true,
+        "primary_key": false,
+        "type": "TEXT"
+      },
+      {
+        "name": "usage_type",
+        "not_null": false,
+        "primary_key": false,
+        "type": "TEXT"
+      },
+      {
+        "name": "element_id",
+        "not_null": false,
+        "primary_key": false,
+        "type": "TEXT"
+      }
+    ],
+    "row_count": 0
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "schema_version": 2,
+  "items": [
+    {
+      "name": "fetchWithRetry",
+      "kind": "function",
+      "line": 5,
+      "signature": "export async function fetchWithRetry(",
+      "path": "src/http/fetchWithRetry.ts"
+    }
+  ],
+  "pagination": {
+    "total": 1,
+    "returned": 1,
+    "truncated": false,
+    "limit": 20
+  }
+}

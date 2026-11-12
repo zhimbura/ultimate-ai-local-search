@@ -1,0 +1,12 @@
+{
+  "cmd": "ast-index",
+  "args": [
+    "stats",
+    "--format",
+    "json"
+  ],
+  "project": ".",
+  "exit_code": 0,
+  "stderr": "",
+  "duration_ms": 298
+}

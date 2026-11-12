@@ -1,0 +1,10 @@
+{
+  "cmd": "ast-index",
+  "args": [
+    "update"
+  ],
+  "project": "sample-android",
+  "exit_code": 0,
+  "stderr": "Loaded 8 files from index\nFound 0 new/changed files, 0 deleted files\n",
+  "duration_ms": 91
+}

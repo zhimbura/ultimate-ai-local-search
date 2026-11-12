@@ -1,0 +1,13 @@
+{
+  "cmd": "ast-index",
+  "args": [
+    "symbol",
+    "LruCache",
+    "--format",
+    "json"
+  ],
+  "project": "sample-tools",
+  "exit_code": 0,
+  "stderr": "",
+  "duration_ms": 10
+}

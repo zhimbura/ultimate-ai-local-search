@@ -1,0 +1,30 @@
+{
+  "file": "network/src/main/kotlin/sample/network/HostSelector.kt",
+  "schema_version": 1,
+  "symbols": [
+    {
+      "end_line": 33,
+      "kind": "class",
+      "line": 10,
+      "name": "HostSelector"
+    },
+    {
+      "end_line": 15,
+      "kind": "property",
+      "line": 15,
+      "name": "failed"
+    },
+    {
+      "end_line": 23,
+      "kind": "function",
+      "line": 17,
+      "name": "pick"
+    },
+    {
+      "end_line": 32,
+      "kind": "function",
+      "line": 25,
+      "name": "markFailed"
+    }
+  ]
+}

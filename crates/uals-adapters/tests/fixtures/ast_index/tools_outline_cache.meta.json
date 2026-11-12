@@ -1,0 +1,13 @@
+{
+  "cmd": "ast-index",
+  "args": [
+    "outline",
+    "sample_tools/cache.py",
+    "--format",
+    "json"
+  ],
+  "project": "sample-tools",
+  "exit_code": 0,
+  "stderr": "",
+  "duration_ms": 12
+}

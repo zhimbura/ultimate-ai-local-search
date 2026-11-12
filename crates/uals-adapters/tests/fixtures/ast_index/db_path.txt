@@ -1,0 +1,1 @@
+$TMPROOT/cache/<cache-hash>/index.db

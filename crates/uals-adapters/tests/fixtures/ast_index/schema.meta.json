@@ -1,0 +1,10 @@
+{
+  "cmd": "ast-index",
+  "args": [
+    "schema"
+  ],
+  "project": "sample-android",
+  "exit_code": 0,
+  "stderr": "",
+  "duration_ms": 10
+}

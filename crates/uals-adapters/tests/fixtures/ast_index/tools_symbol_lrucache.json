@@ -1,0 +1,25 @@
+{
+  "schema_version": 2,
+  "items": [
+    {
+      "name": "LruCache",
+      "kind": "class",
+      "line": 4,
+      "signature": "class LruCache:",
+      "path": "sample_tools/cache.py"
+    },
+    {
+      "name": "LruCache",
+      "kind": "import",
+      "line": 1,
+      "signature": "from sample_tools.cache import LruCache",
+      "path": "sample_tools/__init__.py"
+    }
+  ],
+  "pagination": {
+    "total": 2,
+    "returned": 2,
+    "truncated": false,
+    "limit": 20
+  }
+}

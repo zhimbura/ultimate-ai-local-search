@@ -1,0 +1,29 @@
+{
+  "dominant_language": "kt",
+  "files": [
+    {
+      "line": 8,
+      "path": "network/src/main/kotlin/sample/network/ConfigLoader.kt",
+      "source": "    8\t    fun get(url: String): String\n",
+      "symbol": "get"
+    }
+  ],
+  "neighbours": [],
+  "query": "choose backend url",
+  "symbols": [
+    {
+      "kind": "function",
+      "line": 8,
+      "name": "get",
+      "path": "network/src/main/kotlin/sample/network/ConfigLoader.kt",
+      "score": 4.35,
+      "vendor": false
+    }
+  ],
+  "tests": [
+    {
+      "source": "network/src/main/kotlin/sample/network/ConfigLoader.kt",
+      "tests": []
+    }
+  ]
+}

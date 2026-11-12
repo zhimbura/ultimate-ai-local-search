@@ -1,0 +1,15 @@
+{
+  "cmd": "ast-index",
+  "args": [
+    "explore",
+    "choose",
+    "backend",
+    "url",
+    "--format",
+    "json"
+  ],
+  "project": "sample-android",
+  "exit_code": 0,
+  "stderr": "",
+  "duration_ms": 14
+}

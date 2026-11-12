@@ -1,0 +1,13 @@
+{
+  "cmd": "ast-index",
+  "args": [
+    "symbol",
+    "fetchWithRetry",
+    "--format",
+    "json"
+  ],
+  "project": "sample-web",
+  "exit_code": 0,
+  "stderr": "",
+  "duration_ms": 11
+}

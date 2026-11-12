@@ -1,0 +1,13 @@
+{
+  "cmd": "ast-index",
+  "args": [
+    "symbol",
+    "HostSelector",
+    "--format",
+    "json"
+  ],
+  "project": "sample-android",
+  "exit_code": 0,
+  "stderr": "",
+  "duration_ms": 38
+}

@@ -1,0 +1,12 @@
+{
+  "file": "src/http/fetchWithRetry.ts",
+  "schema_version": 1,
+  "symbols": [
+    {
+      "end_line": 24,
+      "kind": "function",
+      "line": 5,
+      "name": "fetchWithRetry"
+    }
+  ]
+}

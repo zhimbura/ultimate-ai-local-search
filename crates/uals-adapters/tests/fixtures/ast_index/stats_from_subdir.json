@@ -1,0 +1,15 @@
+{
+  "db_path": "$TMPROOT/cache/<cache-hash>/index.db",
+  "db_size_bytes": 278528,
+  "project": "Android (Kotlin/Java/JVM)",
+  "stats": {
+    "file_count": 7,
+    "ios_assets_count": 0,
+    "module_count": 3,
+    "refs_count": 48,
+    "resources_count": 0,
+    "storyboard_usages_count": 0,
+    "symbol_count": 27,
+    "xml_usages_count": 0
+  }
+}

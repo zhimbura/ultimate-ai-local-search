@@ -1,0 +1,8 @@
+{
+  "from": "app",
+  "to": "core",
+  "paths": [],
+  "count": 0,
+  "truncated": false,
+  "empty_reason": "index_missing"
+}
