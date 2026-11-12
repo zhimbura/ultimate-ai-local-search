@@ -1,40 +1,22 @@
-<!--
-  Drop this section into your project's AGENTS.md (or CLAUDE.md).
-  It tells coding agents how to pick a search tool. Tune the "ask first" line to taste.
--->
+## Code search (uals)
 
-## Code search (ast → vector → grep)
+Use the uals MCP tools for code questions. Claude Code shows them as `mcp__uals__search`, `mcp__uals__usages` and `mcp__uals__status` when the server is registered as `uals`. Other agents see `search`, `usages` and `status`.
 
-Escalation by query type. Prefer the highest applicable tier; fall to plain grep only as a last resort and **with the user's OK** (see Tier 3).
+- `search`: use it first for any question about the code. The query can be a code name (`HostSelector`), plain words (`where is the retry logic`), a `/regex/` or an `"exact text"`. It searches every repository of the workspace at once: symbols, text and meaning.
+- `usages`: use it for every reference to a symbol.
+- `status`: use it when results look stale or a backend is missing. Then run `uals refresh` in a shell.
+- Do not fall back to grep or rg. `search` already covers text in every repository and respects `.gitignore`.
 
-### Tier 1 — ast-index (default: symbols & structure)
-
-Structural AST index (tree-sitter → SQLite). Exact/prefix/contains on symbol names, far faster than grep. Best for symbols: classes, functions, usages, implementations, call-tree, hierarchy, project map. **Not** a by-meaning search.
+For structure, use the ast-index CLI, from inside the repository:
 
 ```
-ast-index search <q>            # quick find (add --fuzzy)
-ast-index class|symbol <Name>   # definitions
-ast-index usages|callers <Name> # references / call sites
-ast-index implementations <Parent> · call-tree <Func> · hierarchy <Class>
-ast-index outline <file> · map · conventions
+ast-index hierarchy <Class>            # class hierarchy
+ast-index implementations <Parent>     # subclasses and implementors
+ast-index callers <function>           # who calls a function
+ast-index call-tree <function>         # call hierarchy, callers up
+ast-index deps <module>                # module dependencies
+ast-index dependents <module>          # modules that depend on this one
+ast-index outline <file>               # symbols of a file
 ```
-At session start: `ast-index stats` → if missing, `ast-index rebuild`; if stale, `ast-index update`.
 
-### Tier 2 — vector / semantic (claude-context MCP)
-
-For "find by meaning" / conceptual queries where the symbol name is unknown — e.g. "where is retry logic handled", "how does auth work", "what rate-limits requests". Tool: `mcp__claude-context__search_code` (path = project root).
-
-- Available **only where the project is indexed**: check `get_indexing_status`; if not indexed, status ≠ `completed`, or search errors → this tier is unavailable, move on.
-- Strengths: fuzzy/conceptual lookups. Weaknesses: not for exact strings, regex, or non-code (those are Tier 3).
-
-### Tier 3 — rg/grep (LAST RESORT — ask first)
-
-Use only after Tier 1 and Tier 2 came up empty/unsuitable, and **only with the user's explicit OK**.
-
-**Exception — no approval needed** where ast-index and vector physically can't help (they index symbols/meaning, not raw text):
-- regex / exact string literals / error-message text
-- non-code files: Markdown, JSON/YAML/TOML, shell scripts, SQL, HTML/CSS, .env, etc.
-- freshly edited code not yet re-indexed
-- cross-checking Tier 1/2 completeness when results look partial
-
-> Don't grep "for completeness" after Tier 1/2 succeed — trust the index.
+If a command prints nothing, the repository may have no index: run `uals refresh`.
