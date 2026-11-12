@@ -43,30 +43,47 @@ jobs:
   install:
     name: install (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-14]
+        include:
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-musl }
+          - { os: macos-14,      target: aarch64-apple-darwin }
+    env:
+      TAG: v0.0.0-ci
     steps:
       - uses: actions/checkout@v4
       - name: Install the pinned toolchain (rust-toolchain.toml)
         run: rustup toolchain install
-      - name: Install from source
-        run: ./install.sh --yes --semantic semble --from-source
-      - name: Install again (must change nothing)
-        run: ./install.sh --yes --semantic semble --from-source
-      - name: Doctor passes
-        run: ~/.local/bin/uals doctor
-      - name: Uninstall
-        run: ./uninstall.sh --yes
-      - name: The binary and the manifest are gone
+      - name: Install musl toolchain
+        if: contains(matrix.target, 'linux-musl')
+        run: sudo apt-get update -qq && sudo apt-get install -y musl-tools
+      - name: Install Rust target
+        run: rustup target add "${{ matrix.target }}"
+      - name: Build
+        run: cargo build --release --locked -p uals --target "${{ matrix.target }}"
+      - name: Package like a release
         run: |
-          test ! -e ~/.local/bin/uals
-          test ! -e ~/.local/share/uals/install-manifest
+          scripts/package-release.sh "${{ matrix.target }}" \
+            "target/${{ matrix.target }}/release/uals" "$TAG" "$RUNNER_TEMP/dist/$TAG"
+      # Semble downloads its model on the first search, which doctor makes.
+      - name: Read the Semble version
+        id: semble
+        run: echo "version=$(sed -n 's/^SEMBLE_VERSION="\(.*\)"/\1/p' install.sh)" >> "$GITHUB_OUTPUT"
+      - name: Cache the Semble model
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: huggingface-${{ runner.os }}-semble-${{ steps.semble.outputs.version }}
+      - name: Install, install again, doctor, uninstall
+        run: scripts/ci-install-check.sh "file://$RUNNER_TEMP/dist" "$TAG" "$RUNNER_TEMP/install-check"
 
   shell:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Pinned tool versions agree (install.sh and doctor)
+        run: scripts/check-pins.sh
       - name: Shellcheck (warnings and errors)
         run: shellcheck -x -S warning install.sh uninstall.sh scripts/*.sh scripts/lib/*.sh .githooks/pre-commit
