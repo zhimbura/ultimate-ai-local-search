@@ -47,7 +47,7 @@ pub async fn run<E: Engine>(
 ) -> Result<Report> {
     let selected = filter_queries(queries, options.half, &options.types);
     let results = run_first_pass(engine, &selected, options.limit).await;
-    let cold_ms = results.first().map(|result| result.latency_ms);
+    let cold_ms = results.iter().find(|result| !result.failed).map(|result| result.latency_ms);
     let warm_ms = time_warm_passes(engine, &selected, &results, options).await;
     let usage_scores = score_all_usages(engine, usages, options.usages_limit).await;
 
@@ -126,32 +126,19 @@ async fn time_warm_passes<E: Engine>(
     warm_ms
 }
 
-/// Scores the usages of every gold symbol; a failed call scores as an empty answer.
+/// Scores the usages of every gold symbol; a failed call gives a score marked `failed`.
 async fn score_all_usages<E: Engine>(engine: &E, usages: &[GoldUsages], limit: usize) -> Vec<UsageScore> {
     let mut scores = Vec::with_capacity(usages.len());
     for gold in usages {
-        let response = match engine.usages(&gold.symbol, limit).await {
-            Ok(response) => response,
+        match engine.usages(&gold.symbol, limit).await {
+            Ok(response) => scores.push(score_usages(engine.repos(), gold, &response)),
             Err(error) => {
                 eprintln!("usages {}: {error:#}", gold.id);
-                empty_usages(&gold.symbol)
+                scores.push(UsageScore::failed(&gold.id));
             }
-        };
-        scores.push(score_usages(engine.repos(), gold, &response));
+        }
     }
     scores
-}
-
-/// The answer that counts for a usages call that failed: nothing found, marked incomplete.
-fn empty_usages(symbol: &str) -> uals_core::types::UsagesResponse {
-    uals_core::types::UsagesResponse {
-        symbol: symbol.to_string(),
-        total: 0,
-        offset: 0,
-        repos: Vec::new(),
-        next_offset: None,
-        complete: false,
-    }
 }
 
 #[cfg(test)]
@@ -162,7 +149,7 @@ mod tests {
 
     use super::*;
     use crate::engine::MockEngine;
-    use crate::gold::{Expected, Role};
+    use crate::gold::{Definition, Expected, ExpectedUsage, Role};
 
     /// Counts calls; answers every query with an empty result.
     struct Counting {
@@ -245,6 +232,63 @@ mod tests {
         assert_eq!(filter_queries(&queries, None, &[]).len(), 3);
     }
 
+    /// Fails its first search at once; later searches take 30 ms. Usages are not available.
+    struct FailsFirst {
+        calls: AtomicUsize,
+    }
+
+    impl Engine for FailsFirst {
+        fn repos(&self) -> &[Repo] {
+            &[]
+        }
+
+        async fn search(&self, query: &str, kind: Option<QueryKind>, limit: usize) -> Result<SearchResponse> {
+            if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                anyhow::bail!("backend starting");
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+            Counting { calls: AtomicUsize::new(0), repos: vec![] }.search(query, kind, limit).await
+        }
+
+        async fn usages(&self, _: &str, _: usize) -> Result<UsagesResponse> {
+            anyhow::bail!("not used")
+        }
+    }
+
+    #[tokio::test]
+    async fn cold_latency_is_the_first_successful_call() {
+        let engine = FailsFirst { calls: AtomicUsize::new(0) };
+        let queries = [gold("1", QueryType::Natural, Half::A), gold("2", QueryType::Natural, Half::A)];
+        let report = run(&engine, &queries, &[], &options(0)).await.unwrap();
+        assert!(report.queries[0].failed && !report.queries[1].failed);
+        let cold = report.summary.latency.cold_ms.expect("one call succeeded");
+        assert!(cold >= 30.0, "cold_ms {cold} is the failed call, not the first successful one");
+    }
+
+    #[tokio::test]
+    async fn failed_usages_call_is_counted_and_kept_out_of_the_averages() {
+        let engine = MockEngine::from_json(
+            r#"{"repos": [{"name": "r", "root": "/ws/r"}],
+                "usages": {"Known": {"symbol": "Known", "total": 1, "offset": 0, "complete": true,
+                  "repos": [{"repo": "r", "source": "ast-index", "status": {"state": "ok"},
+                             "usages": [{"repo": "r", "path": "/ws/r/b.kt", "line": 4}]}]}}}"#,
+        )
+        .unwrap();
+        let usage = |id: &str, symbol: &str| GoldUsages {
+            id: id.into(),
+            symbol: symbol.into(),
+            definition: Definition { repo: "r".into(), path: "a.kt".into(), line: 1 },
+            expected_usages: vec![ExpectedUsage { repo: "r".into(), path: "b.kt".into(), lines: vec![4] }],
+            method: None,
+        };
+        let gold_usages = [usage("u1", "Known"), usage("u2", "Missing")];
+        let report = run(&engine, &[], &gold_usages, &options(0)).await.unwrap();
+        let summary = report.summary.usages.expect("usages were run");
+        assert_eq!(summary.line_recall, 1.0, "the failed symbol must not pull the mean down");
+        assert_eq!((summary.symbols, summary.failed), (1, 1));
+        assert!(report.usages[1].failed && !report.usages[0].failed);
+    }
+
     #[tokio::test]
     async fn missing_canned_response_is_a_failed_miss_not_an_abort() {
         let engine = MockEngine::default();
@@ -254,5 +298,6 @@ mod tests {
         assert_eq!(report.summary.overall.failed, 1);
         assert_eq!(report.summary.overall.primary.mrr, 0.0);
         assert_eq!(report.summary.latency.warm_samples, 0, "failed queries are not repeated");
+        assert_eq!(report.summary.latency.cold_ms, None, "no call succeeded");
     }
 }

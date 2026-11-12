@@ -81,14 +81,18 @@ pub fn render(reports: &[Report]) -> String {
     }
 
     if reports.iter().any(|r| r.summary.usages.is_some()) {
-        out.push_str("\n## Usages\n\nMean over symbols; R = recall, P = precision.\n\n");
-        out.push_str("| run | symbols | file R | file P | line R | line P |\n|---|---:|---:|---:|---:|---:|\n");
+        out.push_str(
+            "\n## Usages\n\nMean over the symbols whose call succeeded; R = recall, P = precision. `failed` counts symbols whose call failed; they are not in the means.\n\n",
+        );
+        out.push_str(
+            "| run | symbols | failed | file R | file P | line R | line P |\n|---|---:|---:|---:|---:|---:|---:|\n",
+        );
         for r in reports {
             if let Some(u) = &r.summary.usages {
                 let _ = writeln!(
                     out,
-                    "| {} | {} | {:.3} | {:.3} | {:.3} | {:.3} |",
-                    r.name, u.symbols, u.file_recall, u.file_precision, u.line_recall, u.line_precision
+                    "| {} | {} | {} | {:.3} | {:.3} | {:.3} | {:.3} |",
+                    r.name, u.symbols, u.failed, u.file_recall, u.file_precision, u.line_recall, u.line_precision
                 );
             }
         }
@@ -96,6 +100,10 @@ pub fn render(reports: &[Report]) -> String {
             let _ = write!(out, "\n### Usages per symbol: {}\n\n", r.name);
             out.push_str("| id | file R | file P | line R | line P | expected lines | found lines |\n|---|---:|---:|---:|---:|---:|---:|\n");
             for u in &r.usages {
+                if u.failed {
+                    let _ = writeln!(out, "| {} | err | err | err | err | - | - |", u.id);
+                    continue;
+                }
                 let _ = writeln!(
                     out,
                     "| {} | {:.3} | {:.3} | {:.3} | {:.3} | {} | {} |",

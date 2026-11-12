@@ -116,6 +116,27 @@ pub struct UsageScore {
     pub expected_lines: usize,
     /// Number of found lines.
     pub found_lines: usize,
+    /// True when the usages call failed: every number above is 0 and means nothing.
+    #[serde(default)]
+    pub failed: bool,
+}
+
+impl UsageScore {
+    /// The score of a usages call that failed; it is kept out of the averages.
+    pub fn failed(id: &str) -> Self {
+        Self {
+            id: id.to_string(),
+            file_recall: 0.0,
+            file_precision: 0.0,
+            line_recall: 0.0,
+            line_precision: 0.0,
+            expected_files: 0,
+            found_files: 0,
+            expected_lines: 0,
+            found_lines: 0,
+            failed: true,
+        }
+    }
 }
 
 /// `part / whole`; 0 when `whole` is 0.
@@ -164,6 +185,7 @@ pub fn score_usages(repos: &[Repo], gold: &GoldUsages, response: &UsagesResponse
         found_files: found_files.len(),
         expected_lines: expected.len(),
         found_lines: found.len(),
+        failed: false,
     }
 }
 

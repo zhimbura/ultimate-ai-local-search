@@ -59,11 +59,14 @@ pub struct Group {
     pub mean_tokens: f64,
 }
 
-/// Usage scores averaged over symbols (each symbol weighs the same).
+/// Usage scores averaged over the symbols whose call succeeded (each symbol weighs the same).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct UsageSummary {
     /// Number of symbols averaged.
     pub symbols: usize,
+    /// Number of symbols whose usages call failed; they are not in the means.
+    #[serde(default)]
+    pub failed: usize,
     /// Mean of `UsageScore::file_recall`.
     pub file_recall: f64,
     /// Mean of `UsageScore::file_precision`.
@@ -74,11 +77,12 @@ pub struct UsageSummary {
     pub line_precision: f64,
 }
 
-/// Wall time of the search calls, in milliseconds. `cold` is the first call of the run.
+/// Wall time of the search calls, in milliseconds. `cold_ms` is the first successful call of the
+/// run; it depends on the query order and on which backends were already warm.
 /// `first_*` is over the first call of every query; `warm_*` over the repeated calls.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Latency {
-    /// The first call of the run.
+    /// The first successful call of this run; `None` when every call failed.
     pub cold_ms: Option<f64>,
     /// Median of the first calls.
     pub first_p50_ms: Option<f64>,
@@ -143,14 +147,16 @@ pub fn group_of(queries: &[&QueryResult]) -> Group {
     }
 }
 
-/// The mean usage scores; `None` when there are none.
-fn usage_summary(scores: &[UsageScore]) -> Option<UsageSummary> {
-    if scores.is_empty() {
+/// The mean usage scores of the symbols whose call succeeded; `None` when there are no scores.
+fn usage_summary(all: &[UsageScore]) -> Option<UsageSummary> {
+    if all.is_empty() {
         return None;
     }
-    let avg = |f: fn(&UsageScore) -> f64| mean(&scores.iter().map(f).collect::<Vec<_>>());
+    let scores: Vec<&UsageScore> = all.iter().filter(|score| !score.failed).collect();
+    let avg = |f: fn(&UsageScore) -> f64| mean(&scores.iter().map(|score| f(score)).collect::<Vec<_>>());
     Some(UsageSummary {
         symbols: scores.len(),
+        failed: all.len() - scores.len(),
         file_recall: avg(|s| s.file_recall),
         file_precision: avg(|s| s.file_precision),
         line_recall: avg(|s| s.line_recall),
