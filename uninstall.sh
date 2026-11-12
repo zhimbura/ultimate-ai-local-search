@@ -1,24 +1,127 @@
 #!/usr/bin/env bash
-# Tear down the stack. By default keeps your indexed data (Docker volumes).
-#   ./uninstall.sh            stop containers, remove claude-context MCP entry
-#   ./uninstall.sh --purge    also delete Milvus volumes (indexed vectors) — irreversible
+# Undo what install.sh recorded in its manifest (~/.local/share/uals/install-manifest).
+#   ./uninstall.sh            show the list, ask once, undo it in reverse order
+#   ./uninstall.sh --yes      do not ask
+#   ./uninstall.sh --purge    also delete the Milvus volume (indexed vectors), only when the
+#                             installer started the stack. Irreversible.
+# Without a manifest: removes the uals MCP entry if present and says what is left.
+# Safe to run twice.
 set -euo pipefail
-REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; cd "$REPO_DIR"
-PURGE=0; [ "${1:-}" = "--purge" ] && PURGE=1
-ENV_ARGS=(); [ -f .env ] && ENV_ARGS=(--env-file .env)
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-if [ "$PURGE" = 1 ]; then
-  echo "Stopping stack and DELETING volumes (indexed data)…"
-  docker compose "${ENV_ARGS[@]}" down --volumes || true
-else
-  echo "Stopping stack (volumes kept)…"
-  docker compose "${ENV_ARGS[@]}" down || true
+if [ -t 1 ]; then G=$'\033[32m'; Y=$'\033[33m'; R=$'\033[31m'; C=$'\033[36m'; N=$'\033[0m'; else G=; Y=; R=; C=; N=; fi
+say()  { printf '%s\n' "${C}▸${N} $*"; }
+ok()   { printf '%s\n' "${G}✓${N} $*"; }
+warn() { printf '%s\n' "${Y}!${N} $*" >&2; }
+die()  { printf '%s\n' "${R}✗ $*${N}" >&2; exit 1; }
+have() { command -v "$1" >/dev/null 2>&1; }
+
+ASSUME_YES=0; PURGE=0
+for a in "$@"; do case "$a" in
+  --yes|-y) ASSUME_YES=1;;
+  --purge) PURGE=1;;
+  -h|--help) sed -n '2,8p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0;;
+  *) die "unknown flag: $a";;
+esac; done
+
+DATA_DIR="$HOME/.local/share/uals"
+MANIFEST="$DATA_DIR/install-manifest"
+CLAUDE_CONFIG="${CLAUDE_CONFIG:-$HOME/.claude.json}"
+
+# Refuse paths that would be dangerous to delete.
+safe_path() { case "$1" in ''|/|"$HOME"|"$HOME"/) return 1;; /*) return 0;; *) return 1;; esac; }
+
+if [ ! -f "$MANIFEST" ]; then
+  say "no install manifest at $MANIFEST"
+  if [ -f "$CLAUDE_CONFIG" ] && have jq && jq -e '.mcpServers.uals' "$CLAUDE_CONFIG" >/dev/null 2>&1; then
+    bash "$REPO_DIR/scripts/configure-mcp.sh" --remove --config "$CLAUDE_CONFIG"
+  else
+    say "no uals MCP entry in $CLAUDE_CONFIG"
+  fi
+  echo "Left in place: the uals binary and its tools in your bin dir, the uals config"
+  echo "(\${XDG_CONFIG_HOME:-~/.config}/uals), the Milvus stack and ${DATA_DIR}. Remove them yourself if you want."
+  exit 0
 fi
 
-CONFIG="${CLAUDE_CONFIG:-$HOME/.claude.json}"
-if [ -f "$CONFIG" ] && command -v jq >/dev/null && jq -e '.mcpServers."claude-context"' "$CONFIG" >/dev/null 2>&1; then
-  cp "$CONFIG" "${CONFIG}.bak.$(date +%Y%m%d-%H%M%S)"
-  tmp="$(mktemp)"; jq 'del(.mcpServers."claude-context")' "$CONFIG" > "$tmp" && mv "$tmp" "$CONFIG"
-  echo "✓ removed claude-context MCP entry from $CONFIG (backup made)"
+LINES=()
+while IFS= read -r line || [ -n "$line" ]; do
+  [ -z "$line" ] || LINES+=("$line")
+done < "$MANIFEST"
+
+if [ "${#LINES[@]}" = 0 ]; then rm -f -- "$MANIFEST"; ok "the manifest was empty: removed it"; exit 0; fi
+
+echo "uninstall.sh will undo, newest first:"
+for ((i = ${#LINES[@]} - 1; i >= 0; i--)); do echo "  ${LINES[$i]}"; done
+case "$PURGE:$(printf '%s\n' "${LINES[@]}" | grep -c '^docker-stack ' || true)" in
+  1:0) warn "--purge: the installer did not start the Milvus stack, so no volume is deleted";;
+  1:*) warn "--purge: the Milvus volume (indexed vectors) will be deleted";;
+esac
+if [ "$ASSUME_YES" = 0 ]; then
+  read -rp "Proceed? [y/N] " answer
+  case "$answer" in y|Y|yes) ;; *) echo "Nothing changed."; exit 0;; esac
 fi
-echo "Done. (Ollama / LM Studio / ast-index left installed — remove them yourself if you want.)"
+
+find_uv() {
+  local l
+  for l in "${LINES[@]}"; do case "$l" in 'uv-installed '*) [ ! -x "${l#uv-installed }" ] || { printf '%s' "${l#uv-installed }"; return; };; esac; done
+  command -v uv || true
+}
+
+for ((i = ${#LINES[@]} - 1; i >= 0; i--)); do
+  kind="${LINES[$i]%% *}"; value="${LINES[$i]#* }"
+  case "$kind" in
+    file|config-file)
+      safe_path "$value" || { warn "skipping unsafe path: $value"; continue; }
+      if [ -e "$value" ]; then rm -f -- "$value"; ok "removed $value"; fi
+      [ "$kind" != config-file ] || rmdir "$(dirname "$value")" 2>/dev/null || true
+      ;;
+    dir)
+      safe_path "$value" || { warn "skipping unsafe path: $value"; continue; }
+      if [ -d "$value" ]; then rm -rf -- "$value"; ok "removed $value"; fi
+      ;;
+    emptydir)
+      rmdir "$value" 2>/dev/null || true
+      ;;
+    mcp-entry)
+      bash "$REPO_DIR/scripts/configure-mcp.sh" --remove --config "$value"
+      ;;
+    saved-mcp)
+      bash "$REPO_DIR/scripts/configure-mcp.sh" --restore-claude-context --config "$value"
+      ;;
+    uv-tool)
+      uv_bin="$(find_uv)"
+      if [ -n "$uv_bin" ]; then
+        UV_TOOL_BIN_DIR="$value" "$uv_bin" tool uninstall semble >/dev/null 2>&1 && ok "removed the semble tool" || true
+      else warn "uv not found: run 'uv tool uninstall semble' yourself"; fi
+      ;;
+    uv-installed)
+      # uv's own uninstall steps (docs.astral.sh/uv/getting-started/installation).
+      if [ -x "$value" ]; then
+        "$value" cache clean >/dev/null 2>&1 || true
+        for d in "$("$value" python dir 2>/dev/null || true)" "$("$value" tool dir 2>/dev/null || true)"; do
+          if safe_path "$d" && [ -d "$d" ]; then rm -rf -- "$d"; rmdir "$(dirname "$d")" 2>/dev/null || true; fi
+        done
+        rm -f -- "$value"; ok "removed uv ($value) with its Python and tool folders"
+      fi
+      ;;
+    docker-stack)
+      if [ ! -f "$value/docker-compose.yml" ]; then warn "no docker-compose.yml in $value: stop the uals-milvus container yourself"; continue; fi
+      if ! have docker || ! docker info >/dev/null 2>&1; then warn "Docker is not running: stop the uals-milvus stack yourself"; continue; fi
+      env_args=(); [ ! -f "$value/.env" ] || env_args=(--env-file "$value/.env")
+      if [ "$PURGE" = 1 ]; then
+        say "stopping the Milvus stack and deleting its volume…"
+        (cd "$value" && docker compose ${env_args[@]+"${env_args[@]}"} down --volumes) || warn "docker compose down failed"
+      else
+        say "stopping the Milvus stack (volume kept; --purge deletes it)…"
+        (cd "$value" && docker compose ${env_args[@]+"${env_args[@]}"} down) || warn "docker compose down failed"
+      fi
+      ;;
+    *) warn "unknown manifest line: ${LINES[$i]}";;
+  esac
+done
+
+rm -f -- "$MANIFEST"
+rmdir "$DATA_DIR/removed-mcp" 2>/dev/null || true
+rmdir "$DATA_DIR" 2>/dev/null || true
+ok "install manifest removed"
+echo "Done. Not touched: Ollama, LM Studio, Docker, and anything that was on your machine before the install."
