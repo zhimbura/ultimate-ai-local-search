@@ -276,6 +276,28 @@ async fn search_while_indexing_is_partial() {
 }
 
 #[tokio::test]
+async fn search_reads_a_success_whose_snippet_quotes_an_error_or_status_text() {
+    let milvus = FakeMilvus::start();
+    for quoted in [
+        "is not indexed. Please index it first",
+        "has been lost (collection not found in Milvus)",
+        "This codebase is still being indexed",
+    ] {
+        let text = format!(
+            "Found 1 results for query: \"q\" in codebase '{ROOT}'\n\n1. Code snippet (rust) [sample-android]\n   Location: src/parse.rs:1-3\n   Rank: 1\n   Context: \n```rust\nconst TEXT: &str = \"{quoted}\";\n```\n"
+        );
+        let caller = FakeCaller::new();
+        caller.reply_with("search_code", text_output(&text));
+
+        let answer = backend(&caller, &milvus).search(&repo(), &request(10)).await.unwrap();
+
+        assert_eq!(answer.hits.len(), 1, "{quoted}");
+        assert!(answer.hits[0].snippet.as_deref().unwrap().contains(quoted), "{quoted}");
+        assert_eq!(answer.partial, None, "{quoted}");
+    }
+}
+
+#[tokio::test]
 async fn search_keeps_only_this_repository_when_a_parent_folder_is_indexed() {
     let milvus = FakeMilvus::start();
     let caller = FakeCaller::new();
