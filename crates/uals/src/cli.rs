@@ -13,7 +13,7 @@ use uals_core::workspace;
 
 use crate::args::{FormatArg, SearchArgs, StatusArgs, UsagesArgs, repos_in, workspace_folder};
 use crate::report::{any_refresh_failed, now_ms, render_refresh, render_status};
-use crate::{hook, mcp, setup};
+use crate::{doctor, hook, mcp, setup};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -46,6 +46,9 @@ pub enum Command {
         #[arg(long)]
         workspace: Option<PathBuf>,
     },
+    /// Check that uals and its backends are installed and work. Exits with 1 when a check failed;
+    /// a warning is not a failure.
+    Doctor(DoctorArgs),
     /// Run the MCP server on stdin and stdout.
     Mcp,
     /// Hooks for coding agents.
@@ -71,6 +74,14 @@ pub struct RefreshArgs {
     pub format: FormatArg,
 }
 
+/// The parameters of `doctor`.
+#[derive(Debug, Args)]
+pub struct DoctorArgs {
+    /// The output format; `detailed` is the same as `concise`.
+    #[arg(long, value_enum, default_value_t)]
+    pub format: FormatArg,
+}
+
 #[derive(Debug, Subcommand)]
 pub enum HookCommand {
     /// Claude Code `PostToolUse` hook for file edits: reads the hook input on stdin and updates the
@@ -80,6 +91,10 @@ pub enum HookCommand {
 
 /// Runs the command of `cli` and prints its output.
 pub async fn run(cli: Cli) -> Result<ExitCode> {
+    // A broken config is a result of `doctor`, not an error that stops it.
+    if let Command::Doctor(args) = &cli.command {
+        return doctor::run(cli.config.as_deref(), args.format).await;
+    }
     let config = Config::load(cli.config.as_deref())?;
     match cli.command {
         Command::Search(args) => {
@@ -111,6 +126,7 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
             let folder = workspace_folder(workspace.as_deref(), None)?;
             println!("{}", serde_json::to_string_pretty(&workspace::discover(&folder, &config)?)?);
         }
+        Command::Doctor(_) => unreachable!("handled before the config is loaded"),
         Command::Mcp => mcp::serve(config).await?,
         Command::Hook(HookCommand::PostEdit) => hook::post_edit(&config, std::io::stdin().lock()).await?,
     }

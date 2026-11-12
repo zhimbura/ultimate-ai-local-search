@@ -3,6 +3,7 @@
 
 pub mod args;
 pub mod cli;
+pub mod doctor;
 pub mod hook;
 pub mod lazy_caller;
 pub mod mcp;
