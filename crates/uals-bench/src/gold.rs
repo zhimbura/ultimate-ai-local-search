@@ -13,13 +13,18 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "snake_case")]
 #[value(rename_all = "snake_case")]
 pub enum QueryType {
+    /// A symbol name.
     Identifier,
+    /// A question in prose.
     Natural,
+    /// An answer spread over several repositories.
     CrossRepo,
+    /// A setting or other non-code file.
     Config,
 }
 
 impl QueryType {
+    /// The name used in reports and on the command line.
     pub fn as_str(self) -> &'static str {
         match self {
             QueryType::Identifier => "identifier",
@@ -33,11 +38,14 @@ impl QueryType {
 /// The half of the gold set: A is for tuning, B is held out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum Half {
+    /// The tuning half.
     A,
+    /// The held-out half.
     B,
 }
 
 impl Half {
+    /// The name used in reports.
     pub fn as_str(self) -> &'static str {
         match self {
             Half::A => "A",
@@ -50,19 +58,23 @@ impl Half {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum Role {
+    /// The best answer.
     #[default]
     Primary,
+    /// A good but not the best answer.
     Secondary,
 }
 
 /// A place in the code that answers a query.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Expected {
+    /// Repository name.
     pub repo: String,
     /// Relative to the repository root, with `/` separators.
     pub path: String,
     /// `[start, end]`, 1-based and inclusive.
     pub lines: [u32; 2],
+    /// How well the place answers the query.
     #[serde(default)]
     pub role: Role,
 }
@@ -70,12 +82,18 @@ pub struct Expected {
 /// One line of the queries file.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GoldQuery {
+    /// Unique within the file.
     pub id: String,
+    /// What the query tests.
     #[serde(rename = "type")]
     pub kind: QueryType,
+    /// The half of the gold set.
     pub half: Half,
+    /// The text sent to the engine.
     pub query: String,
+    /// The places that answer the query; at least one is `primary`.
     pub expected: Vec<Expected>,
+    /// Free text for the gold set author.
     #[serde(default)]
     pub notes: Option<String>,
 }
@@ -83,15 +101,20 @@ pub struct GoldQuery {
 /// Where a symbol is defined.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Definition {
+    /// Repository name.
     pub repo: String,
+    /// Relative to the repository root.
     pub path: String,
+    /// 1-based.
     pub line: u32,
 }
 
 /// Expected usages of a symbol in one file.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExpectedUsage {
+    /// Repository name.
     pub repo: String,
+    /// Relative to the repository root.
     pub path: String,
     /// The usage lines (1-based), one number per usage.
     pub lines: Vec<u32>,
@@ -100,16 +123,22 @@ pub struct ExpectedUsage {
 /// One line of the usages file.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GoldUsages {
+    /// Unique within the file.
     pub id: String,
+    /// The symbol whose usages are searched.
     pub symbol: String,
+    /// Where the symbol is defined; not counted as a usage.
     pub definition: Definition,
+    /// The usages, by file.
     pub expected_usages: Vec<ExpectedUsage>,
+    /// How the gold usages were collected.
     #[serde(default)]
     pub method: Option<String>,
 }
 
 /// A record of a JSONL gold file.
 pub trait Record {
+    /// The record id, unique within a file.
     fn id(&self) -> &str;
     /// Checks what serde cannot; the error is a reason without a position.
     fn validate(&self) -> std::result::Result<(), String>;

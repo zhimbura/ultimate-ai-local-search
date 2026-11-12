@@ -1,5 +1,5 @@
-//! Weighted reciprocal rank fusion (RRF). Implemented by track T6; the rules below and the cases
-//! in `tests/golden/fusion/` are the contract.
+//! Weighted reciprocal rank fusion (RRF). The rules below and the cases in `tests/golden/fusion/`
+//! are the contract.
 //!
 //! `fuse(query, kind, hits, spans, config)`:
 //! 1. Drop hits whose backend weight for `kind` is 0 (`FusionConfig::weight`), before grouping, so
@@ -58,16 +58,22 @@ pub fn fuse(
         group(hits, spans, config.merge_gap_lines).into_iter().map(|g| fuse_group(g, kind, target, config)).collect();
 
     sort_by_score(&mut candidates);
-    let mut free_pins = if target.is_some() { config.max_pinned } else { 0 };
-    for candidate in &mut candidates {
+    let max_pins = if target.is_some() { config.max_pinned } else { 0 };
+    pin_definitions(&mut candidates, max_pins);
+    // Stable: pinned groups keep their score order, and so do the rest.
+    candidates.sort_by_key(|candidate| !candidate.fused.pinned);
+    candidates.into_iter().map(|candidate| candidate.fused).collect()
+}
+
+/// Pins the first `max_pins` candidates (in their current order) that define the queried name.
+fn pin_definitions(candidates: &mut [Candidate], max_pins: usize) {
+    let mut free_pins = max_pins;
+    for candidate in candidates {
         if candidate.defines_query && free_pins > 0 {
             candidate.fused.pinned = true;
             free_pins -= 1;
         }
     }
-    // Stable: pinned groups keep their score order, and so do the rest.
-    candidates.sort_by_key(|candidate| !candidate.fused.pinned);
-    candidates.into_iter().map(|candidate| candidate.fused).collect()
 }
 
 /// What one hit adds to its group's score.
@@ -75,21 +81,10 @@ fn contribution(hit: &Hit, kind: QueryKind, config: &FusionConfig) -> f64 {
     config.weight(kind, hit.backend) / (config.rrf_k + f64::from(hit.rank) + 1.0)
 }
 
+/// Scores one group and fills the fields of its `FusedHit`.
 fn fuse_group(group: HitGroup, kind: QueryKind, target: Option<&str>, config: &FusionConfig) -> Candidate {
     let contributions: Vec<f64> = group.hits.iter().map(|hit| contribution(hit, kind, config)).collect();
-
-    // Per backend: its best contribution and the lowest rank it gave.
-    let mut per_backend: BTreeMap<BackendId, (f64, u32)> = BTreeMap::new();
-    for (hit, &value) in group.hits.iter().zip(&contributions) {
-        let entry = per_backend.entry(hit.backend).or_insert((value, hit.rank));
-        entry.0 = entry.0.max(value);
-        entry.1 = entry.1.min(hit.rank);
-    }
-    let score = per_backend.values().map(|&(value, _)| value).sum();
-    let mut by_contribution: Vec<(BackendId, f64, u32)> =
-        per_backend.into_iter().map(|(backend, (value, rank))| (backend, value, rank)).collect();
-    by_contribution.sort_by(|a, b| b.1.total_cmp(&a.1)); // stable: ties stay in backend order
-    let sources = by_contribution.into_iter().map(|(backend, _, rank)| SourceRef { backend, rank }).collect();
+    let (score, sources) = score_and_sources(&group.hits, &contributions);
 
     let ranked: Vec<(&Hit, f64)> = group.hits.iter().zip(contributions.iter().copied()).collect();
     let focus = best_of(ranked.iter().copied());
@@ -119,6 +114,24 @@ fn fuse_group(group: HitGroup, kind: QueryKind, target: Option<&str>, config: &F
             sources,
         },
     }
+}
+
+/// The group score (rule 4) and its sources (one per backend, best rank, larger contribution first).
+/// `contributions[i]` belongs to `hits[i]`.
+fn score_and_sources(hits: &[Hit], contributions: &[f64]) -> (f64, Vec<SourceRef>) {
+    // Per backend: its best contribution and the lowest rank it gave.
+    let mut per_backend: BTreeMap<BackendId, (f64, u32)> = BTreeMap::new();
+    for (hit, &value) in hits.iter().zip(contributions) {
+        let entry = per_backend.entry(hit.backend).or_insert((value, hit.rank));
+        entry.0 = entry.0.max(value);
+        entry.1 = entry.1.min(hit.rank);
+    }
+    let score = per_backend.values().map(|&(value, _)| value).sum();
+    let mut by_contribution: Vec<(BackendId, f64, u32)> =
+        per_backend.into_iter().map(|(backend, (value, rank))| (backend, value, rank)).collect();
+    by_contribution.sort_by(|a, b| b.1.total_cmp(&a.1)); // stable: ties stay in backend order
+    let sources = by_contribution.into_iter().map(|(backend, _, rank)| SourceRef { backend, rank }).collect();
+    (score, sources)
 }
 
 /// The hit with the largest contribution; ties go to the lower rank, the earlier start line, then
@@ -154,6 +167,7 @@ fn sort_by_score(candidates: &mut [Candidate]) {
     }
 }
 
+/// Orders tied candidates: more backends first, then repo, path, start and end line ascending.
 fn tie_break(a: &Candidate, b: &Candidate) -> Ordering {
     let (a, b) = (&a.fused, &b.fused);
     b.sources
