@@ -1,4 +1,4 @@
-//! Semble adapter (track T4): semantic search through Semble's MCP `search` tool. Findings and
+//! Semble adapter: semantic search through Semble's MCP `search` tool. Findings and
 //! recorded outputs: `docs/spikes/s1-rmcp.md` and `tests/fixtures/semble/`.
 //!
 //! Semble builds an index on the first `search` of a path and keeps it on disk, so there is no
@@ -24,6 +24,9 @@ const GLOB_OVERFETCH: usize = 4;
 const WARM_CONCURRENCY: usize = 4;
 /// The query used by `warm`: any text works, the point is to make Semble build the index.
 const WARM_QUERY: &str = "main entry point";
+/// `max_snippet_lines` value that makes Semble leave out the snippet text; the adapter reports
+/// locations only.
+const NO_SNIPPET_LINES: u32 = 0;
 
 /// Semantic search over one repository at a time.
 pub struct SembleBackend {
@@ -39,6 +42,7 @@ struct Inner {
 }
 
 impl SembleBackend {
+    /// Searches through Semble's MCP `search` tool, called on `caller`.
     pub fn new(caller: Arc<dyn McpToolCaller>, config: SembleConfig) -> Self {
         Self { inner: Arc::new(Inner { caller, config, indexed: Mutex::new(HashMap::new()) }) }
     }
@@ -51,7 +55,7 @@ impl Inner {
             "query": query,
             "repo": repo.root.to_string_lossy(),
             "top_k": top_k.max(1),
-            "max_snippet_lines": 0,
+            "max_snippet_lines": NO_SNIPPET_LINES,
         });
         if let (Some(content), Some(map)) = (self.config.content, arguments.as_object_mut()) {
             map.insert("content".to_owned(), Value::String(content_name(content).to_owned()));
@@ -62,6 +66,7 @@ impl Inner {
         Ok(results)
     }
 
+    /// Remembers the time of the first successful search of `root`.
     fn mark_indexed(&self, root: &Path) {
         let now = SystemTime::now().duration_since(UNIX_EPOCH).ok().and_then(|d| u64::try_from(d.as_millis()).ok());
         if let (Ok(mut indexed), Some(now)) = (self.indexed.lock(), now) {
@@ -70,6 +75,7 @@ impl Inner {
     }
 }
 
+/// The name Semble's `content` argument expects.
 fn content_name(content: SembleContent) -> &'static str {
     match content {
         SembleContent::Code => "code",
@@ -211,6 +217,7 @@ fn parse_inner_json(text: &str) -> Result<Value, BackendError> {
     Ok(value)
 }
 
+/// The first non-blank line, trimmed.
 fn first_line(text: &str) -> &str {
     text.lines().map(str::trim).find(|line| !line.is_empty()).unwrap_or("")
 }
@@ -220,11 +227,13 @@ fn first_line(text: &str) -> &str {
 struct PathFilter(Gitignore);
 
 impl PathFilter {
+    /// Whether `relative_path` or one of its folders is selected.
     fn matches(&self, relative_path: &str) -> bool {
         self.0.matched_path_or_any_parents(relative_path, false).is_ignore()
     }
 }
 
+/// `None` when `globs` is empty, so every path is allowed.
 fn path_filter(globs: &[String]) -> Result<Option<PathFilter>, BackendError> {
     if globs.is_empty() {
         return Ok(None);

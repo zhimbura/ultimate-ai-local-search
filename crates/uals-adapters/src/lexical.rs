@@ -1,4 +1,4 @@
-//! In-process lexical search (track T3) with the ripgrep crates `ignore`, `grep-searcher` and
+//! In-process lexical search with the ripgrep crates `ignore`, `grep-searcher` and
 //! `grep-regex`, plus its ranker. Findings, the recommended walker config and the list of
 //! regression tests: `docs/spikes/s3-lexical.md`.
 //!
@@ -19,6 +19,8 @@
 mod rank;
 mod scan;
 
+use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -31,11 +33,11 @@ use uals_core::types::{
     BackendAnswer, BackendId, Hit, IndexState, LineRange, QueryKind, Repo, SearchRequest, Usage, UsageAnswer,
 };
 
-use rank::{Profile, Ranker, declaration_regex, natural_words};
+use rank::{Profile, Ranked, Ranker, declaration_regex, natural_words};
 use scan::{ScanOutput, ScanPlan, scan};
 
-/// The scan uses this share of the orchestrator's deadline; the rest is for ranking and the
-/// hand-over of the answer.
+/// The scan uses `DEADLINE_SHARE / DEADLINE_DIVISOR` (90%) of the orchestrator's deadline; the
+/// rest is for ranking and the hand-over of the answer.
 const DEADLINE_SHARE: u32 = 9;
 const DEADLINE_DIVISOR: u32 = 10;
 /// Used when `now + deadline` does not fit into an `Instant`.
@@ -63,11 +65,13 @@ impl LexicalBackend {
         Self { config, deadline, ranker }
     }
 
+    /// The moment a scan that began at `start` stops by itself.
     fn stop_at(&self, start: Instant) -> Instant {
         let scan_time = self.deadline / DEADLINE_DIVISOR * DEADLINE_SHARE;
         start.checked_add(scan_time).unwrap_or_else(|| start + FAR_FUTURE)
     }
 
+    /// A scan of the whole repository with the configured caps; callers adjust what differs.
     fn plan(&self, repo: &Repo, matcher: RegexMatcher, start: Instant) -> ScanPlan {
         ScanPlan {
             root: repo.root.clone(),
@@ -83,6 +87,7 @@ impl LexicalBackend {
     }
 }
 
+/// `Unavailable` when the repository root is not a directory.
 fn check_root(repo: &Repo) -> Result<(), BackendError> {
     if repo.root.is_dir() {
         Ok(())
@@ -136,6 +141,7 @@ fn build_query(request: &SearchRequest) -> Result<Option<Query>, BackendError> {
     Ok(Some(query))
 }
 
+/// Why the scan did not cover everything, `None` when it did.
 fn partial_reason(output: &ScanOutput, cap: usize) -> Option<String> {
     let mut reasons = Vec::new();
     if output.timed_out {
@@ -147,14 +153,50 @@ fn partial_reason(output: &ScanOutput, cap: usize) -> Option<String> {
     if reasons.is_empty() { None } else { Some(reasons.join("; ")) }
 }
 
+/// Turns ranked matches into hits, best first: at most `max_per_file` per file and `fetch_limit`
+/// in all.
+fn hits_within_caps(
+    repo: &Repo,
+    profile: &Profile,
+    ranked: Vec<Ranked>,
+    max_per_file: usize,
+    fetch_limit: usize,
+) -> Vec<Hit> {
+    let mut taken_per_file: HashMap<PathBuf, usize> = HashMap::new();
+    let mut hits = Vec::new();
+    for item in ranked {
+        let taken = taken_per_file.entry(item.path.clone()).or_insert(0);
+        if *taken >= max_per_file {
+            continue;
+        }
+        *taken += 1;
+        if hits.len() >= fetch_limit {
+            break;
+        }
+        let rank = u32::try_from(hits.len()).unwrap_or(u32::MAX);
+        hits.push(Hit {
+            backend: BackendId::Lexical,
+            repo: repo.name.clone(),
+            path: item.path,
+            lines: LineRange::line(item.line),
+            symbol: if item.definition { profile.symbol().map(str::to_owned) } else { None },
+            symbol_kind: None,
+            is_definition: item.definition,
+            snippet: Some(item.text),
+            rank,
+            score: Some(item.score),
+        });
+    }
+    hits
+}
+
 #[async_trait]
 impl SearchBackend for LexicalBackend {
     fn id(&self) -> BackendId {
         BackendId::Lexical
     }
 
-    fn supports(&self, kind: QueryKind) -> bool {
-        let _ = kind;
+    fn supports(&self, _kind: QueryKind) -> bool {
         true
     }
 
@@ -169,41 +211,16 @@ impl SearchBackend for LexicalBackend {
         let ranker = Arc::clone(&self.ranker);
         let config = self.config.clone();
         let repo = repo.clone();
-        let query_text = request.query.clone();
+        let penalize_tests = !Ranker::mentions_test_code(&request.query);
         let fetch_limit = request.fetch_limit;
         let profile = query.profile;
 
         tokio::task::spawn_blocking(move || {
             let output = scan(plan)?;
             let partial = partial_reason(&output, config.max_candidates);
-            let mut ranked = ranker.rank(&repo.root, &profile, !Ranker::exempt(&query_text), output.matches);
+            let mut ranked = ranker.rank(&repo.root, &profile, penalize_tests, output.matches);
             ranked.truncate(config.max_candidates);
-
-            let mut per_file = std::collections::HashMap::new();
-            let mut hits = Vec::new();
-            for item in ranked {
-                let taken = per_file.entry(item.path.clone()).or_insert(0usize);
-                if *taken >= config.max_hits_per_file {
-                    continue;
-                }
-                *taken += 1;
-                if hits.len() >= fetch_limit {
-                    break;
-                }
-                let rank = u32::try_from(hits.len()).unwrap_or(u32::MAX);
-                hits.push(Hit {
-                    backend: BackendId::Lexical,
-                    repo: repo.name.clone(),
-                    path: item.path,
-                    lines: LineRange::line(item.line),
-                    symbol: if item.definition { profile.symbol().map(str::to_owned) } else { None },
-                    symbol_kind: None,
-                    is_definition: item.definition,
-                    snippet: Some(item.text),
-                    rank,
-                    score: Some(item.score),
-                });
-            }
+            let hits = hits_within_caps(&repo, &profile, ranked, config.max_hits_per_file, fetch_limit);
             Ok(BackendAnswer { hits, stale: None, partial })
         })
         .await

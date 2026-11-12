@@ -1,4 +1,4 @@
-//! A long-lived MCP server in a child process, driven with the rmcp client (track T4).
+//! A long-lived MCP server in a child process, driven with the rmcp client.
 //! Findings, a working snippet, deadlines and the restart strategy: `docs/spikes/s1-rmcp.md`.
 //!
 //! Life cycle of an [`McpChild`]:
@@ -39,8 +39,14 @@ const STDERR_LINE_MAX: usize = 400;
 const KILL_GRACE: Duration = Duration::from_millis(200);
 /// Consecutive failures after which respawning backs off.
 const BACKOFF_AFTER_FAILURES: u32 = 3;
+/// Delay after the first failure past the threshold; it doubles with every further failure.
 const BACKOFF_BASE: Duration = Duration::from_secs(1);
 const BACKOFF_MAX: Duration = Duration::from_secs(60);
+/// After a failed handshake, how long to wait for the stderr drain task to read what the server
+/// said before it died.
+const STDERR_DRAIN_GRACE: Duration = Duration::from_millis(50);
+/// Variables every child receives from the current environment, when set.
+const BASE_ENV_VARS: [&str; 6] = ["PATH", "HOME", "USER", "TMPDIR", "LANG", "LC_ALL"];
 
 type StderrTail = Arc<StdMutex<VecDeque<String>>>;
 
@@ -56,20 +62,21 @@ pub struct ChildSpec {
     pub name: String,
     /// Executable. A bare name is looked up in the child's `PATH`.
     pub program: PathBuf,
+    /// Command-line arguments.
     pub args: Vec<String>,
     /// Literal environment variables.
     pub env: BTreeMap<String, String>,
     /// Names of variables copied from the current environment when set.
     pub pass_env: Vec<String>,
+    /// Working directory of the child; the current one when `None`.
     pub cwd: Option<PathBuf>,
 }
 
 impl ChildSpec {
     /// The environment the child is started with (see the type documentation).
     pub fn child_env(&self) -> BTreeMap<String, String> {
-        const BASE: [&str; 6] = ["PATH", "HOME", "USER", "TMPDIR", "LANG", "LC_ALL"];
         let mut env = BTreeMap::new();
-        for name in BASE.iter().copied().chain(self.pass_env.iter().map(String::as_str)) {
+        for name in BASE_ENV_VARS.iter().copied().chain(self.pass_env.iter().map(String::as_str)) {
             if let Some(value) = std::env::var_os(name) {
                 env.insert(name.to_owned(), value.to_string_lossy().into_owned());
             }
@@ -134,8 +141,7 @@ impl McpChild {
             generation: AtomicU64::new(0),
         });
         let conn = shared.connect().await?;
-        shared.pgid.store(conn.group.pgid(), Ordering::SeqCst);
-        shared.slot.lock().await.conn = Some(Arc::new(conn));
+        shared.adopt(&mut *shared.slot.lock().await, conn);
         Ok(Self { shared })
     }
 
@@ -160,9 +166,7 @@ impl Shared {
             }
             tracing::warn!(server = %self.spec.name, "mcp server is gone, it will be respawned");
             conn.group.terminate();
-            slot.conn = None;
-            self.pgid.store(0, Ordering::SeqCst);
-            slot.note_failure();
+            self.forget_connection(&mut slot);
         }
         if let Some(until) = slot.backoff_until {
             let now = Instant::now();
@@ -176,12 +180,7 @@ impl Shared {
             }
         }
         match self.connect().await {
-            Ok(conn) => {
-                self.pgid.store(conn.group.pgid(), Ordering::SeqCst);
-                let conn = Arc::new(conn);
-                slot.conn = Some(Arc::clone(&conn));
-                Ok(conn)
-            }
+            Ok(conn) => Ok(self.adopt(&mut slot, conn)),
             Err(error) => {
                 slot.note_failure();
                 Err(error)
@@ -195,13 +194,28 @@ impl Shared {
         let mut slot = self.slot.lock().await;
         let is_current = slot.conn.as_ref().is_some_and(|current| current.generation == conn.generation);
         if is_current {
-            slot.conn = None;
-            self.pgid.store(0, Ordering::SeqCst);
-            slot.note_failure();
+            self.forget_connection(&mut slot);
         }
         conn.group.terminate();
     }
 
+    /// Makes `conn` the current connection and publishes its process group.
+    fn adopt(&self, slot: &mut Slot, conn: Connection) -> Arc<Connection> {
+        self.pgid.store(conn.group.pgid(), Ordering::SeqCst);
+        let conn = Arc::new(conn);
+        slot.conn = Some(Arc::clone(&conn));
+        conn
+    }
+
+    /// Drops the current connection (its process group is stopped by the caller) and counts the
+    /// failure.
+    fn forget_connection(&self, slot: &mut Slot) {
+        slot.conn = None;
+        self.pgid.store(0, Ordering::SeqCst);
+        slot.note_failure();
+    }
+
+    /// Clears the failure count and the backoff after a call went through.
     async fn record_success(&self) {
         let mut slot = self.slot.lock().await;
         slot.failures = 0;
@@ -241,27 +255,31 @@ impl Shared {
             tokio::spawn(drain_stderr(name.clone(), stderr, Arc::clone(&stderr_tail)));
         }
 
-        let client = match tokio::time::timeout(HANDSHAKE_TIMEOUT, ().serve(transport)).await {
-            Ok(Ok(client)) => client,
-            Ok(Err(error)) => {
-                // Let the drain task read what the server said before it died.
-                tokio::time::sleep(Duration::from_millis(50)).await;
-                return Err(BackendError::Failed(format!(
-                    "{name} handshake failed: {error}{}",
-                    stderr_suffix(&stderr_tail)
-                )));
-            }
-            Err(_) => {
-                return Err(BackendError::Unavailable(format!(
-                    "{name} did not answer the handshake within {}s{}",
-                    HANDSHAKE_TIMEOUT.as_secs(),
-                    stderr_suffix(&stderr_tail)
-                )));
-            }
-        };
+        let client = handshake(name, transport, &stderr_tail).await?;
         let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
         tracing::debug!(server = %name, pid, generation, "mcp server started");
         Ok(Connection { generation, client, group, stderr_tail })
+    }
+}
+
+/// Runs the MCP `initialize` handshake within [`HANDSHAKE_TIMEOUT`]. A failure carries the
+/// server's last stderr lines.
+async fn handshake(
+    name: &str,
+    transport: TokioChildProcess,
+    stderr_tail: &StdMutex<VecDeque<String>>,
+) -> Result<RunningService<RoleClient, ()>, BackendError> {
+    match tokio::time::timeout(HANDSHAKE_TIMEOUT, ().serve(transport)).await {
+        Ok(Ok(client)) => Ok(client),
+        Ok(Err(error)) => {
+            tokio::time::sleep(STDERR_DRAIN_GRACE).await;
+            Err(BackendError::Failed(format!("{name} handshake failed: {error}{}", stderr_suffix(stderr_tail))))
+        }
+        Err(_) => Err(BackendError::Unavailable(format!(
+            "{name} did not answer the handshake within {}s{}",
+            HANDSHAKE_TIMEOUT.as_secs(),
+            stderr_suffix(stderr_tail)
+        ))),
     }
 }
 
@@ -273,6 +291,8 @@ fn backoff_for(failures: u32) -> Option<Duration> {
     Some(BACKOFF_BASE.saturating_mul(factor).min(BACKOFF_MAX))
 }
 
+/// The executable to start: a path with folders as is, a bare name looked up in the child's
+/// `PATH`.
 fn resolve_program(spec: &ChildSpec, env: &BTreeMap<String, String>) -> Result<PathBuf, BackendError> {
     if spec.program.components().count() > 1 {
         return Ok(spec.program.clone());
@@ -336,10 +356,12 @@ impl McpToolCaller for McpChild {
     }
 }
 
+/// Whether the error means the server process or its pipe is gone.
 fn is_transport_failure(error: &ServiceError) -> bool {
     matches!(error, ServiceError::TransportClosed | ServiceError::TransportSend(_))
 }
 
+/// The `BackendError` for a failed call, with the server's last stderr lines.
 fn map_service_error(server: &str, tool: &str, error: &ServiceError, conn: &Connection) -> BackendError {
     BackendError::Failed(format!("{server}: call to '{tool}' failed: {error}{}", stderr_suffix(&conn.stderr_tail)))
 }
@@ -386,6 +408,7 @@ async fn drain_stderr(name: String, stderr: impl AsyncRead + Unpin, tail: Stderr
     }
 }
 
+/// The server's last stderr lines as an error-message suffix, empty when it printed nothing.
 fn stderr_suffix(tail: &StdMutex<VecDeque<String>>) -> String {
     let text = tail.lock().map(|tail| tail.iter().cloned().collect::<Vec<_>>().join("\n")).unwrap_or_default();
     if text.is_empty() { String::new() } else { format!("; server stderr (last lines):\n{text}") }
@@ -398,10 +421,12 @@ struct GroupGuard {
 }
 
 impl GroupGuard {
+    /// The process group id (equal to the child's pid).
     fn pgid(&self) -> i32 {
         self.pgid
     }
 
+    /// Whether the process group still has a process.
     #[cfg(unix)]
     fn exists(&self) -> bool {
         use nix::errno::Errno;

@@ -8,6 +8,9 @@ use uals_core::types::SymbolKind;
 
 use super::runner::CommandOutput;
 
+/// How much of a non-JSON output an error message quotes.
+const PREVIEW_CHARS: usize = 80;
+
 /// Parses the stdout of a command that supports `--format json`.
 ///
 /// A missing index is not an error for ast-index: it exits 0 and prints plain text. Output that
@@ -41,17 +44,20 @@ pub fn missing_index() -> BackendError {
     BackendError::Unavailable("ast-index has no index for this repository; run `ast-index rebuild` in it".into())
 }
 
+/// The first line of `text`, cut to [`PREVIEW_CHARS`] characters.
 fn preview(text: &str) -> String {
     let line = text.lines().next().unwrap_or("");
-    line.chars().take(80).collect()
+    line.chars().take(PREVIEW_CHARS).collect()
 }
 
+/// Output of `symbol`.
 #[derive(Debug, Deserialize)]
 pub struct SymbolList {
     #[serde(default)]
     pub items: Vec<SymbolItem>,
 }
 
+/// One definition printed by `symbol`; `path` is relative to the project root.
 #[derive(Debug, Deserialize)]
 pub struct SymbolItem {
     pub name: String,
@@ -61,6 +67,7 @@ pub struct SymbolItem {
     pub path: String,
 }
 
+/// Output of `usages`.
 #[derive(Debug, Deserialize)]
 pub struct UsageList {
     #[serde(default)]
@@ -69,12 +76,14 @@ pub struct UsageList {
     pub pagination: Pagination,
 }
 
+/// Paging flags of a list answer.
 #[derive(Debug, Default, Deserialize)]
 pub struct Pagination {
     #[serde(default)]
     pub truncated: bool,
 }
 
+/// One usage printed by `usages`; `test` marks a file in test code.
 #[derive(Debug, Deserialize)]
 pub struct UsageItem {
     pub line: u32,
@@ -85,6 +94,7 @@ pub struct UsageItem {
     pub test: bool,
 }
 
+/// Output of `explore`: matching symbols plus the outlines of their files.
 #[derive(Debug, Deserialize)]
 pub struct Explore {
     #[serde(default)]
@@ -93,6 +103,7 @@ pub struct Explore {
     pub files: Vec<ExploreFile>,
 }
 
+/// One symbol of an `explore` answer.
 #[derive(Debug, Deserialize)]
 pub struct ExploreSymbol {
     pub name: String,
@@ -104,6 +115,7 @@ pub struct ExploreSymbol {
     pub score: Option<f64>,
 }
 
+/// The outline of one file in an `explore` answer.
 #[derive(Debug, Deserialize)]
 pub struct ExploreFile {
     pub path: String,
@@ -111,6 +123,7 @@ pub struct ExploreFile {
     pub outline: Vec<OutlineEntry>,
 }
 
+/// One outline row; `end_line` is the last line of the symbol when known.
 #[derive(Debug, Deserialize)]
 pub struct OutlineEntry {
     pub name: String,
@@ -119,12 +132,14 @@ pub struct OutlineEntry {
     pub end_line: Option<u32>,
 }
 
+/// Output of `query`: the rows of the SQL answer.
 #[derive(Debug, Deserialize)]
 pub struct QueryResult<T> {
     #[serde(default = "Vec::new")]
     pub rows: Vec<T>,
 }
 
+/// One row of the symbol-extent SQL ([`spans_sql`]).
 #[derive(Debug, Deserialize)]
 pub struct SpanRow {
     pub path: String,
@@ -136,6 +151,7 @@ pub struct SpanRow {
     pub end_line: Option<u32>,
 }
 
+/// The row of the index-state SQL ([`STATE_SQL`]).
 #[derive(Debug, Deserialize)]
 pub struct StateRow {
     #[serde(default)]

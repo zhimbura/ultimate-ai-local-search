@@ -1,4 +1,4 @@
-//! Process execution behind a small seam, so tests can feed recorded outputs.
+//! Process execution behind a small seam, so a test can feed recorded outputs.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -11,13 +11,16 @@ use uals_core::backend::BackendError;
 /// What an `ast-index` run printed.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CommandOutput {
+    /// Everything the process wrote to stdout, decoded lossily.
     pub stdout: String,
+    /// Everything the process wrote to stderr, decoded lossily.
     pub stderr: String,
     /// `None` when the process was killed by a signal.
     pub exit_code: Option<i32>,
 }
 
 impl CommandOutput {
+    /// True when the process exited with code 0.
     pub fn success(&self) -> bool {
         self.exit_code == Some(0)
     }
@@ -35,6 +38,11 @@ pub trait AstIndexRunner: Send + Sync {
     fn index_exists(&self, root: &Path) -> bool;
 }
 
+/// Environment variables that name the database file directly (the first one set wins).
+const DB_PATH_VARS: [&str; 2] = ["AST_INDEX_DB_PATH", "KOTLIN_INDEX_DB_PATH"];
+const CACHE_DIR_VAR: &str = "AST_INDEX_CACHE_DIR";
+const DB_FILE_NAME: &str = "index.db";
+
 /// Spawns the real binary.
 pub struct ProcessRunner {
     binary: String,
@@ -44,6 +52,7 @@ pub struct ProcessRunner {
 }
 
 impl ProcessRunner {
+    /// Runs `binary`, a program name looked up in `PATH` or a path.
     pub fn new(binary: impl Into<String>) -> Self {
         Self { binary: binary.into(), env: Vec::new() }
     }
@@ -55,6 +64,8 @@ impl ProcessRunner {
         self
     }
 
+    /// The value of `name`: the runner's own variables first, then the process environment;
+    /// empty values count as unset.
     fn var(&self, name: &str) -> Option<OsString> {
         let own = self.env.iter().rev().find(|(key, _)| key == name).map(|(_, value)| value.clone());
         own.or_else(|| std::env::var_os(name)).filter(|value| !value.is_empty())
@@ -93,14 +104,14 @@ impl ProcessRunner {
     /// Where ast-index keeps the database of `root`: `<cache>/<djb2 hash of the root>/index.db`,
     /// or the file named by `AST_INDEX_DB_PATH`. `None` when no cache folder can be determined.
     fn index_db_path(&self, root: &Path) -> Option<PathBuf> {
-        if let Some(path) = self.var("AST_INDEX_DB_PATH").or_else(|| self.var("KOTLIN_INDEX_DB_PATH")) {
+        if let Some(path) = DB_PATH_VARS.iter().find_map(|name| self.var(name)) {
             return Some(PathBuf::from(path));
         }
-        let base = match self.var("AST_INDEX_CACHE_DIR") {
+        let base = match self.var(CACHE_DIR_VAR) {
             Some(dir) => PathBuf::from(dir),
             None => self.default_cache_base()?,
         };
-        Some(base.join(djb2(&root.to_string_lossy())).join("index.db"))
+        Some(base.join(djb2(&root.to_string_lossy())).join(DB_FILE_NAME))
     }
 
     fn default_cache_base(&self) -> Option<PathBuf> {

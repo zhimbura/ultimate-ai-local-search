@@ -69,6 +69,8 @@ pub(super) enum IndexReply {
     Failed(String),
 }
 
+/// Longest text an error message quotes from a server reply.
+const ABBREVIATE_MAX_CHARS: usize = 300;
 const RESULT_START: &str = "\n\n1. Code snippet (";
 
 /// Parses a `search_code` text (`handleSearchCode`, handlers.js:567-747).
@@ -94,6 +96,7 @@ pub(super) fn parse_search(text: &str, is_error: bool) -> SearchReply {
     SearchReply::Failed(format!("unexpected claude-context reply: {}", abbreviate(text)))
 }
 
+/// The reply for an `isError` search answer.
 fn error_reply(text: &str) -> SearchReply {
     if looks_unreachable(text) {
         SearchReply::Unreachable(abbreviate(text))
@@ -102,6 +105,7 @@ fn error_reply(text: &str) -> SearchReply {
     }
 }
 
+/// Parses the header and the numbered result blocks of a successful search.
 fn parse_results(text: &str) -> SearchReply {
     let Some(start) = text.find(RESULT_START) else {
         return SearchReply::Failed(format!("claude-context result list not found: {}", abbreviate(text)));
@@ -251,17 +255,18 @@ fn looks_unreachable(text: &str) -> bool {
     text.contains("ECONNREFUSED") || text.contains("UNAVAILABLE")
 }
 
+/// The text between `marker` and the next closing quote, `None` when `marker` is absent.
 fn quoted_after(text: &str, marker: &str) -> Option<String> {
     let after = &text[text.find(marker)? + marker.len()..];
     let end = after.find("'.").or_else(|| after.find('\''))?;
     Some(after[..end].to_string())
 }
 
-/// The first line of a text, cut at 300 characters.
+/// The first line of a text, cut at [`ABBREVIATE_MAX_CHARS`] characters.
 pub(super) fn abbreviate(text: &str) -> String {
     let line = text.lines().next().unwrap_or_default().trim();
-    let mut out: String = line.chars().take(300).collect();
-    if line.chars().count() > 300 {
+    let mut out: String = line.chars().take(ABBREVIATE_MAX_CHARS).collect();
+    if line.chars().count() > ABBREVIATE_MAX_CHARS {
         out.push_str("...");
     }
     out

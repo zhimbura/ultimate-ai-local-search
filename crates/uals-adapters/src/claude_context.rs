@@ -1,6 +1,6 @@
-//! claude-context adapter (track T5): semantic search through `@zilliz/claude-context-mcp` 0.1.15
-//! (Milvus and an embedding server behind it), driven through [`McpToolCaller`]. Findings and
-//! recorded outputs: `docs/spikes/s1-rmcp.md` and `tests/fixtures/claude_context/`.
+//! claude-context adapter: semantic search through `@zilliz/claude-context-mcp` 0.1.15 (Milvus
+//! and an embedding server behind it), driven through [`McpToolCaller`]. Findings and recorded
+//! outputs: `docs/spikes/s1-rmcp.md` and `tests/fixtures/claude_context/`.
 //!
 //! # How a call goes
 //!
@@ -51,18 +51,29 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
-use ignore::overrides::{Override, OverrideBuilder};
 use serde_json::json;
 use tracing::{debug, warn};
 use uals_core::backend::{BackendError, McpToolCaller, SearchBackend, ToolOutput};
 use uals_core::config::ClaudeContextConfig;
 use uals_core::types::{BackendAnswer, BackendId, Hit, IndexState, QueryKind, Repo, SearchRequest};
 
-use self::parse::{IndexReply, SearchReply, StatusReply, abbreviate, parse_index, parse_search, parse_status};
+use crate::ast_index::PathFilter;
+
+use self::parse::{
+    IndexReply, ParsedResult, SearchReply, StatusReply, abbreviate, parse_index, parse_search, parse_status,
+};
 
 /// The server refuses more than 50 results (`Math.min(limit, 50)`, handlers.js:672).
 const MAX_RESULTS: usize = 50;
 const DEFAULT_MILVUS_ADDRESS: &str = "127.0.0.1:19530";
+/// Port added to a `MILVUS_ADDRESS` that names none: Milvus' own port, or 443 behind `https://`.
+const DEFAULT_MILVUS_PORT: u16 = 19530;
+const HTTPS_PORT: u16 = 443;
+/// The name resolution of the probe cannot be interrupted, so the probe stops waiting for it
+/// this long after the connect budget.
+const PROBE_RESOLVE_GRACE: Duration = Duration::from_millis(100);
+const NOTE_STILL_INDEXING: &str = "claude-context is still indexing this repository, results may be incomplete";
+const NOTE_RESULT_CAP: &str = "claude-context returns at most 50 results";
 const MILVUS_ADDRESS_VAR: &str = "MILVUS_ADDRESS";
 /// How long the Milvus probe waits. Milvus is local; a slower answer counts as down.
 pub const MILVUS_PROBE_TIMEOUT: Duration = Duration::from_millis(300);
@@ -77,6 +88,7 @@ pub struct ClaudeContextBackend {
 }
 
 impl ClaudeContextBackend {
+    /// Searches through the claude-context MCP server behind `caller`.
     pub fn new(caller: Arc<dyn McpToolCaller>, config: ClaudeContextConfig) -> Self {
         Self { caller, config, context_dir: None }
     }
@@ -111,14 +123,17 @@ impl ClaudeContextBackend {
         }
     }
 
+    /// `Unavailable` when Milvus does not accept connections.
     async fn ensure_milvus(&self) -> Result<(), BackendError> {
         self.probe_milvus().await.map_err(BackendError::Unavailable)
     }
 
+    /// Calls a server tool; a dead server is reported as `Unavailable`.
     async fn call(&self, tool: &str, arguments: serde_json::Value) -> Result<ToolOutput, BackendError> {
         self.caller.call_tool(tool, arguments).await.map_err(closed_transport_is_unavailable)
     }
 
+    /// The indexing status of the repository.
     async fn status(&self, repo: &Repo) -> Result<StatusReply, BackendError> {
         let output = self.call("get_indexing_status", json!({ "path": root_str(repo)? })).await?;
         Ok(parse_status(&joined_text(&output)?, output.is_error))
@@ -180,7 +195,7 @@ impl SearchBackend for ClaudeContextBackend {
 
     async fn search(&self, repo: &Repo, request: &SearchRequest) -> Result<BackendAnswer, BackendError> {
         self.ensure_milvus().await?;
-        let filter = path_filter(&repo.root, &request.paths)?;
+        let filter = PathFilter::new(&repo.root, &request.paths)?;
         let limit = request.fetch_limit.clamp(1, MAX_RESULTS);
         let arguments = json!({ "path": root_str(repo)?, "query": request.query, "limit": limit });
         let output = self.call("search_code", arguments).await?;
@@ -192,49 +207,22 @@ impl SearchBackend for ClaudeContextBackend {
                 }
                 let capped = request.fetch_limit > MAX_RESULTS && results.len() >= MAX_RESULTS;
                 let base = root.map_or_else(|| repo.root.clone(), PathBuf::from);
-                let mut hits = Vec::with_capacity(results.len());
-                for result in results {
-                    let path = base.join(&result.rel_path);
-                    // A parent folder can be indexed as one codebase: keep this repository's files.
-                    let Ok(relative) = path.strip_prefix(&repo.root) else {
-                        debug!(path = %path.display(), "claude-context hit outside the repository");
-                        continue;
-                    };
-                    if !filter.as_ref().is_none_or(|filter| path_matches(filter, relative)) {
-                        continue;
-                    }
-                    hits.push(Hit {
-                        backend: BackendId::ClaudeContext,
-                        repo: repo.name.clone(),
-                        path,
-                        lines: result.lines,
-                        symbol: None,
-                        symbol_kind: None,
-                        is_definition: false,
-                        snippet: result.code,
-                        rank: 0,
-                        score: None,
-                    });
-                }
+                let mut hits = hits_in_repo(repo, &base, &filter, results);
                 hits.truncate(request.fetch_limit);
                 for (position, hit) in (0u32..).zip(hits.iter_mut()) {
                     hit.rank = position;
                 }
-                let mut notes = Vec::new();
-                if indexing {
-                    notes.push("claude-context is still indexing this repository, results may be incomplete");
-                }
-                if capped {
-                    notes.push("claude-context returns at most 50 results");
-                }
+                let notes: Vec<&str> = [indexing.then_some(NOTE_STILL_INDEXING), capped.then_some(NOTE_RESULT_CAP)]
+                    .into_iter()
+                    .flatten()
+                    .collect();
                 let partial = (!notes.is_empty()).then(|| notes.join("; "));
                 Ok(BackendAnswer { hits, stale: None, partial })
             }
             SearchReply::NoResults { indexing } => Ok(BackendAnswer {
                 hits: Vec::new(),
                 stale: None,
-                partial: indexing
-                    .then(|| "claude-context is still indexing this repository, results may be incomplete".into()),
+                partial: indexing.then(|| NOTE_STILL_INDEXING.into()),
             }),
             SearchReply::NotIndexed => Err(BackendError::Unavailable(format!(
                 "claude-context has not indexed {}; run `uals refresh` to index it",
@@ -317,6 +305,35 @@ impl SearchBackend for ClaudeContextBackend {
     }
 }
 
+/// The hits of one search reply that lie inside `repo` and the path filter. Paths in the reply are
+/// relative to `base`, which can be a parent folder indexed as one codebase.
+fn hits_in_repo(repo: &Repo, base: &Path, filter: &PathFilter, results: Vec<ParsedResult>) -> Vec<Hit> {
+    let mut hits = Vec::with_capacity(results.len());
+    for result in results {
+        let path = base.join(&result.rel_path);
+        let Ok(relative) = path.strip_prefix(&repo.root) else {
+            debug!(path = %path.display(), "claude-context hit outside the repository");
+            continue;
+        };
+        if !filter.allows(relative) {
+            continue;
+        }
+        hits.push(Hit {
+            backend: BackendId::ClaudeContext,
+            repo: repo.name.clone(),
+            path,
+            lines: result.lines,
+            symbol: None,
+            symbol_kind: None,
+            is_definition: false,
+            snippet: result.code,
+            rank: 0,
+            score: None,
+        });
+    }
+    hits
+}
+
 /// Connects to `address` (`host:port`) within `timeout`. `Err` holds the reason.
 pub async fn probe_tcp(address: &str, timeout: Duration) -> Result<(), String> {
     let target = address.to_string();
@@ -331,7 +348,7 @@ pub async fn probe_tcp(address: &str, timeout: Duration) -> Result<(), String> {
         Err(last)
     });
     // Name resolution cannot be interrupted; stop waiting for it after the same budget.
-    match tokio::time::timeout(timeout + Duration::from_millis(100), attempt).await {
+    match tokio::time::timeout(timeout + PROBE_RESOLVE_GRACE, attempt).await {
         Ok(Ok(result)) => result,
         Ok(Err(join)) => Err(join.to_string()),
         Err(_) => Err("timed out".into()),
@@ -354,17 +371,19 @@ fn normalize_address(raw: &str) -> String {
     if has_port {
         host.to_string()
     } else {
-        let port = if secure { 443 } else { 19530 };
+        let port = if secure { HTTPS_PORT } else { DEFAULT_MILVUS_PORT };
         format!("{host}:{port}")
     }
 }
 
+/// The repository root as the UTF-8 string the server takes.
 fn root_str(repo: &Repo) -> Result<&str, BackendError> {
     repo.root
         .to_str()
         .ok_or_else(|| BackendError::Failed(format!("repository path is not valid UTF-8: {}", repo.root.display())))
 }
 
+/// The text blocks of a tool answer, joined; the server returns text only.
 fn joined_text(output: &ToolOutput) -> Result<String, BackendError> {
     if output.texts.is_empty() {
         return Err(BackendError::Failed("claude-context returned no text".into()));
@@ -388,36 +407,14 @@ fn is_closed_transport(message: &str) -> bool {
     lower.contains("transport closed") || lower.contains("transportclosed") || lower.contains("connection closed")
 }
 
+/// The message inside a `BackendError`.
 fn error_text(error: &BackendError) -> &str {
     match error {
         BackendError::Unavailable(text) | BackendError::Failed(text) => text,
     }
 }
 
+/// The user's home directory (`HOME`, or `USERPROFILE` on Windows).
 fn home_dir() -> Option<PathBuf> {
     std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from)
-}
-
-/// Whitelist globs of `SearchRequest::paths`; `None` when the whole repository is allowed.
-fn path_filter(root: &Path, globs: &[String]) -> Result<Option<Override>, BackendError> {
-    if globs.is_empty() {
-        return Ok(None);
-    }
-    let mut builder = OverrideBuilder::new(root);
-    for glob in globs {
-        builder.add(glob).map_err(|e| BackendError::Failed(format!("invalid path glob `{glob}`: {e}")))?;
-    }
-    builder.build().map(Some).map_err(|e| BackendError::Failed(format!("invalid path globs: {e}")))
-}
-
-/// A file matches when a glob names it or one of its folders (`app/` selects everything below).
-fn path_matches(filter: &Override, relative: &Path) -> bool {
-    if filter.matched(relative, false).is_whitelist() {
-        return true;
-    }
-    relative
-        .ancestors()
-        .skip(1)
-        .filter(|ancestor| !ancestor.as_os_str().is_empty())
-        .any(|ancestor| filter.matched(ancestor, true).is_whitelist())
 }

@@ -1,9 +1,10 @@
-//! ast-index adapter (track T2): runs the `ast-index` CLI with the repository root as the working
+//! ast-index adapter: runs the `ast-index` CLI with the repository root as the working
 //! directory, never anywhere else (from another folder it walks up to the nearest marker and may
 //! create stub cache folders). Findings and recorded outputs: `docs/spikes/s2-ast-index.md` and
 //! `tests/fixtures/ast_index/`.
 
 mod parse;
+mod path_filter;
 mod runner;
 
 use std::collections::HashSet;
@@ -11,7 +12,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use ignore::overrides::{Override, OverrideBuilder};
 use uals_core::backend::{BackendError, SearchBackend, SpanProvider, UsageSource};
 use uals_core::classify::bare_name;
 use uals_core::config::AstIndexConfig;
@@ -21,8 +21,10 @@ use uals_core::types::{
 };
 
 use parse::{
-    Explore, QueryResult, STATE_SQL, SpanRow, StateRow, SymbolList, UsageList, normalize_kind, parse_json, spans_sql,
+    Explore, ExploreSymbol, QueryResult, STATE_SQL, SpanRow, StateRow, SymbolList, UsageItem, UsageList,
+    normalize_kind, parse_json, spans_sql,
 };
+pub(crate) use path_filter::PathFilter;
 pub use runner::{AstIndexRunner, CommandOutput, ProcessRunner};
 
 /// Files per `IN (...)` list in one `spans` query.
@@ -31,7 +33,7 @@ const SPAN_CHUNK: usize = 500;
 const DEFINITION_LIMIT: usize = 200;
 /// Usages requested when a path filter may drop some of them.
 const FILTERED_USAGE_LIMIT: usize = 1000;
-/// Row limit for `query`; the CLI default of 100 would cut a span list.
+/// Row limit for `query`, as the CLI takes it (a string); its default of 100 would cut a span list.
 const QUERY_LIMIT: &str = "1000000";
 
 /// Symbols, usages and symbol spans from ast-index.
@@ -40,6 +42,7 @@ pub struct AstIndexBackend {
 }
 
 impl AstIndexBackend {
+    /// Runs the `ast-index` binary named in `config`.
     pub fn new(config: AstIndexConfig) -> Self {
         Self { runner: Arc::new(ProcessRunner::new(config.binary)) }
     }
@@ -69,13 +72,46 @@ impl AstIndexBackend {
         Ok(result.rows)
     }
 
+    /// Definitions of the bare name first (best name match, then types before functions), then
+    /// usages that are not definition lines, production code before tests.
     async fn identifier_hits(&self, repo: &Repo, request: &SearchRequest) -> Result<Vec<Hit>, BackendError> {
         let name = bare_name(&request.query);
         let limit = request.fetch_limit;
         if name.is_empty() || limit == 0 {
             return Ok(Vec::new());
         }
-        let filter = PathFilter::new(repo, &request.paths)?;
+        let filter = PathFilter::new(&repo.root, &request.paths)?;
+        let mut definitions = self.find_definitions(repo, name, &filter).await?;
+        definitions.truncate(limit);
+        self.fill_end_lines(repo, &mut definitions).await;
+
+        let mut hits: Vec<Hit> = definitions.iter().map(|definition| definition_hit(repo, definition)).collect();
+        let remaining = limit - hits.len();
+        if remaining > 0 {
+            let usages_limit = if filter.is_active() { FILTERED_USAGE_LIMIT } else { limit };
+            let taken: HashSet<(&str, u32)> = definitions.iter().map(|d| (d.path.as_str(), d.line)).collect();
+            let usages = self.usage_items(repo, name, usages_limit).await?;
+            let mut usage_items: Vec<UsageItem> = usages
+                .items
+                .into_iter()
+                .filter(|item| filter.allows(&item.path) && !taken.contains(&(item.path.as_str(), item.line)))
+                .collect();
+            // Production code before tests; ast-index's order otherwise.
+            usage_items.sort_by_key(|item| item.test);
+            usage_items.truncate(remaining);
+            hits.extend(usage_items.into_iter().map(|item| usage_hit(repo, name, item)));
+        }
+        assign_ranks(&mut hits);
+        Ok(hits)
+    }
+
+    /// The distinct definitions `symbol` finds for `name` inside the filter, best match first.
+    async fn find_definitions(
+        &self,
+        repo: &Repo,
+        name: &str,
+        filter: &PathFilter,
+    ) -> Result<Vec<Definition>, BackendError> {
         let definitions_limit = DEFINITION_LIMIT.to_string();
         let found: SymbolList = self
             .run_json(
@@ -96,56 +132,7 @@ impl AstIndexBackend {
             })
             .collect();
         definitions.sort_by_key(|definition| (name_tier(&definition.name, name), kind_class(definition.kind)));
-        definitions.truncate(limit);
-        self.fill_end_lines(repo, &mut definitions).await;
-
-        let mut hits: Vec<Hit> = definitions
-            .iter()
-            .map(|definition| {
-                let end = definition.end_line.unwrap_or(definition.line);
-                Hit {
-                    backend: BackendId::AstIndex,
-                    repo: repo.name.clone(),
-                    path: repo.root.join(&definition.path),
-                    lines: LineRange::new(definition.line, end),
-                    symbol: Some(definition.name.clone()),
-                    symbol_kind: Some(definition.kind),
-                    is_definition: true,
-                    snippet: None,
-                    rank: 0,
-                    score: None,
-                }
-            })
-            .collect();
-
-        let remaining = limit - hits.len();
-        if remaining > 0 {
-            let usages_limit = if filter.is_active() { FILTERED_USAGE_LIMIT } else { remaining + hits.len() };
-            let usages = self.usage_items(repo, name, usages_limit).await?;
-            let taken: HashSet<(String, u32)> = definitions.iter().map(|d| (d.path.clone(), d.line)).collect();
-            let mut usage_hits: Vec<_> = usages
-                .items
-                .into_iter()
-                .filter(|item| filter.allows(&item.path) && !taken.contains(&(item.path.clone(), item.line)))
-                .collect();
-            // Production code before tests; ast-index's order otherwise.
-            usage_hits.sort_by_key(|item| item.test);
-            usage_hits.truncate(remaining);
-            hits.extend(usage_hits.into_iter().map(|item| Hit {
-                backend: BackendId::AstIndex,
-                repo: repo.name.clone(),
-                path: repo.root.join(&item.path),
-                lines: LineRange::line(item.line),
-                symbol: Some(name.to_string()),
-                symbol_kind: None,
-                is_definition: false,
-                snippet: item.context,
-                rank: 0,
-                score: None,
-            }));
-        }
-        assign_ranks(&mut hits);
-        Ok(hits)
+        Ok(definitions)
     }
 
     /// `symbol` has no `end_line`; one `query` over the definition files adds it. A failure only
@@ -179,42 +166,26 @@ impl AstIndexBackend {
         self.run_json(repo, "usages", &["usages", "--limit", &limit, "--format", "json", "--", name]).await
     }
 
+    /// The single metadata row of the index, `None` when the index holds no metadata.
+    async fn read_state_row(&self, repo: &Repo) -> Result<Option<StateRow>, BackendError> {
+        let args = ["query".to_string(), STATE_SQL.to_string(), "--format".to_string(), "json".to_string()];
+        let output = self.runner.run(&repo.root, &args).await?;
+        let result: QueryResult<StateRow> = parse_json("query", &output)?;
+        Ok(result.rows.into_iter().next())
+    }
+
     async fn natural_hits(&self, repo: &Repo, request: &SearchRequest) -> Result<Vec<Hit>, BackendError> {
         if request.fetch_limit == 0 || request.query.trim().is_empty() {
             return Ok(Vec::new());
         }
-        let filter = PathFilter::new(repo, &request.paths)?;
+        let filter = PathFilter::new(&repo.root, &request.paths)?;
         let explored: Explore =
             self.run_json(repo, "explore", &["explore", "--format", "json", "--", request.query.trim()]).await?;
         let mut hits: Vec<Hit> = explored
             .symbols
             .iter()
-            .filter_map(|symbol| {
-                let kind = normalize_kind(&symbol.kind)?;
-                if !filter.allows(&symbol.path) {
-                    return None;
-                }
-                let end = explored
-                    .files
-                    .iter()
-                    .filter(|file| file.path == symbol.path)
-                    .flat_map(|file| file.outline.iter())
-                    .find(|entry| entry.name == symbol.name && entry.line == symbol.line)
-                    .and_then(|entry| entry.end_line)
-                    .unwrap_or(symbol.line);
-                Some(Hit {
-                    backend: BackendId::AstIndex,
-                    repo: repo.name.clone(),
-                    path: repo.root.join(&symbol.path),
-                    lines: LineRange::new(symbol.line, end),
-                    symbol: Some(symbol.name.clone()),
-                    symbol_kind: Some(kind),
-                    is_definition: true,
-                    snippet: None,
-                    rank: 0,
-                    score: symbol.score,
-                })
-            })
+            .filter(|symbol| filter.allows(&symbol.path))
+            .filter_map(|symbol| explore_hit(repo, &explored, symbol))
             .collect();
         hits.truncate(request.fetch_limit);
         assign_ranks(&mut hits);
@@ -231,6 +202,64 @@ struct Definition {
     path: String,
 }
 
+/// The hit for one `explore` symbol: its extent comes from the outline of its file. `None` for
+/// rows that are not definitions.
+fn explore_hit(repo: &Repo, explored: &Explore, symbol: &ExploreSymbol) -> Option<Hit> {
+    let kind = normalize_kind(&symbol.kind)?;
+    let end = explored
+        .files
+        .iter()
+        .filter(|file| file.path == symbol.path)
+        .flat_map(|file| file.outline.iter())
+        .find(|entry| entry.name == symbol.name && entry.line == symbol.line)
+        .and_then(|entry| entry.end_line)
+        .unwrap_or(symbol.line);
+    Some(Hit {
+        backend: BackendId::AstIndex,
+        repo: repo.name.clone(),
+        path: repo.root.join(&symbol.path),
+        lines: LineRange::new(symbol.line, end),
+        symbol: Some(symbol.name.clone()),
+        symbol_kind: Some(kind),
+        is_definition: true,
+        snippet: None,
+        rank: 0,
+        score: symbol.score,
+    })
+}
+
+fn definition_hit(repo: &Repo, definition: &Definition) -> Hit {
+    let end = definition.end_line.unwrap_or(definition.line);
+    Hit {
+        backend: BackendId::AstIndex,
+        repo: repo.name.clone(),
+        path: repo.root.join(&definition.path),
+        lines: LineRange::new(definition.line, end),
+        symbol: Some(definition.name.clone()),
+        symbol_kind: Some(definition.kind),
+        is_definition: true,
+        snippet: None,
+        rank: 0,
+        score: None,
+    }
+}
+
+fn usage_hit(repo: &Repo, name: &str, item: UsageItem) -> Hit {
+    Hit {
+        backend: BackendId::AstIndex,
+        repo: repo.name.clone(),
+        path: repo.root.join(&item.path),
+        lines: LineRange::line(item.line),
+        symbol: Some(name.to_owned()),
+        symbol_kind: None,
+        is_definition: false,
+        snippet: item.context,
+        rank: 0,
+        score: None,
+    }
+}
+
+/// Sets each hit's rank to its position in the list.
 fn assign_ranks(hits: &mut [Hit]) {
     for (position, hit) in hits.iter_mut().enumerate() {
         hit.rank = u32::try_from(position).unwrap_or(u32::MAX);
@@ -255,45 +284,6 @@ fn kind_class(kind: SymbolKind) -> u8 {
         SymbolKind::Function => 1,
         SymbolKind::Property | SymbolKind::Constant => 2,
         SymbolKind::Module | SymbolKind::Other => 3,
-    }
-}
-
-/// `SearchRequest::paths`: globs relative to the repository root.
-struct PathFilter {
-    overrides: Option<Override>,
-}
-
-impl PathFilter {
-    fn new(repo: &Repo, globs: &[String]) -> Result<Self, BackendError> {
-        if globs.is_empty() {
-            return Ok(Self { overrides: None });
-        }
-        let mut builder = OverrideBuilder::new(&repo.root);
-        for glob in globs {
-            builder.add(glob).map_err(|error| BackendError::Failed(format!("invalid path glob `{glob}`: {error}")))?;
-        }
-        let overrides =
-            builder.build().map_err(|error| BackendError::Failed(format!("invalid path globs: {error}")))?;
-        Ok(Self { overrides: Some(overrides) })
-    }
-
-    fn is_active(&self) -> bool {
-        self.overrides.is_some()
-    }
-
-    /// True when `relative` (a file path as ast-index prints it) or one of its folders matches.
-    fn allows(&self, relative: &str) -> bool {
-        let Some(overrides) = &self.overrides else {
-            return true;
-        };
-        let path = Path::new(relative);
-        if overrides.matched(path, false).is_whitelist() {
-            return true;
-        }
-        path.ancestors()
-            .skip(1)
-            .filter(|ancestor| !ancestor.as_os_str().is_empty())
-            .any(|ancestor| overrides.matched(ancestor, true).is_whitelist())
     }
 }
 
@@ -341,20 +331,13 @@ impl SearchBackend for AstIndexBackend {
             state.detail = Some("no index; run `ast-index rebuild` in the repository".into());
             return state;
         }
-        let args = ["query".to_string(), STATE_SQL.to_string(), "--format".to_string(), "json".to_string()];
-        let result = match self.runner.run(&repo.root, &args).await {
-            Ok(output) => parse_json::<QueryResult<StateRow>>("query", &output),
-            Err(error) => Err(error),
-        };
-        match result {
-            Ok(result) => match result.rows.into_iter().next() {
-                Some(row) => {
-                    state.indexed = true;
-                    state.updated_at_ms = row.updated.and_then(|value| value.trim().parse().ok());
-                    state.detail = Some(format!("{} files, {} symbols", row.files, row.symbols));
-                }
-                None => state.detail = Some("index metadata is empty".into()),
-            },
+        match self.read_state_row(repo).await {
+            Ok(Some(row)) => {
+                state.indexed = true;
+                state.updated_at_ms = row.updated.and_then(|value| value.trim().parse().ok());
+                state.detail = Some(format!("{} files, {} symbols", row.files, row.symbols));
+            }
+            Ok(None) => state.detail = Some("index metadata is empty".into()),
             Err(BackendError::Unavailable(reason) | BackendError::Failed(reason)) => state.detail = Some(reason),
         }
         state

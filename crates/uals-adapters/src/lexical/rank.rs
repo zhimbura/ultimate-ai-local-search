@@ -31,7 +31,10 @@ const TIER_DECLARATION: f64 = 4.0;
 const TIER_FILE_NAME: f64 = 3.0;
 const TIER_EXACT: f64 = 2.0;
 const TIER_REST: f64 = 1.0;
+/// Shortest word of a `Natural` query that is searched; shorter ones match too much.
 const MIN_WORD_CHARS: usize = 4;
+/// A query containing one of these asks for test code, so test paths are not down-ranked.
+const TEST_CODE_WORDS: [&str; 3] = ["test", "mock", "fake"];
 
 /// A line where `name` is declared: the keyword, optional generics and receiver, then the name.
 pub(super) fn declaration_regex(name: &str) -> Option<Regex> {
@@ -57,6 +60,7 @@ pub(super) fn natural_words(query: &str) -> Vec<String> {
     words
 }
 
+/// Whether `text` is one identifier: a letter, `_` or `$`, then letters, digits, `_` or `$`.
 fn is_word_like(text: &str) -> bool {
     let mut chars = text.chars();
     chars.next().is_some_and(|c| c.is_alphabetic() || c == '_' || c == '$')
@@ -65,8 +69,12 @@ fn is_word_like(text: &str) -> bool {
 
 /// What the tiers are computed from.
 pub(super) enum Profile {
+    /// An identifier or literal: `declaration` finds its declaration lines, `exact` its case-exact
+    /// occurrences, `file_stem` enables the file-name tier.
     Name { name: String, declaration: Option<Regex>, exact: Regex, file_stem: bool },
+    /// A `Natural` query: the regex finds the query words of a line.
     Words(Regex),
+    /// Every match has the lowest tier.
     Plain,
 }
 
@@ -95,6 +103,7 @@ impl Profile {
         }
     }
 
+    /// For a `Natural` query: a line scores by how many distinct `words` it contains.
     pub fn words(words: &[String]) -> Self {
         let alternation: Vec<String> = words.iter().map(|word| regex::escape(word)).collect();
         match Regex::new(&format!(r"(?i)\b(?:{})\b", alternation.join("|"))) {
@@ -135,6 +144,7 @@ impl Profile {
     }
 }
 
+/// A match with its score.
 pub(super) struct Ranked {
     pub path: PathBuf,
     pub line: u32,
@@ -143,6 +153,7 @@ pub(super) struct Ranked {
     pub definition: bool,
 }
 
+/// Scores matches and applies the path down-rank rules.
 pub(super) struct Ranker {
     rules: Vec<(Regex, f64)>,
 }
@@ -164,17 +175,18 @@ impl Ranker {
         Self { rules }
     }
 
-    /// Whether `query` asks for tests, mocks or fakes, so those paths must not be penalized.
-    pub fn exempt(query: &str) -> bool {
+    /// Whether `query` mentions tests, mocks or fakes.
+    pub fn mentions_test_code(query: &str) -> bool {
         let query = query.to_lowercase();
-        ["test", "mock", "fake"].iter().any(|word| query.contains(word))
+        TEST_CODE_WORDS.iter().any(|word| query.contains(word))
     }
 
+    /// The factor of the first rule that matches `relative`, 1.0 when none does.
     fn factor(&self, relative: &str) -> f64 {
         self.rules.iter().find(|(regex, _)| regex.is_match(relative)).map_or(1.0, |(_, factor)| *factor)
     }
 
-    /// Scores and orders the matches, best first.
+    /// Scores and orders the matches, best first. `apply_downrank` switches the path factor on.
     pub fn rank(&self, root: &Path, profile: &Profile, apply_downrank: bool, matches: Vec<RawMatch>) -> Vec<Ranked> {
         let mut ranked: Vec<Ranked> = matches
             .into_iter()
