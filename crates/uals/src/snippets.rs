@@ -82,6 +82,7 @@ fn cut(lines: &[String], range: LineRange) -> Option<Snippet> {
     Some(Snippet { lines: LineRange::new(start, end), text })
 }
 
+/// `line` cut to `MAX_LINE_CHARS` characters, with `…` marking the cut.
 fn shorten(line: &str) -> String {
     match line.char_indices().nth(MAX_LINE_CHARS) {
         Some((cut_at, _)) => format!("{}…", &line[..cut_at]),

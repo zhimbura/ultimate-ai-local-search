@@ -46,6 +46,7 @@ pub fn backends(config: &Config) -> Backends {
     Backends { search, usages, spans: Some(spans) }
 }
 
+/// The semantic backend `semantic.default` names, behind a `LazyCaller`; `None` for `none`.
 fn semantic_backend(config: &Config) -> Option<Arc<dyn SearchBackend>> {
     match config.semantic.default {
         SemanticChoice::None => None,
@@ -65,6 +66,7 @@ fn semantic_backend(config: &Config) -> Option<Arc<dyn SearchBackend>> {
     }
 }
 
+/// Starts the semble server as a child process.
 async fn start_semble(config: SembleConfig) -> Result<Arc<dyn McpToolCaller>, BackendError> {
     let (program, args) = config
         .command
@@ -81,6 +83,8 @@ async fn start_semble(config: SembleConfig) -> Result<Arc<dyn McpToolCaller>, Ba
     Ok(Arc::new(McpChild::spawn(spec).await?))
 }
 
+/// Starts the claude-context server under the single-instance lock, so no other uals process
+/// runs it at the same time.
 async fn start_claude_context(config: ClaudeContextConfig) -> Result<Arc<dyn McpToolCaller>, BackendError> {
     let entry = config.entry_path().ok_or_else(|| {
         BackendError::Unavailable("cannot find the home folder, so the claude-context entry point is unknown".into())
