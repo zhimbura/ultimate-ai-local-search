@@ -9,6 +9,7 @@ set -euo pipefail
 [ $# -ge 2 ] || { echo "usage: $0 <download-base> <tag> [work-dir]" >&2; exit 2; }
 base="$1"; tag="$2"
 work="${3:-$(mktemp -d)}"
+mkdir -p "$work"
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 manifest="$HOME/.local/share/uals/install-manifest"
 

@@ -184,8 +184,14 @@ while IFS= read -r line; do
 done
 "#;
 
+    /// Whether the group has a process that is not a zombie: Linux keeps an unreaped zombie in
+    /// its group, and this test process, the parent, does not reap while the drop blocks.
     fn group_exists(pgid: i32) -> bool {
-        Command::new("kill").args(["-0", "--", &format!("-{pgid}")]).output().unwrap().status.success()
+        let out = Command::new("ps").args(["-A", "-o", "pgid=,stat="]).output().unwrap();
+        String::from_utf8_lossy(&out.stdout).lines().any(|line| {
+            let mut fields = line.split_whitespace();
+            fields.next() == Some(&pgid.to_string()) && fields.next().is_some_and(|stat| !stat.starts_with('Z'))
+        })
     }
 
     #[test]

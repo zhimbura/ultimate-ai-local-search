@@ -521,14 +521,48 @@ impl Drop for GroupGuard {
     }
 }
 
-/// Whether process group `pgid` still has a process.
+/// Whether process group `pgid` still has a live process.
 #[cfg(unix)]
 fn group_exists(pgid: i32) -> bool {
     use nix::errno::Errno;
     if pgid <= 0 {
         return false;
     }
-    !matches!(nix::sys::signal::killpg(nix::unistd::Pid::from_raw(pgid), None), Err(Errno::ESRCH))
+    if matches!(nix::sys::signal::killpg(nix::unistd::Pid::from_raw(pgid), None), Err(Errno::ESRCH)) {
+        return false;
+    }
+    group_has_live_process(pgid).unwrap_or(true)
+}
+
+/// Linux counts a zombie as a group member until its parent reaps it, and the parent is often this
+/// process, blocked in the wait. A zombie is dead, so only processes in another state count.
+/// `None` when `/proc` cannot be read.
+#[cfg(target_os = "linux")]
+fn group_has_live_process(pgid: i32) -> Option<bool> {
+    let entries = std::fs::read_dir("/proc").ok()?;
+    Some(entries.flatten().any(|entry| {
+        std::fs::read_to_string(entry.path().join("stat"))
+            .ok()
+            .and_then(|stat| live_member_of(&stat))
+            .is_some_and(|group| group == pgid)
+    }))
+}
+
+/// The process group from a `/proc/<pid>/stat` line, `None` for a zombie or an unreadable line.
+/// The command name may hold spaces and parentheses, so the fields are read after the last `)`.
+#[cfg(target_os = "linux")]
+fn live_member_of(stat: &str) -> Option<i32> {
+    let mut fields = stat.get(stat.rfind(')')? + 1..)?.split_whitespace();
+    let state = fields.next()?;
+    let _ppid = fields.next()?;
+    let group = fields.next()?.parse().ok()?;
+    (state != "Z").then_some(group)
+}
+
+/// macOS does not count zombies in `killpg`.
+#[cfg(all(unix, not(target_os = "linux")))]
+fn group_has_live_process(_pgid: i32) -> Option<bool> {
+    Some(true)
 }
 
 #[cfg(not(unix))]
@@ -585,6 +619,15 @@ mod tests {
         assert_eq!(secs(5), Some(4));
         assert_eq!(secs(9), Some(60));
         assert_eq!(secs(1000), Some(60));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_zombie_is_not_a_live_group_member() {
+        assert_eq!(live_member_of("42 (sh) S 1 42 42 0"), Some(42));
+        assert_eq!(live_member_of("42 (a) b (c)) R 1 7 7 0"), Some(7));
+        assert_eq!(live_member_of("42 (sh) Z 1 42 42 0"), None);
+        assert_eq!(live_member_of("garbage"), None);
     }
 
     #[test]
