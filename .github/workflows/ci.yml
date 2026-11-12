@@ -87,3 +87,10 @@ jobs:
         run: scripts/check-pins.sh
       - name: Shellcheck (warnings and errors)
         run: shellcheck -x -S warning install.sh uninstall.sh scripts/*.sh scripts/lib/*.sh .githooks/pre-commit
+      # macOS bash 3.2 in a UTF-8 locale reads "$name…" as a variable named "name" plus the first
+      # byte of "…"; write "${name}…".
+      - name: No unbraced variable before a non-ASCII character
+        run: |
+          if LC_ALL=C grep -nE '\$[A-Za-z_][A-Za-z0-9_]*[^ -~]' install.sh uninstall.sh scripts/*.sh scripts/lib/*.sh .githooks/pre-commit; then
+            echo "brace these variables: \${name}" >&2; exit 1
+          fi

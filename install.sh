@@ -199,7 +199,7 @@ SUDO=""
 ensure_pkg() { # ensure_pkg <cmd> <brew-formula> [apt-pkg]
   local cmd="$1" brew_f="$2" apt_p="${3:-$1}"
   have "$cmd" && return 0
-  say "installing $cmd…"
+  say "installing ${cmd}…"
   if have brew; then brew install "$brew_f"
   elif [ "$PLATFORM" = linux ] && have apt-get; then
     if [ "$(id -u)" != 0 ]; then
@@ -244,7 +244,7 @@ install_uals() {
   fi
 
   local name="uals-$tag-$TARGET" dl="$TMP_ROOT/uals"
-  say "downloading $name…"
+  say "downloading ${name}…"
   fetch_archive "$DOWNLOAD_BASE/$tag/$name.tar.gz" "$dl"
   [ -f "$dl/$name/uals" ] || die "the archive has no $name/uals"
   if install_bin "$dl/$name/uals" "$UALS_BIN"; then ok "uals $tag → $UALS_BIN"
@@ -301,7 +301,7 @@ install_semble() {
   if have uv; then
     uv_bin="$(command -v uv)"
   else
-    say "downloading uv $UV_VERSION…"
+    say "downloading uv ${UV_VERSION}…"
     local name="uv-$TARGET" dl="$TMP_ROOT/uv"
     fetch_archive "https://github.com/astral-sh/uv/releases/download/$UV_VERSION/$name.tar.gz" "$dl"
     [ -f "$dl/$name/uv" ] || die "the archive has no $name/uv"
@@ -311,7 +311,7 @@ install_semble() {
     ok "uv $UV_VERSION → $uv_bin"
   fi
 
-  say "installing $SEMBLE_SPEC…"
+  say "installing ${SEMBLE_SPEC}…"
   local log="$TMP_ROOT/uv-tool.log"
   UV_TOOL_DIR="$SEMBLE_HOME/tools" UV_TOOL_BIN_DIR="$SEMBLE_HOME/bin" \
     UV_PYTHON_INSTALL_DIR="$SEMBLE_HOME/python" UV_PYTHON_BIN_DIR="$SEMBLE_HOME/python-bin" \
@@ -406,7 +406,7 @@ setup_provider() {
         for _ in $(seq 1 "$OLLAMA_WAIT_SECONDS"); do ollama_up && break; sleep 1; done
         ollama_up || die "Ollama API did not come up at $OLLAMA_HOST within ${OLLAMA_WAIT_SECONDS}s: start it ('ollama serve') and re-run"
       fi
-      say "pulling model $MODEL…"; ollama pull "$MODEL"
+      say "pulling model ${MODEL}…"; ollama pull "$MODEL"
       ;;
     lmstudio)
       local lms="$HOME/.lmstudio/bin/lms"
@@ -508,7 +508,7 @@ install_claude_context() {
   if [ -f "$pkg" ] && [ "$(jq -r .version "$pkg")" = "$CLAUDE_CONTEXT_VERSION" ]; then
     ok "claude-context $CLAUDE_CONTEXT_VERSION already installed"
   else
-    say "installing @zilliz/claude-context-mcp@$CLAUDE_CONTEXT_VERSION into $CC_DIR…"
+    say "installing @zilliz/claude-context-mcp@$CLAUDE_CONTEXT_VERSION into ${CC_DIR}…"
     [ -d "$CC_DIR" ] || manifest_add dir "$CC_DIR"
     mkdir -p "$CC_DIR"
     npm install --prefix "$CC_DIR" --no-audit --no-fund --loglevel=error "@zilliz/claude-context-mcp@$CLAUDE_CONTEXT_VERSION"
