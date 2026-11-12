@@ -24,6 +24,14 @@ impl CommandOutput {
     pub fn success(&self) -> bool {
         self.exit_code == Some(0)
     }
+
+    /// How the process ended, for a message: `exit code 1`, or `a signal` when it was killed.
+    pub fn exit_text(&self) -> String {
+        match self.exit_code {
+            Some(code) => format!("exit code {code}"),
+            None => "killed by a signal".into(),
+        }
+    }
 }
 
 /// Runs `ast-index` for one repository. The real implementation spawns the binary; tests replace

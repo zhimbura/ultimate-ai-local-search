@@ -1,4 +1,4 @@
-//! The `uals hook post-edit` and `uals refresh` commands with a fake ast-index: a `sh` script that
+//! The `uals` commands on the fixture workspace with a fake ast-index: a `sh` script that
 //! logs the folder and arguments of every run, answers the index-state query of an indexed
 //! repository, and fails `update` with "disk full" when `FAKE_AST_INDEX_FAIL` is set.
 #![cfg(unix)]
@@ -13,8 +13,9 @@ use std::process::{Command, Output, Stdio};
 
 use lexical_support::fixture_copy;
 use pretty_assertions::assert_eq;
-use serde_json::json;
+use serde_json::{Value, json};
 use tempfile::TempDir;
+use uals_core::types::{BackendId, SearchResponse, UsagesResponse};
 
 const FAKE_AST_INDEX: &str = r#"#!/bin/sh
 echo "$(pwd -P) $1" >> "$FAKE_AST_INDEX_LOG"
@@ -136,8 +137,104 @@ fn a_failed_index_update_fails_the_hook_and_refresh() {
     assert_eq!(failed_refresh.status.code(), Some(1));
     let printed = String::from_utf8_lossy(&failed_refresh.stdout);
     assert!(
-        printed.starts_with("sample-web: ast-index failed (ast-index update exited with Some(1): disk full)"),
+        printed.starts_with("sample-web: ast-index failed (ast-index update failed (exit code 1): disk full)"),
         "{printed}"
     );
     assert_eq!(working_refresh.status.code(), Some(0), "{}", String::from_utf8_lossy(&working_refresh.stdout));
+}
+
+#[test]
+fn an_edit_of_a_file_outside_every_repository_is_ignored() {
+    let fixture = Fixture::new();
+    let elsewhere = fixture.dir.path().join("elsewhere");
+    std::fs::create_dir(&elsewhere).unwrap();
+
+    let output =
+        fixture.run(&["hook", "post-edit"], &fixture.edit_of(elsewhere.join("plan.md").to_str().unwrap()), true, false);
+
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&output.stderr), "");
+    assert_eq!(fixture.ast_index_runs(), Vec::<String>::new());
+}
+
+/// `uals <args>` on a workspace without indexes (so only lexical search answers); its stdout.
+fn printed(fixture: &Fixture, args: &[&str]) -> String {
+    let output = fixture.run(args, "", false, false);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    String::from_utf8(output.stdout).unwrap()
+}
+
+#[test]
+fn search_prints_the_ranked_hits_of_the_workspace() {
+    let fixture = Fixture::new();
+    let workspace = fixture.workspace.to_str().unwrap();
+
+    let response: SearchResponse = serde_json::from_str(&printed(
+        &fixture,
+        &["search", "HostSelector", "--workspace", workspace, "--format", "json"],
+    ))
+    .unwrap();
+
+    let top = &response.hits[0];
+    assert_eq!(
+        top.path,
+        fixture.workspace.join("sample-android/network/src/main/kotlin/sample/network/HostSelector.kt")
+    );
+}
+
+#[test]
+fn usages_lists_every_use_of_a_symbol_in_the_named_repository() {
+    let fixture = Fixture::new();
+    let workspace = fixture.workspace.to_str().unwrap();
+
+    let response: UsagesResponse = serde_json::from_str(&printed(
+        &fixture,
+        &["usages", "slugify", "--workspace", workspace, "--repo", "sample-tools", "--format", "json"],
+    ))
+    .unwrap();
+
+    assert_eq!(response.repos.len(), 1);
+    assert_eq!(response.repos[0].source, BackendId::Lexical);
+    let found: Vec<_> = response.repos[0].usages.iter().map(|usage| (usage.path.clone(), usage.line)).collect();
+    let init = fixture.workspace.join("sample-tools/sample_tools/__init__.py");
+    assert_eq!(found, [(init.clone(), 2), (init, 4)]);
+}
+
+#[test]
+fn status_and_workspace_list_the_three_repositories() {
+    let fixture = Fixture::new();
+    let workspace = fixture.workspace.to_str().unwrap();
+    let names = |value: &Value, key: &str| -> Vec<String> {
+        value[key].as_array().unwrap().iter().map(|repo| repo["name"].as_str().unwrap().to_owned()).collect()
+    };
+    let expected = ["sample-android", "sample-tools", "sample-web"];
+
+    let text = printed(&fixture, &["status", "--workspace", workspace]);
+    let status: Value =
+        serde_json::from_str(&printed(&fixture, &["status", "--workspace", workspace, "--format", "json"])).unwrap();
+    let discovered: Value = serde_json::from_str(&printed(&fixture, &["workspace", "--workspace", workspace])).unwrap();
+
+    assert!(text.starts_with(&format!("status of {workspace} · 3 repositories")), "{text}");
+    assert_eq!(status["workspace"], workspace);
+    assert_eq!(names(&status, "repos"), expected);
+    assert_eq!(discovered["root"], workspace);
+    assert_eq!(names(&discovered, "repos"), expected);
+}
+
+#[test]
+fn a_bad_command_line_fails_with_the_reason() {
+    let fixture = Fixture::new();
+    let workspace = fixture.workspace.to_str().unwrap();
+    let cases: [(&[&str], i32, &str); 2] = [
+        (&["search", "X", "--workspace", workspace, "--repo", "nope"], 1, "uals: unknown repository \"nope\""),
+        (&["search", "X", "--no-such-flag"], 2, "error: unexpected argument '--no-such-flag'"),
+    ];
+
+    for (args, code, stderr) in cases {
+        let output = fixture.run(args, "", false, false);
+
+        assert_eq!(output.status.code(), Some(code), "{args:?}");
+        let stderr_text = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr_text.starts_with(stderr), "{args:?}: {stderr_text}");
+    }
 }

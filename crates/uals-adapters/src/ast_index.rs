@@ -417,7 +417,7 @@ impl SearchBackend for AstIndexBackend {
         } else {
             let reason = last_text_line(&output.stderr).or_else(|| last_text_line(&output.stdout));
             let reason = reason.unwrap_or("no error text");
-            Err(BackendError::Failed(format!("ast-index {command} exited with {:?}: {reason}", output.exit_code)))
+            Err(BackendError::Failed(format!("ast-index {command} failed ({}): {reason}", output.exit_text())))
         }
     }
 }
