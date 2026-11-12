@@ -123,17 +123,21 @@ fn a_failed_index_update_fails_the_hook_and_refresh() {
     let fixture = Fixture::new();
     let workspace = fixture.workspace.display().to_string();
 
-    let hook = fixture.run(&["hook", "post-edit"], &fixture.edit_of("sample-web/src/index.ts"), true, true);
-    let refresh = fixture.run(&["refresh", "--workspace", &workspace, "--repo", "sample-web"], "", true, true);
-    let refreshed = fixture.run(&["refresh", "--workspace", &workspace, "--repo", "sample-web"], "", true, false);
+    let failed_hook = fixture.run(&["hook", "post-edit"], &fixture.edit_of("sample-web/src/index.ts"), true, true);
+    let failed_refresh = fixture.run(&["refresh", "--workspace", &workspace, "--repo", "sample-web"], "", true, true);
+    let working_refresh = fixture.run(&["refresh", "--workspace", &workspace, "--repo", "sample-web"], "", true, false);
 
-    assert_eq!(hook.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&hook.stderr).contains("disk full"), "{}", String::from_utf8_lossy(&hook.stderr));
-    assert_eq!(refresh.status.code(), Some(1));
-    let printed = String::from_utf8_lossy(&refresh.stdout);
+    assert_eq!(failed_hook.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&failed_hook.stderr).contains("disk full"),
+        "{}",
+        String::from_utf8_lossy(&failed_hook.stderr)
+    );
+    assert_eq!(failed_refresh.status.code(), Some(1));
+    let printed = String::from_utf8_lossy(&failed_refresh.stdout);
     assert!(
         printed.starts_with("sample-web: ast-index failed (ast-index update exited with Some(1): disk full)"),
         "{printed}"
     );
-    assert_eq!(refreshed.status.code(), Some(0), "{}", String::from_utf8_lossy(&refreshed.stdout));
+    assert_eq!(working_refresh.status.code(), Some(0), "{}", String::from_utf8_lossy(&working_refresh.stdout));
 }

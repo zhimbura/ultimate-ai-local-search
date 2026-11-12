@@ -46,18 +46,18 @@ struct RepoStatusJson<'a> {
 /// Renders the index states of `repos` in the workspace `root`. `now_ms` is the current Unix time
 /// in milliseconds, for the age of each index.
 pub fn render_status(root: &Path, repos: &[Repo], states: &[IndexState], format: Format, now_ms: u64) -> String {
-    let of = |repo: &Repo| states.iter().filter(|state| state.repo == repo.name).collect::<Vec<_>>();
+    let states_of = |repo: &Repo| states.iter().filter(|state| state.repo == repo.name).collect::<Vec<_>>();
     if format == Format::Json {
         let repos = repos
             .iter()
-            .map(|repo| RepoStatusJson { name: &repo.name, root: &repo.root, backends: of(repo) })
+            .map(|repo| RepoStatusJson { name: &repo.name, root: &repo.root, backends: states_of(repo) })
             .collect();
         return to_json(&StatusJson { workspace: root, repos });
     }
     let mut out = format!("status of {} · {}", root.display(), count(repos.len(), "repository", "repositories"));
     for repo in repos {
         let _ = write!(out, "\n{} · {}", repo.name, repo.root.display());
-        for state in of(repo) {
+        for state in states_of(repo) {
             let _ = write!(out, "\n  {}", state_line(state, now_ms));
         }
     }
@@ -151,7 +151,7 @@ fn outcome(result: &Result<(), BackendError>) -> (&'static str, Option<&str>) {
     }
 }
 
-/// The current Unix time in milliseconds, for `render_status`.
+/// The current Unix time in milliseconds.
 pub fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

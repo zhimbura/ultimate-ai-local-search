@@ -1,13 +1,14 @@
 //! The command line. `search`, `usages` and `status` take the parameters of the MCP tools and
 //! print the same text.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
 use uals_core::config::Config;
 use uals_core::render::{render_search, render_usages};
+use uals_core::types::{Repo, Workspace};
 use uals_core::workspace;
 
 use crate::args::{FormatArg, SearchArgs, StatusArgs, UsagesArgs, repos_in, workspace_folder};
@@ -82,25 +83,24 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
     let config = Config::load(cli.config.as_deref())?;
     match cli.command {
         Command::Search(args) => {
-            let (_, repos) = repos_in(&workspace_folder(args.workspace.as_deref(), None)?, &args.repos, &config)?;
+            let (_, repos) = select(args.workspace.as_deref(), &args.repos, &config)?;
             let orchestrator = setup::orchestrator(config);
             let response = orchestrator.search(&repos, &args.params()).await?;
             println!("{}", render_search(&response, args.format.into(), &orchestrator.config().output));
         }
         Command::Usages(args) => {
-            let (_, repos) = repos_in(&workspace_folder(args.workspace.as_deref(), None)?, &args.repos, &config)?;
+            let (_, repos) = select(args.workspace.as_deref(), &args.repos, &config)?;
             let orchestrator = setup::orchestrator(config);
             let response = orchestrator.usages(&repos, &args.params()).await?;
             println!("{}", render_usages(&response, args.format.into(), &orchestrator.config().output));
         }
         Command::Status(args) => {
-            let (workspace, repos) =
-                repos_in(&workspace_folder(args.workspace.as_deref(), None)?, &args.repos, &config)?;
+            let (workspace, repos) = select(args.workspace.as_deref(), &args.repos, &config)?;
             let states = setup::orchestrator(config).status(&repos).await;
             println!("{}", render_status(&workspace.root, &repos, &states, args.format.into(), now_ms()));
         }
         Command::Refresh(args) => {
-            let (_, repos) = repos_in(&workspace_folder(args.workspace.as_deref(), None)?, &args.repos, &config)?;
+            let (_, repos) = select(args.workspace.as_deref(), &args.repos, &config)?;
             let results = setup::orchestrator(config).refresh(&repos, args.full).await;
             println!("{}", render_refresh(&repos, &results, args.format.into()));
             if any_refresh_failed(&results) {
@@ -118,6 +118,12 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
         Command::Hook(HookCommand::PostEdit) => hook::post_edit(&config, std::io::stdin().lock()).await?,
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// The workspace of the `--workspace` folder (see `workspace_folder` for the default) and its
+/// repositories named in `names`.
+fn select(workspace: Option<&Path>, names: &[String], config: &Config) -> Result<(Workspace, Vec<Repo>)> {
+    repos_in(&workspace_folder(workspace, None)?, names, config)
 }
 
 #[cfg(test)]
