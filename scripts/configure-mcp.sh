@@ -19,6 +19,7 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 UALS_BIN=""; ENV_FILE=""; CONFIG="${CLAUDE_CONFIG:-$HOME/.claude.json}"
 MODE=add; REMOVE_CC=0
 SAVED_DIR="$HOME/.local/share/uals/removed-mcp"; SAVED="$SAVED_DIR/claude-context.json"
+BACKUPS_KEPT=3
 
 die() { echo "✗ $*" >&2; exit 1; }
 
@@ -70,8 +71,27 @@ JQ_DEFS='
   def is_uals($k; $v): $k == "uals";
 '
 
+# The jq input: the config, or an empty object when add has to create the file.
 current="$CONFIG"
 if [ ! -f "$current" ]; then current="$(mktemp)"; echo '{}' > "$current"; created_empty=1; else created_empty=0; fi
+
+# save_claude_context_entries: adds every claude-context entry of $current to $SAVED (the saved
+# entries of an earlier run stay, the new ones win on the same key).
+save_claude_context_entries() {
+  local saved_new old
+  saved_new="$(jq -c "$JQ_DEFS"'
+    { mcpServers: ((.mcpServers // {}) | cc_only),
+      projects: ((.projects // {}) | with_entries(.value = ((.value.mcpServers // {}) | cc_only))
+                 | with_entries(select(.value | length > 0))) }' "$current")"
+  [ "$(jq -r '(.mcpServers | length) + (.projects | length)' <<<"$saved_new")" -gt 0 ] || return 0
+  mkdir -p "$SAVED_DIR"; chmod 700 "$SAVED_DIR"
+  old='{}'; [ ! -f "$SAVED" ] || old="$(cat "$SAVED")"
+  umask 077
+  jq -n --argjson old "$old" --argjson new "$saved_new" '$old * $new' > "$SAVED.new"
+  mv -f "$SAVED.new" "$SAVED"
+  chmod 600 "$SAVED"
+  echo "✓ saved $(jq -r '(.mcpServers | length) + ([.projects[] | length] | add // 0)' <<<"$saved_new") claude-context entries to $SAVED"
+}
 
 case "$MODE" in
 add)
@@ -84,21 +104,7 @@ add)
     if [ -n "${!k:-}" ]; then env_obj="$(jq -cn --argjson o "$env_obj" --arg k "$k" --arg v "${!k}" '$o + {($k): $v}')"; fi
   done
 
-  if [ "$REMOVE_CC" = 1 ]; then
-    saved_new="$(jq -c "$JQ_DEFS"'
-      { mcpServers: ((.mcpServers // {}) | cc_only),
-        projects: ((.projects // {}) | with_entries(.value = ((.value.mcpServers // {}) | cc_only))
-                   | with_entries(select(.value | length > 0))) }' "$current")"
-    if [ "$(jq -r '(.mcpServers | length) + (.projects | length)' <<<"$saved_new")" -gt 0 ]; then
-      mkdir -p "$SAVED_DIR"; chmod 700 "$SAVED_DIR"
-      old='{}'; [ ! -f "$SAVED" ] || old="$(cat "$SAVED")"
-      umask 077
-      jq -n --argjson old "$old" --argjson new "$saved_new" '$old * $new' > "$SAVED.new"
-      mv -f "$SAVED.new" "$SAVED"
-      chmod 600 "$SAVED"
-      echo "✓ saved $(jq -r '(.mcpServers | length) + ([.projects[] | length] | add // 0)' <<<"$saved_new") claude-context entries to $SAVED"
-    fi
-  fi
+  [ "$REMOVE_CC" = 0 ] || save_claude_context_entries
 
   jq --arg bin "$UALS_BIN" --argjson env "$env_obj" --argjson drop "$REMOVE_CC" "$JQ_DEFS"'
     (if $drop == 1 then
@@ -130,6 +136,22 @@ esac
 [ "$created_empty" = 0 ] || rm -f "$current"
 [ -s "$tmp" ] || die "jq produced empty output: $CONFIG left untouched"
 
+# rotate_backups: keeps the $BACKUPS_KEPT newest backups of the exact form <config>.bak.YYYYmmdd-HHMMSS.
+# Anything else (e.g. .bak.20260619-claude-context-fix) is never touched.
+rotate_backups() {
+  local old_backups=() f
+  for f in "${CONFIG}".bak.*; do
+    [ -e "$f" ] || continue
+    case "${f##*.bak.}" in
+      [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9][0-9][0-9]) old_backups+=("$f");;
+    esac
+  done
+  if [ "${#old_backups[@]}" -gt "$BACKUPS_KEPT" ]; then
+    # fixed-width timestamps sort lexically == chronologically
+    while IFS= read -r f; do rm -f -- "$f"; done < <(printf '%s\n' "${old_backups[@]}" | sort | head -n "$(( ${#old_backups[@]} - BACKUPS_KEPT ))")
+  fi
+}
+
 if [ -f "$CONFIG" ] && jq -en --slurpfile a "$CONFIG" --slurpfile b "$tmp" '$a[0] == $b[0]' >/dev/null; then
   echo "✓ $CONFIG is already up to date"
 else
@@ -139,20 +161,7 @@ else
     while [ -e "${CONFIG}.bak.$stamp" ]; do sleep 1; stamp="$(date +%Y%m%d-%H%M%S)"; done
     backup="${CONFIG}.bak.$stamp"
     cp -p "$CONFIG" "$backup"
-
-    # Rotate: keep the 3 newest backups of the exact form <config>.bak.YYYYmmdd-HHMMSS.
-    # Anything else (e.g. .bak.20260619-claude-context-fix) is never touched.
-    old_backups=()
-    for f in "${CONFIG}".bak.*; do
-      [ -e "$f" ] || continue
-      case "${f##*.bak.}" in
-        [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9][0-9][0-9]) old_backups+=("$f");;
-      esac
-    done
-    if [ "${#old_backups[@]}" -gt 3 ]; then
-      # fixed-width timestamps sort lexically == chronologically
-      while IFS= read -r f; do rm -f -- "$f"; done < <(printf '%s\n' "${old_backups[@]}" | sort | head -n "$(( ${#old_backups[@]} - 3 ))")
-    fi
+    rotate_backups
   else
     mkdir -p "$(dirname "$CONFIG")"
   fi

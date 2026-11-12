@@ -134,7 +134,7 @@ impl Sandbox {
     }
 
     /// `uals doctor` with `args`. Without `config` no config file exists. The environment holds
-    /// only the sandbox: no variable of the real one reaches uals except the proxy-free basics.
+    /// only the sandbox variables and `env`: nothing of the real environment reaches uals.
     pub fn doctor(&self, config: Option<&Path>, args: &[&str]) -> Run {
         self.doctor_with(config, args, &[])
     }

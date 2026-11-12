@@ -8,7 +8,7 @@ use uals_adapters::mcp_child::ChildSpec;
 use uals_core::config::{ClaudeContextConfig, Config, SemanticChoice, SemanticConfig, SembleConfig};
 use uals_core::types::{QueryKind, Repo, SearchRequest};
 
-use super::{Check, Version, probe, program_version, resolve_program};
+use super::{Check, Version, probe, program_version, read_version, resolve_program};
 use crate::setup;
 
 /// The Semble version uals was tested with.
@@ -19,8 +19,11 @@ const NODE_MINIMUM: Version = Version::new(22, 12, 0);
 /// How long the search through Semble may take. The first run may download Semble's model.
 const SEMBLE_TIMEOUT: Duration = Duration::from_secs(120);
 /// A search slower than this probably loaded the model.
-const SLOW: Duration = Duration::from_secs(15);
+const SLOW_SEARCH: Duration = Duration::from_secs(15);
 const INSTALL: &str = "run install.sh";
+const TEST_SOURCE: &str =
+    "/// Greets a user by name.\nfn greet_user(name: &str) -> String {\n    format!(\"Hello, {name}!\")\n}\n";
+const TEST_QUERY: &str = "function that greets a user by name";
 
 pub(super) async fn check(config: &SemanticConfig) -> Vec<Check> {
     match config.default {
@@ -40,39 +43,45 @@ async fn check_semble(config: &SembleConfig) -> Check {
     };
     // With arguments the command is not plain `semble`, and `--version` is not Semble's to answer.
     let version = if args.is_empty() { Some(program_version(&path, &[]).await) } else { None };
-    let stale = match &version {
-        Some(Ok(text)) => Version::parse(text).filter(|found| *found != SEMBLE_TESTED).map(|found| found.to_string()),
-        _ => None,
-    };
+    let version_text = describe_semble_version(version.as_ref());
 
     let started = Instant::now();
     let search = search_one_file(config).await;
     let took = started.elapsed();
-    let slow = if took > SLOW { " (the first run may download Semble's model)" } else { "" };
-    let version_text = match &version {
+    let slow_note = if took > SLOW_SEARCH { " (the first run may download Semble's model)" } else { "" };
+    if let Err(error) = search {
+        return Check::fail(
+            NAME,
+            format!("{version_text}; the search failed after {:.1}s{slow_note}: {error}", took.as_secs_f64()),
+            format!("run `{}` by hand to see why, or {INSTALL} to reinstall Semble", config.command.join(" ")),
+        );
+    }
+    let detail = format!("{version_text} at {}; a search took {:.1}s{slow_note}", path.display(), took.as_secs_f64());
+    match untested_semble_version(version.as_ref()) {
+        Some(found) => Check::warn(
+            NAME,
+            format!("{detail}; uals was tested with {SEMBLE_TESTED}, this is {found}"),
+            format!("{INSTALL} to install Semble {SEMBLE_TESTED}"),
+        ),
+        None => Check::ok(NAME, detail),
+    }
+}
+
+/// The version part of the Semble report line. `None` is a custom command, whose version is not asked.
+fn describe_semble_version(version: Option<&Result<String, String>>) -> String {
+    match version {
         Some(Ok(text)) => Version::parse(text).map_or_else(|| format!("version {text:?}"), |found| found.to_string()),
         Some(Err(error)) => format!("version unknown ({error})"),
         None => "custom command, version not checked".to_owned(),
-    };
-    match search {
-        Err(error) => Check::fail(
-            NAME,
-            format!("{version_text}; the search failed after {:.1}s{slow}: {error}", took.as_secs_f64()),
-            format!("run `{}` by hand to see why, or {INSTALL} to reinstall Semble", config.command.join(" ")),
-        ),
-        Ok(()) => {
-            let detail =
-                format!("{version_text} at {}; a search took {:.1}s{slow}", path.display(), took.as_secs_f64());
-            match stale {
-                Some(found) => Check::warn(
-                    NAME,
-                    format!("{detail}; uals was tested with {SEMBLE_TESTED}, this is {found}"),
-                    format!("{INSTALL} to install Semble {SEMBLE_TESTED}"),
-                ),
-                None => Check::ok(NAME, detail),
-            }
-        }
     }
+}
+
+/// The Semble version when it is not the tested one; `None` when it is, or when it is unknown.
+fn untested_semble_version(version: Option<&Result<String, String>>) -> Option<Version> {
+    let Some(Ok(text)) = version else {
+        return None;
+    };
+    Version::parse(text).filter(|found| *found != SEMBLE_TESTED)
 }
 
 /// Starts Semble the way uals does and searches a folder with one source file through the same
@@ -80,11 +89,7 @@ async fn check_semble(config: &SembleConfig) -> Check {
 async fn search_one_file(config: &SembleConfig) -> Result<(), String> {
     let folder = ScratchFolder::new().map_err(|error| format!("cannot make a temporary folder: {error}"))?;
     let source = folder.path.join("repo/greeting.rs");
-    std::fs::write(
-        &source,
-        "/// Greets a user by name.\nfn greet_user(name: &str) -> String {\n    format!(\"Hello, {name}!\")\n}\n",
-    )
-    .map_err(|error| format!("cannot write {}: {error}", source.display()))?;
+    std::fs::write(&source, TEST_SOURCE).map_err(|error| format!("cannot write {}: {error}", source.display()))?;
     // The test index goes next to the test folder, not into the user's Semble cache.
     let mut semble = config.clone();
     semble.env.insert("SEMBLE_CACHE_LOCATION".to_owned(), folder.path.join("cache").display().to_string());
@@ -94,12 +99,8 @@ async fn search_one_file(config: &SembleConfig) -> Result<(), String> {
     })
     .ok_or("the semantic backend is off")?;
     let repo = Repo { name: "doctor".to_owned(), root: folder.path.join("repo") };
-    let request = SearchRequest {
-        query: "function that greets a user by name".to_owned(),
-        kind: QueryKind::Natural,
-        fetch_limit: 3,
-        paths: vec![],
-    };
+    let request =
+        SearchRequest { query: TEST_QUERY.to_owned(), kind: QueryKind::Natural, fetch_limit: 3, paths: vec![] };
     let answer = tokio::time::timeout(SEMBLE_TIMEOUT, backend.search(&repo, &request))
         .await
         .map_err(|_| format!("no answer within {}s", SEMBLE_TIMEOUT.as_secs()))?
@@ -157,13 +158,10 @@ async fn check_node(config: &ClaudeContextConfig) -> Check {
     let Some(path) = resolve_program(&config.node) else {
         return Check::fail(NAME, format!("{} not found", config.node), hint);
     };
-    let text = match program_version(&path, &[]).await {
-        Ok(text) => text,
-        Err(error) => return Check::fail(NAME, format!("cannot run {}: {error}", path.display()), hint),
-    };
-    match Version::parse(&text) {
-        Some(version) if version >= NODE_MINIMUM => Check::ok(NAME, format!("{version} at {}", path.display())),
-        Some(version) => Check::fail(
+    match read_version(&path).await {
+        Err(problem) => Check::fail(NAME, problem, hint),
+        Ok(version) if version >= NODE_MINIMUM => Check::ok(NAME, format!("{version} at {}", path.display())),
+        Ok(version) => Check::fail(
             NAME,
             format!(
                 "{version} at {} is older than {NODE_MINIMUM}; a dependency of claude-context needs require(ESM)",
@@ -171,7 +169,6 @@ async fn check_node(config: &ClaudeContextConfig) -> Check {
             ),
             hint,
         ),
-        None => Check::fail(NAME, format!("{}: unrecognised version {text:?}", path.display()), hint),
     }
 }
 

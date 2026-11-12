@@ -146,6 +146,25 @@ sha256_of() {
   else sha256sum "$1" | awk '{print $1}'; fi
 }
 fetch() { curl -fsSL --retry 2 -o "$2" "$1"; }          # fetch <url> <dest>
+
+# verify_sha256 <file> <want>: dies unless the SHA-256 of the file is <want>
+verify_sha256() {
+  local file="$1" want="$2" got
+  got="$(sha256_of "$file")"
+  [ -n "$want" ] && [ "$want" = "$got" ] || die "SHA-256 mismatch for ${file##*/} (want ${want:-none}, got $got)"
+}
+
+# fetch_archive <archive-url> <dest-dir>: downloads <archive-url> and <archive-url>.sha256 into
+# <dest-dir>, checks the archive against the checksum file and unpacks it there.
+fetch_archive() {
+  local url="$1" dir="$2" archive="${1##*/}"
+  mkdir -p "$dir"
+  fetch "$url" "$dir/$archive" || die "cannot download $url"
+  fetch "$url.sha256" "$dir/$archive.sha256" || die "cannot download $url.sha256"
+  verify_sha256 "$dir/$archive" "$(awk '{print $1; exit}' "$dir/$archive.sha256")"
+  tar -xzf "$dir/$archive" -C "$dir"
+}
+# first_version: reads text on stdin, prints the first dotted number in it
 first_version() { sed -n 's/[^0-9]*\([0-9][0-9]*\(\.[0-9][0-9]*\)*\).*/\1/p' | head -n1; }
 ver_ge() { [ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -n1)" = "$2" ]; }   # ver_ge <have> <min>
 toml_str() { printf '"%s"' "$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g')"; }
@@ -173,7 +192,10 @@ ensure_pkg() { # ensure_pkg <cmd> <brew-formula> [apt-pkg]
   say "installing $cmd…"
   if have brew; then brew install "$brew_f"
   elif [ "$PLATFORM" = linux ] && have apt-get; then
-    if [ "$(id -u)" != 0 ]; then have sudo || die "need root or sudo to install $cmd"; SUDO=sudo; fi
+    if [ "$(id -u)" != 0 ]; then
+      have sudo || die "need root or sudo to install $cmd"
+      SUDO=sudo
+    fi
     $SUDO apt-get update -qq && $SUDO apt-get install -y "$apt_p"
   else die "cannot install '$cmd' automatically: install it and re-run"; fi
 }
@@ -212,14 +234,8 @@ install_uals() {
   fi
 
   local name="uals-$tag-$TARGET" dl="$TMP_ROOT/uals"
-  mkdir -p "$dl"
   say "downloading $name…"
-  fetch "$DOWNLOAD_BASE/$tag/$name.tar.gz" "$dl/$name.tar.gz" || die "cannot download $DOWNLOAD_BASE/$tag/$name.tar.gz"
-  fetch "$DOWNLOAD_BASE/$tag/$name.tar.gz.sha256" "$dl/$name.tar.gz.sha256" || die "cannot download the .sha256 of $name.tar.gz"
-  local want got
-  want="$(awk '{print $1; exit}' "$dl/$name.tar.gz.sha256")"; got="$(sha256_of "$dl/$name.tar.gz")"
-  [ -n "$want" ] && [ "$want" = "$got" ] || die "SHA-256 mismatch for $name.tar.gz (want ${want:-none}, got $got)"
-  tar -xzf "$dl/$name.tar.gz" -C "$dl"
+  fetch_archive "$DOWNLOAD_BASE/$tag/$name.tar.gz" "$dl"
   [ -f "$dl/$name/uals" ] || die "the archive has no $name/uals"
   if install_bin "$dl/$name/uals" "$UALS_BIN"; then ok "uals $tag → $UALS_BIN"
   else ok "uals already up to date ($UALS_BIN)"; fi
@@ -229,24 +245,25 @@ install_uals
 # ─── ast-index ───────────────────────────────────────────────────────────────
 AST_BIN=""
 ast_ok() { [ -x "$1" ] && ver_ge "$("$1" --version 2>/dev/null | first_version)" "$AST_INDEX_VERSION"; }
+
+install_ast_index() {
+  say "installing ast-index $AST_INDEX_VERSION ($AST_ASSET)…"
+  local dl="$TMP_ROOT/ast" asset="ast-index-v$AST_INDEX_VERSION-$AST_ASSET.tar.gz"
+  mkdir -p "$dl"
+  fetch "https://github.com/defendend/Claude-ast-index-search/releases/download/v$AST_INDEX_VERSION/$asset" "$dl/$asset" || die "cannot download $asset"
+  verify_sha256 "$dl/$asset" "$(ast_index_sha256 "$AST_ASSET")"
+  tar -xzf "$dl/$asset" -C "$dl"
+  [ -f "$dl/ast-index" ] || die "the archive has no ast-index"
+  install_bin "$dl/ast-index" "$BIN_DIR/ast-index" || true
+  AST_BIN="$BIN_DIR/ast-index"
+  ok "ast-index $AST_INDEX_VERSION → $AST_BIN"
+}
+
 if [ "$DO_AST" = 1 ]; then
   if ast_ok "$BIN_DIR/ast-index"; then AST_BIN="$BIN_DIR/ast-index"
   elif have ast-index && ast_ok "$(command -v ast-index)"; then AST_BIN="$(command -v ast-index)"
   fi
-  if [ -n "$AST_BIN" ]; then ok "ast-index present ($AST_BIN)"
-  else
-    say "installing ast-index $AST_INDEX_VERSION ($AST_ASSET)…"
-    dl="$TMP_ROOT/ast"; mkdir -p "$dl"
-    asset="ast-index-v$AST_INDEX_VERSION-$AST_ASSET.tar.gz"
-    fetch "https://github.com/defendend/Claude-ast-index-search/releases/download/v$AST_INDEX_VERSION/$asset" "$dl/$asset" || die "cannot download $asset"
-    want="$(ast_index_sha256 "$AST_ASSET")"; got="$(sha256_of "$dl/$asset")"
-    [ "$want" = "$got" ] || die "SHA-256 mismatch for $asset (want $want, got $got)"
-    tar -xzf "$dl/$asset" -C "$dl"
-    [ -f "$dl/ast-index" ] || die "the archive has no ast-index"
-    install_bin "$dl/ast-index" "$BIN_DIR/ast-index" || true
-    AST_BIN="$BIN_DIR/ast-index"
-    ok "ast-index $AST_INDEX_VERSION → $AST_BIN"
-  fi
+  if [ -n "$AST_BIN" ]; then ok "ast-index present ($AST_BIN)"; else install_ast_index; fi
 fi
 
 # ─── semantic backend: semble ────────────────────────────────────────────────
@@ -256,20 +273,15 @@ install_semble() {
   if [ -x "$BIN_DIR/uv" ]; then uv_bin="$BIN_DIR/uv"; elif have uv; then uv_bin="$(command -v uv)"; fi
   if [ -z "$uv_bin" ]; then
     say "installing uv $UV_VERSION…"
-    local name="uv-$TARGET" dl="$TMP_ROOT/uv" base="https://github.com/astral-sh/uv/releases/download/$UV_VERSION"
-    mkdir -p "$dl"
-    fetch "$base/$name.tar.gz" "$dl/$name.tar.gz" || die "cannot download $name.tar.gz"
-    fetch "$base/$name.tar.gz.sha256" "$dl/$name.tar.gz.sha256" || die "cannot download the .sha256 of $name.tar.gz"
-    local want got
-    want="$(awk '{print $1; exit}' "$dl/$name.tar.gz.sha256")"; got="$(sha256_of "$dl/$name.tar.gz")"
-    [ -n "$want" ] && [ "$want" = "$got" ] || die "SHA-256 mismatch for $name.tar.gz (want ${want:-none}, got $got)"
-    tar -xzf "$dl/$name.tar.gz" -C "$dl"
+    local name="uv-$TARGET" dl="$TMP_ROOT/uv"
+    fetch_archive "https://github.com/astral-sh/uv/releases/download/$UV_VERSION/$name.tar.gz" "$dl"
     install_bin "$dl/$name/uvx" "$BIN_DIR/uvx" || true
     install_bin "$dl/$name/uv" "$BIN_DIR/uv" uv-installed || true
     uv_bin="$BIN_DIR/uv"
     ok "uv $UV_VERSION → $uv_bin"
   fi
 
+  # was_installed: a semble tool exists already, so uninstall.sh must not remove it
   local was_installed=0 tool_bin
   if "$uv_bin" tool list 2>/dev/null | grep -q '^semble '; then was_installed=1; fi
   if "$uv_bin" tool list 2>/dev/null | grep -qF "semble v$SEMBLE_VERSION"; then
@@ -291,6 +303,8 @@ install_semble() {
 EMB_PROVIDER=""; OPENAI_BASE_URL=""; OLLAMA_HOST="${OLLAMA_HOST:-http://127.0.0.1:11434}"
 API_KEY_VAR=""; API_KEY_VAL=""; NODE_BIN=""
 ENV_FILE="$REPO_DIR/.env"
+OLLAMA_WAIT_SECONDS=30
+MILVUS_WAIT_TRIES=60     # 3 s apart
 
 select_provider() {
   local env_provider=""
@@ -364,8 +378,8 @@ setup_provider() {
         say "starting Ollama…"
         if [ "$PLATFORM" = macos ] && have brew; then brew services start ollama >/dev/null 2>&1 || ( ollama serve >/dev/null 2>&1 & )
         else ( ollama serve >/dev/null 2>&1 & ); fi
-        for _ in $(seq 1 30); do ollama_up && break; sleep 1; done
-        ollama_up || die "Ollama API did not come up at $OLLAMA_HOST within 30s: start it ('ollama serve') and re-run"
+        for _ in $(seq 1 "$OLLAMA_WAIT_SECONDS"); do ollama_up && break; sleep 1; done
+        ollama_up || die "Ollama API did not come up at $OLLAMA_HOST within ${OLLAMA_WAIT_SECONDS}s: start it ('ollama serve') and re-run"
       fi
       say "pulling model $MODEL…"; ollama pull "$MODEL"
       ;;
@@ -444,9 +458,9 @@ start_milvus() {
   fi
   say "waiting for Milvus to become healthy (first run can take ~1-2 min)…"
   local i
-  for i in $(seq 1 60); do
+  for i in $(seq 1 "$MILVUS_WAIT_TRIES"); do
     if curl -fsS --noproxy '*' "http://127.0.0.1:${health_port}/healthz" >/dev/null 2>&1; then ok "Milvus healthy"; return; fi
-    [ "$i" = 60 ] && die "Milvus did not become healthy. Check: docker compose logs milvus"
+    [ "$i" = "$MILVUS_WAIT_TRIES" ] && die "Milvus did not become healthy. Check: docker compose logs milvus"
     sleep 3
   done
 }
