@@ -4,7 +4,8 @@
 #   ./uninstall.sh --yes      do not ask
 #   ./uninstall.sh --purge    also delete the Milvus volume (indexed vectors), only when the
 #                             installer started the stack. Irreversible.
-# Without a manifest: removes the uals MCP entry if present and says what is left.
+# A step that fails is reported and skipped; its manifest line stays, so a re-run retries it.
+# Without a manifest: removes the uals MCP entry if present; there is nothing else to undo.
 # Safe to run twice.
 set -euo pipefail
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -20,7 +21,7 @@ ASSUME_YES=0; PURGE=0
 for arg in "$@"; do case "$arg" in
   --yes|-y) ASSUME_YES=1;;
   --purge) PURGE=1;;
-  -h|--help) sed -n '2,8p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0;;
+  -h|--help) sed -n '2,9p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0;;
   *) die "unknown flag: $arg";;
 esac; done
 
@@ -38,8 +39,8 @@ if [ ! -f "$MANIFEST" ]; then
   else
     say "no uals MCP entry in $CLAUDE_CONFIG"
   fi
-  echo "Left in place: the uals binary and its tools in your bin dir, the uals config"
-  echo "(\${XDG_CONFIG_HOME:-~/.config}/uals), the Milvus stack and ${DATA_DIR}. Remove them yourself if you want."
+  echo "There is no manifest, so there is nothing to undo from it. If you installed uals by hand, remove it yourself:"
+  echo "the uals and ast-index binaries, the uals config (\${XDG_CONFIG_HOME:-~/.config}/uals), the Milvus stack and ${DATA_DIR}."
   exit 0
 fi
 
@@ -61,76 +62,66 @@ if [ "$ASSUME_YES" = 0 ]; then
   case "$answer" in y|Y|yes) ;; *) echo "Nothing changed."; exit 0;; esac
 fi
 
-# find_uv: the uv the installer put in place, else the one on PATH
-find_uv() {
-  local line uv_path
-  for line in "${MANIFEST_LINES[@]}"; do
-    case "$line" in 'uv-installed '*)
-      uv_path="${line#uv-installed }"
-      [ ! -x "$uv_path" ] || { printf '%s' "$uv_path"; return; };;
-    esac
-  done
-  command -v uv || true
+# One function per manifest kind. They run inside an `if`, where `set -e` does not apply, so every
+# command that can fail ends in `|| return 1`.
+undo_file() {
+  safe_path "$1" || { warn "skipping unsafe path: $1"; return 0; }
+  if [ -e "$1" ]; then rm -f -- "$1" || return 1; ok "removed $1"; fi
+}
+undo_dir() {
+  safe_path "$1" || { warn "skipping unsafe path: $1"; return 0; }
+  if [ -d "$1" ]; then rm -rf -- "$1" || return 1; ok "removed $1"; fi
+}
+undo_emptydir() { rmdir "$1" 2>/dev/null || true; }
+undo_moved_aside() {
+  # A file that was in place before the install: put it back where it was.
+  local original="${1%.bak.*}"
+  safe_path "$original" || { warn "skipping unsafe path: $1"; return 0; }
+  if [ -e "$1" ] && [ ! -e "$original" ]; then mv -f -- "$1" "$original" || return 1; ok "restored $original"; fi
+}
+undo_mcp_entry() { bash "$REPO_DIR/scripts/configure-mcp.sh" --remove --config "$1" || return 1; }
+undo_saved_mcp() { bash "$REPO_DIR/scripts/configure-mcp.sh" --restore-claude-context --config "$1" || return 1; }
+undo_docker_stack() {
+  local env_args=()
+  if [ ! -f "$1/docker-compose.yml" ]; then warn "no docker-compose.yml in $1: stop the uals-milvus container yourself"; return 0; fi
+  if ! have docker || ! docker info >/dev/null 2>&1; then warn "Docker is not running: stop the uals-milvus stack yourself"; return 0; fi
+  [ ! -f "$1/.env" ] || env_args=(--env-file "$1/.env")
+  if [ "$PURGE" = 1 ]; then
+    say "stopping the Milvus stack and deleting its volume…"
+    (cd "$1" && docker compose ${env_args[@]+"${env_args[@]}"} down --volumes) || { warn "docker compose down failed"; return 1; }
+  else
+    say "stopping the Milvus stack (volume kept; --purge deletes it)…"
+    (cd "$1" && docker compose ${env_args[@]+"${env_args[@]}"} down) || { warn "docker compose down failed"; return 1; }
+  fi
 }
 
+failed=0
 for ((i = ${#MANIFEST_LINES[@]} - 1; i >= 0; i--)); do
-  kind="${MANIFEST_LINES[$i]%% *}"; value="${MANIFEST_LINES[$i]#* }"
+  line="${MANIFEST_LINES[$i]}"; kind="${line%% *}"; value="${line#* }"
   case "$kind" in
-    file|config-file)
-      safe_path "$value" || { warn "skipping unsafe path: $value"; continue; }
-      if [ -e "$value" ]; then rm -f -- "$value"; ok "removed $value"; fi
-      [ "$kind" != config-file ] || rmdir "$(dirname "$value")" 2>/dev/null || true
-      ;;
-    dir)
-      safe_path "$value" || { warn "skipping unsafe path: $value"; continue; }
-      if [ -d "$value" ]; then rm -rf -- "$value"; ok "removed $value"; fi
-      ;;
-    emptydir)
-      rmdir "$value" 2>/dev/null || true
-      ;;
-    moved-aside)
-      # A file that was in place before the install: put it back where it was.
-      original="${value%.bak.*}"
-      safe_path "$original" || { warn "skipping unsafe path: $value"; continue; }
-      if [ -e "$value" ] && [ ! -e "$original" ]; then mv -f -- "$value" "$original"; ok "restored $original"; fi
-      ;;
-    mcp-entry)
-      bash "$REPO_DIR/scripts/configure-mcp.sh" --remove --config "$value"
-      ;;
-    saved-mcp)
-      bash "$REPO_DIR/scripts/configure-mcp.sh" --restore-claude-context --config "$value"
-      ;;
-    uv-tool)
-      uv_bin="$(find_uv)"
-      if [ -n "$uv_bin" ]; then
-        UV_TOOL_BIN_DIR="$value" "$uv_bin" tool uninstall semble >/dev/null 2>&1 && ok "removed the semble tool" || true
-      else warn "uv not found: run 'uv tool uninstall semble' yourself"; fi
-      ;;
-    uv-installed)
-      # uv's own uninstall steps (docs.astral.sh/uv/getting-started/installation).
-      if [ -x "$value" ]; then
-        "$value" cache clean >/dev/null 2>&1 || true
-        for d in "$("$value" python dir 2>/dev/null || true)" "$("$value" tool dir 2>/dev/null || true)"; do
-          if safe_path "$d" && [ -d "$d" ]; then rm -rf -- "$d"; rmdir "$(dirname "$d")" 2>/dev/null || true; fi
-        done
-        rm -f -- "$value"; ok "removed uv ($value) with its Python and tool folders"
-      fi
-      ;;
-    docker-stack)
-      if [ ! -f "$value/docker-compose.yml" ]; then warn "no docker-compose.yml in $value: stop the uals-milvus container yourself"; continue; fi
-      if ! have docker || ! docker info >/dev/null 2>&1; then warn "Docker is not running: stop the uals-milvus stack yourself"; continue; fi
-      env_args=(); [ ! -f "$value/.env" ] || env_args=(--env-file "$value/.env")
-      if [ "$PURGE" = 1 ]; then
-        say "stopping the Milvus stack and deleting its volume…"
-        (cd "$value" && docker compose ${env_args[@]+"${env_args[@]}"} down --volumes) || warn "docker compose down failed"
-      else
-        say "stopping the Milvus stack (volume kept; --purge deletes it)…"
-        (cd "$value" && docker compose ${env_args[@]+"${env_args[@]}"} down) || warn "docker compose down failed"
-      fi
-      ;;
-    *) warn "unknown manifest line: ${MANIFEST_LINES[$i]}";;
+    file|config-file) step=undo_file;;
+    dir)              step=undo_dir;;
+    emptydir)         step=undo_emptydir;;
+    moved-aside)      step=undo_moved_aside;;
+    mcp-entry)        step=undo_mcp_entry;;
+    saved-mcp)        step=undo_saved_mcp;;
+    docker-stack)     step=undo_docker_stack;;
+    *) warn "unknown manifest line: $line"; continue;;
   esac
+  if ! "$step" "$value"; then
+    warn "step failed, skipped: $line"
+    step_failed[i]=1; failed=$((failed + 1))
+  fi
 done
+
+if [ "$failed" -gt 0 ]; then
+  # the failed lines go back into the manifest in their original order
+  { for ((i = 0; i < ${#MANIFEST_LINES[@]}; i++)); do
+      [ "${step_failed[$i]:-}" != 1 ] || printf '%s\n' "${MANIFEST_LINES[$i]}"
+    done; } > "$MANIFEST.new"
+  mv -f "$MANIFEST.new" "$MANIFEST"
+  die "$failed step(s) failed: their lines are left in $MANIFEST. Fix the cause and run uninstall.sh again."
+fi
 
 rm -f -- "$MANIFEST"
 rmdir "$DATA_DIR/removed-mcp" 2>/dev/null || true
