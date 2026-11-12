@@ -309,6 +309,7 @@ mod tests {
                 repo: "a".into(),
                 source: BackendId::AstIndex,
                 status: BackendStatus::Ok,
+                fallback: None,
                 usages,
             }],
             next_offset: None,

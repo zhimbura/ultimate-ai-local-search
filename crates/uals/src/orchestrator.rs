@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Result, anyhow, bail};
 use futures::FutureExt;
 use futures::future::{BoxFuture, join_all};
-use tokio::task::JoinSet;
+use tokio::task::{JoinHandle, JoinSet};
 use tracing::{debug, warn};
 use uals_core::backend::{BackendError, SearchBackend, SpanProvider, UsageSource};
 use uals_core::classify::classify;
@@ -33,7 +33,7 @@ use uals_core::types::{
 
 use crate::snippets;
 
-/// No backend is asked for more hits than this per repository, whatever the page offset.
+/// No backend is asked for more hits than this per repository.
 const MAX_FETCH_LIMIT: usize = 500;
 /// Page size of `usages` when the caller gives none.
 pub const DEFAULT_USAGES_LIMIT: usize = 100;
@@ -50,6 +50,8 @@ const STATUS_DEADLINE: Duration = Duration::from_secs(3);
 const WARM_DEADLINE: Duration = Duration::from_secs(15);
 /// A full rebuild of a large repository takes minutes; this only stops a hung backend.
 const REFRESH_DEADLINE: Duration = Duration::from_secs(3_600);
+/// An incremental ast-index update takes seconds; this only stops a hung one.
+const AST_INDEX_UPDATE_DEADLINE: Duration = Duration::from_secs(600);
 
 /// The backends the orchestrator asks.
 #[derive(Clone, Default)]
@@ -154,7 +156,7 @@ impl Orchestrator {
     /// Searches `repos` and returns one fused page.
     pub async fn search(&self, repos: &[Repo], params: &SearchParams) -> Result<SearchResponse> {
         let limit = self.page_size(params.limit);
-        let request = self.build_request(params, limit)?;
+        let request = self.build_request(params)?;
         debug!(query = %request.query, kind = ?request.kind, fetch_limit = request.fetch_limit, repos = repos.len(), "search");
 
         let mut hits = Vec::new();
@@ -201,7 +203,8 @@ impl Orchestrator {
     }
 
     /// Lists every usage of `symbol` in `repos`, grouped by repository, sorted by path and line.
-    /// Every repository is listed on every page, with its source and status.
+    /// Every repository is listed on every page, with its source and status. Fails when the
+    /// symbol is empty or no usage source is configured.
     pub async fn usages(&self, repos: &[Repo], params: &UsagesParams) -> Result<UsagesResponse> {
         let symbol = params.symbol.trim();
         if symbol.is_empty() {
@@ -210,6 +213,7 @@ impl Orchestrator {
         let limit = params.limit.unwrap_or(DEFAULT_USAGES_LIMIT).clamp(1, MAX_USAGES_LIMIT);
         let scan_limit = params.offset.saturating_add(limit).max(USAGES_SCAN_LIMIT);
         let answers = join_all(repos.iter().map(|repo| self.usages_in(repo, symbol, scan_limit))).await;
+        let answers = answers.into_iter().collect::<Result<Vec<_>>>()?;
         Ok(usages_page(symbol, answers, params.offset, limit))
     }
 
@@ -242,20 +246,11 @@ impl Orchestrator {
     }
 
     /// Brings every backend's index of `repos` up to date; `full` rebuilds from scratch. Backends
-    /// work in parallel; each one refreshes the repositories one after another.
+    /// work in parallel; each one refreshes the repositories one after another, each repository
+    /// under `REFRESH_DEADLINE`. Results come per backend, repositories in the given order.
     pub async fn refresh(&self, repos: &[Repo], full: bool) -> Vec<RefreshResult> {
-        let mut batch = Batch::new();
-        for backend in &self.backends.search {
-            let (backend_owned, repos_owned) = (Arc::clone(backend), repos.to_vec());
-            batch.push(backend.id(), Call::new(REFRESH_DEADLINE, refresh_in_turn(backend_owned, repos_owned, full)));
-        }
-        let mut results = Vec::new();
-        for (backend, timed) in batch.run().await {
-            match timed.result {
-                Ok(done) => results.extend(done),
-                Err(status) => results.extend(refresh_stopped(backend, repos, &status, timed.elapsed_ms)),
-            }
-        }
+        let turns = self.backends.search.iter().map(|backend| refresh_in_turn(Arc::clone(backend), repos, full));
+        let results: Vec<RefreshResult> = join_all(turns).await.into_iter().flatten().collect();
         for result in &results {
             match &result.result {
                 Ok(()) => {
@@ -267,20 +262,10 @@ impl Orchestrator {
         results
     }
 
-    /// Prepares the backends for `repos`: starts child processes and background indexing, and,
-    /// when `ast_index.update_on_start` is set, runs `refresh` (an incremental update) of ast-index
-    /// in every repository that already has an index. Returns quickly; the work goes on in the
-    /// background. Repositories without an ast-index index are left alone: `uals refresh`
-    /// creates indexes on request.
+    /// Lets every search backend prepare for `repos` (start child processes, start background
+    /// indexing) under `WARM_DEADLINE`, and logs the outcome. Returns quickly; the work goes on
+    /// in the background.
     pub async fn warm(&self, repos: &[Repo]) {
-        self.warm_backends(repos).await;
-        if self.config.ast_index.update_on_start {
-            self.update_ast_index_in_background(repos);
-        }
-    }
-
-    /// Lets every search backend prepare for `repos` under `WARM_DEADLINE` and logs the outcome.
-    async fn warm_backends(&self, repos: &[Repo]) {
         let mut batch = Batch::new();
         for backend in &self.backends.search {
             let (backend_owned, repos_owned) = (Arc::clone(backend), repos.to_vec());
@@ -294,40 +279,44 @@ impl Orchestrator {
         }
     }
 
-    /// Spawns an incremental ast-index update of every repository in `repos` that already has an
-    /// index. Does nothing when no ast-index backend is configured.
-    fn update_ast_index_in_background(&self, repos: &[Repo]) {
-        let Some(ast_index) = self.backends.search.iter().find(|backend| backend.id() == BackendId::AstIndex) else {
-            return;
-        };
+    /// Spawns an incremental update of the ast-index indexes that already exist in `repos`, one
+    /// repository after another, each under `AST_INDEX_UPDATE_DEADLINE`. A repository without an
+    /// index gets none: creating one is a full `refresh`. Awaiting the returned handle waits for
+    /// the updates; dropping it leaves them running. Returns `None` when no ast-index backend is
+    /// configured.
+    pub fn update_existing_ast_indexes_in_background(&self, repos: &[Repo]) -> Option<JoinHandle<()>> {
+        let ast_index = self.backends.search.iter().find(|backend| backend.id() == BackendId::AstIndex)?;
         let (ast_index, repos) = (Arc::clone(ast_index), repos.to_vec());
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             for repo in &repos {
-                if !ast_index.index_state(repo).await.indexed {
-                    debug!(repo = %repo.name, "no ast-index index; not updating it on start");
-                    continue;
-                }
-                match ast_index.refresh(repo, false).await {
-                    Ok(()) => debug!(repo = %repo.name, "ast-index updated on start"),
-                    Err(error) => warn!(repo = %repo.name, %error, "ast-index update on start failed"),
+                let update = async {
+                    if !ast_index.index_state(repo).await.indexed {
+                        return None;
+                    }
+                    Some(ast_index.refresh(repo, false).await)
+                };
+                match tokio::time::timeout(AST_INDEX_UPDATE_DEADLINE, update).await {
+                    Ok(None) => debug!(repo = %repo.name, "no ast-index index; not creating one"),
+                    Ok(Some(Ok(()))) => debug!(repo = %repo.name, "ast-index updated"),
+                    Ok(Some(Err(error))) => warn!(repo = %repo.name, %error, "ast-index update failed"),
+                    Err(_) => warn!(repo = %repo.name, "ast-index update stopped at its deadline"),
                 }
             }
         });
+        Some(handle)
     }
 
     /// The backend request for `params`: the classified query and how many hits each backend
     /// is asked for.
-    fn build_request(&self, params: &SearchParams, page_size: usize) -> Result<SearchRequest> {
+    fn build_request(&self, params: &SearchParams) -> Result<SearchRequest> {
         let classified = classify(&params.query, params.kind);
         if classified.text.trim().is_empty() {
             bail!("the query is empty");
         }
-        // Fusion needs more candidates than one page holds, since backends rank differently.
-        let fetch_limit = params
-            .offset
-            .saturating_add(page_size)
-            .saturating_mul(self.config.fusion.fetch_factor)
-            .min(MAX_FETCH_LIMIT);
+        // Fusion needs more candidates than one page holds, since backends rank differently. The
+        // depth does not depend on the page, so every page is cut from the same candidate pool.
+        let fetch_limit =
+            self.config.output.max_limit.saturating_mul(self.config.fusion.fetch_factor).min(MAX_FETCH_LIMIT);
         Ok(SearchRequest { query: classified.text, kind: classified.kind, fetch_limit, paths: params.paths.clone() })
     }
 
@@ -349,21 +338,26 @@ impl Orchestrator {
         BackendResult { backend, repo: repo.name.clone(), status, hits, elapsed_ms: timed.elapsed_ms }
     }
 
-    /// Asks the usage sources in order until one answers for `repo`.
-    async fn usages_in(&self, repo: &Repo, symbol: &str, limit: usize) -> RepoAnswer {
-        let mut last_failure = None;
+    /// Asks the usage sources in order until one answers for `repo`. Fails only when no usage
+    /// source is configured.
+    async fn usages_in(&self, repo: &Repo, symbol: &str, limit: usize) -> Result<RepoAnswer> {
+        let mut failures = Vec::new();
         for source in &self.backends.usages {
             let id = source.id();
             let call = usages_call(source, repo, symbol, limit, self.deadline(id, false));
             match run_single(call).await.result {
-                Ok(answer) => return answered(repo, id, answer),
+                Ok(answer) => return Ok(answered(repo, id, answer, &failures)),
                 Err(status) => {
                     debug!(repo = %repo.name, source = %id, ?status, "usage source did not answer; trying the next one");
-                    last_failure = Some((id, status));
+                    failures.push((id, status));
                 }
             }
         }
-        unanswered(repo, last_failure)
+        let Some((source, status)) = failures.pop() else {
+            bail!("no usage source is configured");
+        };
+        warn!(repo = %repo.name, source = %source, ?status, "no usage source answered");
+        Ok(unanswered(repo, source, status, &failures))
     }
 
     /// The symbol spans of every file a hit points to, one provider call per repository.
@@ -451,41 +445,37 @@ fn usages_call(
     Call::new(deadline, async move { source.usages(&repo, &symbol, limit).await })
 }
 
-/// Refreshes `repos` with `backend` one after another and returns one result per repository.
-async fn refresh_in_turn(
-    backend: Arc<dyn SearchBackend>,
-    repos: Vec<Repo>,
-    full: bool,
-) -> Result<Vec<RefreshResult>, BackendError> {
+/// Refreshes `repos` with `backend` one after another, each under `REFRESH_DEADLINE`, and
+/// returns one result per repository. A repository that fails, panics or misses the deadline
+/// does not stop the next one.
+async fn refresh_in_turn(backend: Arc<dyn SearchBackend>, repos: &[Repo], full: bool) -> Vec<RefreshResult> {
     let mut done = Vec::with_capacity(repos.len());
-    for repo in &repos {
-        let started = Instant::now();
-        let result = backend.refresh(repo, full).await;
-        let elapsed_ms = millis(started.elapsed());
-        done.push(RefreshResult { backend: backend.id(), repo: repo.name.clone(), result, elapsed_ms });
-    }
-    Ok(done)
-}
-
-/// One failed `RefreshResult` per repository, for a backend whose whole refresh ended early
-/// (deadline, panic or lost task).
-fn refresh_stopped(backend: BackendId, repos: &[Repo], status: &BackendStatus, elapsed_ms: u64) -> Vec<RefreshResult> {
-    let reason = describe(status, REFRESH_DEADLINE);
-    warn!(backend = %backend, reason, "refresh stopped");
-    repos
-        .iter()
-        .map(|repo| RefreshResult {
-            backend,
+    for repo in repos {
+        let (backend_owned, repo_owned) = (Arc::clone(&backend), repo.clone());
+        let call = Call::new(REFRESH_DEADLINE, async move { backend_owned.refresh(&repo_owned, full).await });
+        let timed = run_one(call).await;
+        let result = timed.result.map_err(|status| match status {
+            BackendStatus::Unavailable { reason } => BackendError::Unavailable(reason),
+            other => BackendError::Failed(describe(&other, REFRESH_DEADLINE)),
+        });
+        done.push(RefreshResult {
+            backend: backend.id(),
             repo: repo.name.clone(),
-            result: Err(BackendError::Failed(reason.clone())),
-            elapsed_ms,
-        })
-        .collect()
+            result,
+            elapsed_ms: timed.elapsed_ms,
+        });
+    }
+    done
 }
 
 /// The answer of the source `id` for `repo`, with usages sorted by path and line and one entry
-/// per line.
-fn answered(repo: &Repo, id: BackendId, mut answer: UsageAnswer) -> RepoAnswer {
+/// per line. `failures` are the sources asked before `id` and how they failed.
+fn answered(
+    repo: &Repo,
+    id: BackendId,
+    mut answer: UsageAnswer,
+    failures: &[(BackendId, BackendStatus)],
+) -> RepoAnswer {
     answer.usages.sort_by(|a, b| a.path.cmp(&b.path).then(a.line.cmp(&b.line)));
     answer.usages.dedup_by(|a, b| a.path == b.path && a.line == b.line);
     debug!(repo = %repo.name, source = %id, usages = answer.usages.len(), complete = answer.complete, "usages");
@@ -493,17 +483,35 @@ fn answered(repo: &Repo, id: BackendId, mut answer: UsageAnswer) -> RepoAnswer {
         Some(reason) => BackendStatus::Stale { reason },
         None => BackendStatus::Ok,
     };
-    let found = RepoUsages { repo: repo.name.clone(), source: id, status, usages: answer.usages };
+    let fallback = fallback_note(failures);
+    let found = RepoUsages { repo: repo.name.clone(), source: id, status, fallback, usages: answer.usages };
     RepoAnswer { found, complete: answer.complete }
 }
 
-/// The empty answer for a repository no usage source answered: it carries the last source's
-/// failure, or says that none is configured.
-fn unanswered(repo: &Repo, last_failure: Option<(BackendId, BackendStatus)>) -> RepoAnswer {
-    let (source, status) = last_failure.unwrap_or_else(|| {
-        (BackendId::Lexical, BackendStatus::Unavailable { reason: "no usage source is configured".into() })
-    });
-    RepoAnswer { found: RepoUsages { repo: repo.name.clone(), source, status, usages: Vec::new() }, complete: false }
+/// The empty answer for a repository no usage source answered: the last source asked and its
+/// failure, with the failures of the sources before it as the fallback note.
+fn unanswered(
+    repo: &Repo,
+    source: BackendId,
+    status: BackendStatus,
+    earlier: &[(BackendId, BackendStatus)],
+) -> RepoAnswer {
+    let found =
+        RepoUsages { repo: repo.name.clone(), source, status, fallback: fallback_note(earlier), usages: Vec::new() };
+    RepoAnswer { found, complete: false }
+}
+
+/// How each source in `failures` failed, as `ast-index unavailable (no index)`, joined with
+/// `; `; `None` when the list is empty.
+fn fallback_note(failures: &[(BackendId, BackendStatus)]) -> Option<String> {
+    let notes: Vec<String> = failures
+        .iter()
+        .map(|(id, status)| match status.reason() {
+            Some(reason) => format!("{id} {} ({reason})", status.state()),
+            None => format!("{id} {}", status.state()),
+        })
+        .collect();
+    (!notes.is_empty()).then(|| notes.join("; "))
 }
 
 /// One page of the usages of all repositories together; each usage lands in its repository's

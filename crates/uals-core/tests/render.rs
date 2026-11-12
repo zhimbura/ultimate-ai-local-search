@@ -252,6 +252,7 @@ fn usages_response() -> UsagesResponse {
                 repo: "sample-android".into(),
                 source: BackendId::AstIndex,
                 status: BackendStatus::Ok,
+                fallback: None,
                 usages: vec![
                     usage("sample-android", "/ws/sample-android/app/App.kt", 9, Some("val s = HostSelector()")),
                     usage("sample-android", "/ws/sample-android/app/App.kt", 14, None),
@@ -261,7 +262,8 @@ fn usages_response() -> UsagesResponse {
             RepoUsages {
                 repo: "sample-web".into(),
                 source: BackendId::Lexical,
-                status: BackendStatus::Unavailable { reason: "ast-index unavailable (no index)".into() },
+                status: BackendStatus::Ok,
+                fallback: Some("ast-index unavailable (no index)".into()),
                 usages: vec![
                     usage("sample-web", "/ws/sample-web/a.ts", 1, None),
                     usage("sample-web", "/ws/sample-web/b.ts", 2, None),
@@ -341,6 +343,7 @@ fn empty_usages() {
             repo: "r".into(),
             source: BackendId::Lexical,
             status: BackendStatus::Ok,
+            fallback: None,
             usages: Vec::new(),
         }],
         next_offset: None,
@@ -350,4 +353,18 @@ fn empty_usages() {
         render_usages(&response, Format::Concise, &OutputConfig::default()),
         "usages of \"Nope\" · 0 in 0 files · complete\nr (lexical)"
     );
+}
+
+#[test]
+fn a_heading_shows_the_fallback_note_before_the_source_status() {
+    let mut response = usages_response();
+    response.repos.remove(0);
+    response.repos[0].usages.clear();
+    response.repos[0].status = BackendStatus::Failed { reason: "walk aborted".into() };
+    response.total = 0;
+    response.complete = false;
+    let expected = "\
+usages of \"HostSelector\" · 0 in 0 files · incomplete
+sample-web (lexical: ast-index unavailable (no index); failed: walk aborted)";
+    assert_eq!(render_usages(&response, Format::Concise, &OutputConfig::default()), expected);
 }

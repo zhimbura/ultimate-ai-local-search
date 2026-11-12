@@ -31,6 +31,8 @@ tracing-subscriber.workspace = true
 [dev-dependencies]
 pretty_assertions.workspace = true
 tempfile.workspace = true
+# Paused time: deadlines of seconds and an hour are tested without waiting for them.
+tokio = { workspace = true, features = ["test-util"] }
 
 [lints]
 workspace = true

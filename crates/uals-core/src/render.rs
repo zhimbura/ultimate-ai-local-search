@@ -37,7 +37,10 @@
 //!   …
 //! next: offset=100
 //! ```
-//! `incomplete` replaces `complete` when any repository answered partially.
+//! - Each repository's heading names the source that answered. After a colon come how the
+//!   sources asked before it failed (`RepoUsages::fallback`) and the source's own status when it
+//!   is not ok, joined with `; `.
+//! - `incomplete` replaces `complete` when any repository answered partially.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -51,7 +54,7 @@ use crate::types::{
 };
 
 /// Snippet lines longer than this many characters are cut.
-const MAX_LINE_CHARS: usize = 200;
+pub const MAX_LINE_CHARS: usize = 200;
 /// Between the parts of a header or hit line.
 const SEPARATOR: &str = " · ";
 /// `Detailed` shows this many times the snippet lines of the other formats.
@@ -266,16 +269,8 @@ fn backends_line(reports: &[BackendReport]) -> String {
 
 /// `backend state (reason) Nms` for one backend report.
 fn report_text(report: &BackendReport) -> String {
-    let (state, reason) = match &report.status {
-        BackendStatus::Ok => ("ok", None),
-        BackendStatus::Stale { reason } => ("stale", Some(reason)),
-        BackendStatus::Partial { reason } => ("partial", Some(reason)),
-        BackendStatus::Timeout => ("timeout", None),
-        BackendStatus::Unavailable { reason } => ("unavailable", Some(reason)),
-        BackendStatus::Failed { reason } => ("failed", Some(reason)),
-    };
-    let reason = reason.filter(|reason| !reason.is_empty()).map(|reason| format!(" ({reason})"));
-    format!("{} {state}{} {}ms", report.backend, reason.unwrap_or_default(), report.elapsed_ms)
+    let reason = report.status.reason().filter(|reason| !reason.is_empty()).map(|reason| format!(" ({reason})"));
+    format!("{} {}{} {}ms", report.backend, report.status.state(), reason.unwrap_or_default(), report.elapsed_ms)
 }
 
 // ---- usages ----
@@ -327,11 +322,14 @@ fn usages_text(response: &UsagesResponse, format: Format) -> String {
     lines.join("\n")
 }
 
-/// `repo (source)`, with the status note after the source when the answer is not plain.
+/// `repo (source)`, with the fallback note and the status note after the source when the answer
+/// is not plain.
 fn repo_heading(repo: &RepoUsages) -> String {
-    match status_note(&repo.status) {
-        Some(note) => format!("{} ({}: {note})", repo.repo, repo.source),
-        None => format!("{} ({})", repo.repo, repo.source),
+    let notes: Vec<String> = repo.fallback.iter().cloned().chain(status_note(&repo.status)).collect();
+    if notes.is_empty() {
+        format!("{} ({})", repo.repo, repo.source)
+    } else {
+        format!("{} ({}: {})", repo.repo, repo.source, notes.join("; "))
     }
 }
 

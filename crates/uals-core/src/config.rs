@@ -205,7 +205,8 @@ impl ClaudeContextConfig {
 pub struct AstIndexConfig {
     /// Executable name or path.
     pub binary: String,
-    /// Run `ast-index update` in every repository root when `uals mcp` starts.
+    /// When `uals mcp` starts, update the ast-index index of every repository that already has
+    /// one. Creating an index is left to `uals refresh`.
     pub update_on_start: bool,
 }
 
@@ -363,7 +364,8 @@ impl Default for Weights {
 pub struct FusionConfig {
     /// The RRF constant k: contribution = weight / (k + rank + 1).
     pub rrf_k: f64,
-    /// Each backend is asked for `limit * fetch_factor` hits per repository.
+    /// Each backend is asked for `output.max_limit * fetch_factor` hits per repository, the same
+    /// for every page, so all pages of a query come from one candidate pool.
     pub fetch_factor: usize,
     /// At most this many exact definitions are pinned to the top.
     pub max_pinned: usize,

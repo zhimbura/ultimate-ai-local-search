@@ -1,19 +1,21 @@
 //! The orchestrator against fake backends: deadlines, cancellation, panics, statuses, fusion with
-//! snippets from disk, paging, and the usages fallback.
+//! symbol spans and snippets from disk, paging, the usages fallback, index status, refresh and
+//! the background index update.
 
-use std::path::Path;
-use std::sync::Arc;
+use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use pretty_assertions::assert_eq;
 use uals::orchestrator::{Backends, Orchestrator, SearchParams, UsagesParams, select_repos};
-use uals_core::backend::{BackendError, SearchBackend, UsageSource};
+use uals_core::backend::{BackendError, SearchBackend, SpanProvider, UsageSource};
 use uals_core::config::Config;
 use uals_core::types::{
     BackendAnswer, BackendId, BackendResult, BackendStatus, Hit, IndexState, LineRange, QueryKind, Repo, SearchRequest,
-    Snippet, SymbolKind, Usage, UsageAnswer, Workspace,
+    Snippet, SymbolKind, SymbolSpan, Usage, UsageAnswer, Workspace,
 };
 
 type SearchReply = dyn Fn(&Repo, &SearchRequest) -> Result<BackendAnswer, BackendError> + Send + Sync;
@@ -89,6 +91,92 @@ impl SearchBackend for FakeSearch {
             stale: None,
             detail: None,
         }
+    }
+}
+
+/// A backend whose index work is scripted per repository name.
+struct FakeIndexer {
+    id: BackendId,
+    /// Repositories that have an index.
+    indexed: Vec<&'static str>,
+    /// `index_state` never ends.
+    state_hangs: bool,
+    /// Repositories whose `refresh` never ends.
+    refresh_hangs: Vec<&'static str>,
+    /// Repositories whose `refresh` fails.
+    refresh_fails: Vec<&'static str>,
+    /// Every `refresh` call: the repository name and `full`.
+    refreshed: Mutex<Vec<(String, bool)>>,
+}
+
+impl FakeIndexer {
+    fn new(id: BackendId) -> Self {
+        Self {
+            id,
+            indexed: Vec::new(),
+            state_hangs: false,
+            refresh_hangs: Vec::new(),
+            refresh_fails: Vec::new(),
+            refreshed: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn refreshed(&self) -> Vec<(String, bool)> {
+        self.refreshed.lock().expect("refresh log").clone()
+    }
+}
+
+#[async_trait]
+impl SearchBackend for FakeIndexer {
+    fn id(&self) -> BackendId {
+        self.id
+    }
+
+    fn supports(&self, _kind: QueryKind) -> bool {
+        true
+    }
+
+    async fn search(&self, _repo: &Repo, _request: &SearchRequest) -> Result<BackendAnswer, BackendError> {
+        Ok(answer(Vec::new()))
+    }
+
+    async fn index_state(&self, repo: &Repo) -> IndexState {
+        if self.state_hangs {
+            std::future::pending::<()>().await;
+        }
+        IndexState {
+            backend: self.id,
+            repo: repo.name.clone(),
+            indexed: self.indexed.contains(&repo.name.as_str()),
+            updated_at_ms: None,
+            stale: None,
+            detail: None,
+        }
+    }
+
+    async fn refresh(&self, repo: &Repo, full: bool) -> Result<(), BackendError> {
+        self.refreshed.lock().expect("refresh log").push((repo.name.clone(), full));
+        if self.refresh_hangs.contains(&repo.name.as_str()) {
+            std::future::pending::<()>().await;
+        }
+        if self.refresh_fails.contains(&repo.name.as_str()) {
+            return Err(BackendError::Failed("disk full".into()));
+        }
+        Ok(())
+    }
+}
+
+/// Gives the same spans for every file and counts its calls.
+struct FakeSpans {
+    spans: Vec<SymbolSpan>,
+    calls: AtomicUsize,
+}
+
+#[async_trait]
+impl SpanProvider for FakeSpans {
+    async fn spans(&self, _repo: &Repo, _files: &[PathBuf]) -> Result<Vec<SymbolSpan>, BackendError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Ok(self.spans.clone())
     }
 }
 
@@ -339,6 +427,109 @@ async fn search_pages_and_points_to_the_next_page() {
 }
 
 #[tokio::test]
+async fn every_page_of_a_query_is_cut_from_the_same_candidate_pool() {
+    let app = repo("app", Path::new("/nonexistent/uals/app"));
+    let lexical = Arc::new(FakeSearch::new(BackendId::Lexical, |repo, request| {
+        let hits = (0..request.fetch_limit)
+            .map(|rank| hit(BackendId::Lexical, repo, &format!("F{rank}.kt"), (1, 1), rank as u32))
+            .collect();
+        Ok(answer(hits))
+    }));
+    let orchestrator = search_only(vec![lexical], Config::default());
+    let mut params = SearchParams::new("/retry\\w+/");
+    params.limit = Some(5);
+
+    let first = orchestrator.search(std::slice::from_ref(&app), &params).await.expect("first page");
+    params.offset = 5;
+    let second = orchestrator.search(std::slice::from_ref(&app), &params).await.expect("second page");
+
+    assert_eq!(first.total, second.total, "both pages come from one pool");
+    let shown: Vec<&Path> = first.hits.iter().chain(&second.hits).map(|hit| hit.path.as_path()).collect();
+    assert_eq!(shown.iter().collect::<BTreeSet<_>>().len(), 10, "pages repeat hits: {shown:?}");
+}
+
+#[tokio::test]
+async fn hits_inside_one_symbol_merge_into_one_result_that_spans_it() {
+    let app = repo("app", Path::new("/nonexistent/uals/app"));
+    let ast_index = Arc::new(FakeSearch::new(BackendId::AstIndex, |repo, _| {
+        Ok(answer(vec![hit(BackendId::AstIndex, repo, "A.kt", (3, 3), 0)]))
+    }));
+    let lexical = Arc::new(FakeSearch::new(BackendId::Lexical, |repo, _| {
+        Ok(answer(vec![hit(BackendId::Lexical, repo, "A.kt", (15, 15), 0)]))
+    }));
+    let span = SymbolSpan {
+        repo: "app".into(),
+        path: app.root.join("A.kt"),
+        name: "HostSelector".into(),
+        kind: SymbolKind::Class,
+        lines: LineRange::new(1, 20),
+    };
+    let spans = Arc::new(FakeSpans { spans: vec![span], calls: AtomicUsize::new(0) });
+    let backends = Backends { search: vec![ast_index, lexical], usages: Vec::new(), spans: Some(spans.clone()) };
+    let orchestrator = Orchestrator::new(backends, Config::default());
+
+    let response = orchestrator.search(&[app], &SearchParams::new("HostSelector")).await.expect("search");
+
+    let found: Vec<(LineRange, usize)> = response.hits.iter().map(|hit| (hit.lines, hit.sources.len())).collect();
+    assert_eq!(found, vec![(LineRange::new(1, 20), 2)], "lines 3 and 15 are too far apart to merge without the span");
+    assert_eq!(spans.calls.load(Ordering::SeqCst), 1, "one spans call per repository");
+}
+
+#[tokio::test(start_paused = true)]
+async fn status_reports_a_backend_whose_index_state_does_not_answer_in_time() {
+    let app = repo("app", Path::new("/ws/app"));
+    let ast_index = Arc::new(FakeIndexer { indexed: vec!["app"], ..FakeIndexer::new(BackendId::AstIndex) });
+    let semble = Arc::new(FakeIndexer { state_hangs: true, ..FakeIndexer::new(BackendId::Semble) });
+    let orchestrator = search_only(vec![ast_index, semble], Config::default());
+
+    let states = orchestrator.status(&[app]).await;
+
+    let summary: Vec<(BackendId, bool, Option<String>)> =
+        states.into_iter().map(|state| (state.backend, state.indexed, state.detail)).collect();
+    assert_eq!(
+        summary,
+        vec![(BackendId::AstIndex, true, None), (BackendId::Semble, false, Some("no answer within 3000 ms".into()))]
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn refresh_goes_on_with_the_next_repository_after_one_hangs_or_fails() {
+    let (app, web) = (repo("app", Path::new("/ws/app")), repo("web", Path::new("/ws/web")));
+    let ast_index = Arc::new(FakeIndexer { refresh_hangs: vec!["app"], ..FakeIndexer::new(BackendId::AstIndex) });
+    let lexical = Arc::new(FakeIndexer { refresh_fails: vec!["app"], ..FakeIndexer::new(BackendId::Lexical) });
+    let orchestrator = search_only(vec![ast_index.clone(), lexical], Config::default());
+
+    let results = orchestrator.refresh(&[app, web], true).await;
+
+    let outcomes: Vec<(BackendId, String, Result<(), BackendError>)> =
+        results.into_iter().map(|result| (result.backend, result.repo, result.result)).collect();
+    assert_eq!(
+        outcomes,
+        vec![
+            (BackendId::AstIndex, "app".into(), Err(BackendError::Failed("no answer within 3600000 ms".into()))),
+            (BackendId::AstIndex, "web".into(), Ok(())),
+            (BackendId::Lexical, "app".into(), Err(BackendError::Failed("disk full".into()))),
+            (BackendId::Lexical, "web".into(), Ok(())),
+        ]
+    );
+    assert_eq!(ast_index.refreshed(), vec![("app".to_string(), true), ("web".to_string(), true)]);
+}
+
+#[tokio::test]
+async fn only_existing_ast_indexes_are_updated_in_the_background() {
+    let (app, web) = (repo("app", Path::new("/ws/app")), repo("web", Path::new("/ws/web")));
+    let ast_index = Arc::new(FakeIndexer { indexed: vec!["app"], ..FakeIndexer::new(BackendId::AstIndex) });
+    let orchestrator = search_only(vec![ast_index.clone()], Config::default());
+    let without_ast_index = search_only(vec![Arc::new(FakeIndexer::new(BackendId::Lexical))], Config::default());
+
+    let update = orchestrator.update_existing_ast_indexes_in_background(&[app.clone(), web]);
+    update.expect("an ast-index backend is configured").await.expect("the update task ends");
+
+    assert_eq!(ast_index.refreshed(), vec![("app".to_string(), false)]);
+    assert!(without_ast_index.update_existing_ast_indexes_in_background(&[app]).is_none());
+}
+
+#[tokio::test]
 async fn an_empty_query_is_rejected() {
     let orchestrator = search_only(Vec::new(), Config::default());
     let error = orchestrator.search(&[], &SearchParams::new("  ")).await.expect_err("an empty query fails");
@@ -398,7 +589,47 @@ async fn usages_fall_back_to_the_next_source_and_page_across_repositories() {
         listed(&second),
         vec![("app".into(), BackendId::AstIndex, vec![]), ("web".into(), BackendId::Lexical, vec![1, 5])]
     );
-    assert!(first.repos.iter().all(|repo| repo.status == BackendStatus::Ok));
+    let notes: Vec<(BackendStatus, Option<String>)> =
+        first.repos.iter().map(|repo| (repo.status.clone(), repo.fallback.clone())).collect();
+    assert_eq!(
+        notes,
+        vec![(BackendStatus::Ok, None), (BackendStatus::Ok, Some("ast-index unavailable (no index)".into()))],
+        "a fallback answer says why the first source did not answer"
+    );
+}
+
+#[tokio::test]
+async fn when_no_usage_source_answers_the_repository_says_how_each_one_failed() {
+    let app = repo("app", Path::new("/ws/app"));
+    let ast_index = Arc::new(FakeUsages {
+        id: BackendId::AstIndex,
+        reply: Box::new(|_| Err(BackendError::Unavailable("no index".into()))),
+    });
+    let lexical = Arc::new(FakeUsages {
+        id: BackendId::Lexical,
+        reply: Box::new(|_| Err(BackendError::Failed("walk aborted".into()))),
+    });
+    let orchestrator = Orchestrator::new(
+        Backends { search: Vec::new(), usages: vec![ast_index, lexical], spans: None },
+        Config::default(),
+    );
+    let unconfigured = Orchestrator::new(Backends::default(), Config::default());
+
+    let response = orchestrator.usages(std::slice::from_ref(&app), &UsagesParams::new("HostSelector")).await;
+    let error = unconfigured.usages(&[app], &UsagesParams::new("HostSelector")).await.expect_err("no usage source");
+
+    let response = response.expect("usages");
+    let found = &response.repos[0];
+    assert_eq!(
+        (found.source, found.status.clone(), found.fallback.clone(), response.complete),
+        (
+            BackendId::Lexical,
+            BackendStatus::Failed { reason: "walk aborted".into() },
+            Some("ast-index unavailable (no index)".into()),
+            false
+        )
+    );
+    assert_eq!(error.to_string(), "no usage source is configured");
 }
 
 #[test]

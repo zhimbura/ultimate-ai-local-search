@@ -2,16 +2,18 @@
 
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{self, BufRead, BufReader};
+use std::io::{self, BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 
 use tracing::{debug, warn};
 use uals_core::config::OutputConfig;
-use uals_core::render::{Format, snippet_range};
+use uals_core::render::{Format, MAX_LINE_CHARS, snippet_range};
 use uals_core::types::{FusedHit, LineRange, Snippet};
 
-/// Lines longer than this many characters are cut here; `render` cuts again for display.
-const MAX_LINE_CHARS: usize = 400;
+/// The most bytes kept of one line; the rest of a longer line is skipped unread into memory, so
+/// a minified file is never loaded whole. UTF-8 takes at most 4 bytes per character, so the
+/// bytes kept hold more than `MAX_LINE_CHARS` characters and the cut still shows.
+const MAX_LINE_BYTES: u64 = MAX_LINE_CHARS as u64 * 4 + 4;
 
 /// Sets `snippet` on every hit to the lines `render::snippet_range` picks. A hit whose file cannot
 /// be read, or is shorter than the range start, keeps `None`.
@@ -54,20 +56,48 @@ fn read_lines(path: &Path, last: u32) -> io::Result<Vec<String>> {
     let mut reader = BufReader::new(File::open(path)?);
     let mut lines = Vec::new();
     let mut buffer = Vec::new();
-    while lines.len() < last as usize {
-        buffer.clear();
-        if reader.read_until(b'\n', &mut buffer)? == 0 {
-            break;
-        }
-        if buffer.last() == Some(&b'\n') {
-            buffer.pop();
-        }
-        if buffer.last() == Some(&b'\r') {
-            buffer.pop();
-        }
+    while lines.len() < last as usize && read_line_capped(&mut reader, &mut buffer)? {
         lines.push(shorten(&String::from_utf8_lossy(&buffer)));
     }
     Ok(lines)
+}
+
+/// Reads the next line into `line` without its line ending, keeping at most `MAX_LINE_BYTES`
+/// bytes and skipping the rest. Returns false at the end of the input.
+fn read_line_capped(reader: &mut impl BufRead, line: &mut Vec<u8>) -> io::Result<bool> {
+    line.clear();
+    if reader.by_ref().take(MAX_LINE_BYTES).read_until(b'\n', line)? == 0 {
+        return Ok(false);
+    }
+    if line.last() == Some(&b'\n') {
+        line.pop();
+    } else {
+        skip_rest_of_line(reader)?;
+    }
+    if line.last() == Some(&b'\r') {
+        line.pop();
+    }
+    Ok(true)
+}
+
+/// Consumes `reader` up to and including the next `\n` without keeping the bytes.
+fn skip_rest_of_line(reader: &mut impl BufRead) -> io::Result<()> {
+    loop {
+        let available = reader.fill_buf()?;
+        if available.is_empty() {
+            return Ok(());
+        }
+        match available.iter().position(|&byte| byte == b'\n') {
+            Some(end) => {
+                reader.consume(end + 1);
+                return Ok(());
+            }
+            None => {
+                let length = available.len();
+                reader.consume(length);
+            }
+        }
+    }
 }
 
 /// The lines of `range` that exist in `lines` (1-based), or `None` when the file ends before
@@ -124,6 +154,23 @@ mod tests {
     fn a_missing_file_gives_no_snippet() {
         let read = read_ranges(&[(PathBuf::from("/nonexistent/uals/File.kt"), LineRange::new(1, 3))]);
         assert_eq!(read, vec![None]);
+    }
+
+    #[test]
+    fn a_huge_line_keeps_only_its_start_and_the_next_line_still_reads() {
+        let mut content = "x".repeat(1_000_000).into_bytes();
+        content.extend_from_slice(b"\r\nnext\n");
+        let mut reader = io::Cursor::new(content);
+        let mut line = Vec::new();
+
+        let first = read_line_capped(&mut reader, &mut line).expect("first line");
+        let kept = line.len();
+        let second = read_line_capped(&mut reader, &mut line).expect("second line");
+        let next = String::from_utf8_lossy(&line).into_owned();
+        let end = read_line_capped(&mut reader, &mut line).expect("end");
+
+        assert_eq!((first, kept), (true, MAX_LINE_BYTES as usize));
+        assert_eq!((second, next.as_str(), end), (true, "next", false));
     }
 
     #[test]

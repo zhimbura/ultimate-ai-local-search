@@ -174,7 +174,8 @@ pub struct SearchRequest {
     /// The query after `classify::normalize` (quotes and slashes removed).
     pub query: String,
     pub kind: QueryKind,
-    /// How many hits to return for this repository (already multiplied by the fetch factor).
+    /// How many hits to return for this repository: `output.max_limit × fusion.fetch_factor`,
+    /// the same for every page of a query.
     pub fetch_limit: usize,
     /// Optional globs relative to the repository root. Empty means the whole repository.
     #[serde(default)]
@@ -220,6 +221,32 @@ pub enum BackendStatus {
     Failed {
         reason: String,
     },
+}
+
+impl BackendStatus {
+    /// The name of the state, as in the JSON `state` tag: `ok`, `stale`, `partial`, `timeout`,
+    /// `unavailable` or `failed`.
+    pub fn state(&self) -> &'static str {
+        match self {
+            BackendStatus::Ok => "ok",
+            BackendStatus::Stale { .. } => "stale",
+            BackendStatus::Partial { .. } => "partial",
+            BackendStatus::Timeout => "timeout",
+            BackendStatus::Unavailable { .. } => "unavailable",
+            BackendStatus::Failed { .. } => "failed",
+        }
+    }
+
+    /// The reason the status carries; `None` for `Ok` and `Timeout`.
+    pub fn reason(&self) -> Option<&str> {
+        match self {
+            BackendStatus::Ok | BackendStatus::Timeout => None,
+            BackendStatus::Stale { reason }
+            | BackendStatus::Partial { reason }
+            | BackendStatus::Unavailable { reason }
+            | BackendStatus::Failed { reason } => Some(reason),
+        }
+    }
 }
 
 /// The result of one backend for one repository, as collected by the orchestrator.
@@ -303,7 +330,8 @@ pub struct BackendReport {
 pub struct SearchResponse {
     pub query: String,
     pub kind: QueryKind,
-    /// Number of fused hits before pagination.
+    /// Number of fused hits in the candidate pool. Every page of a query is cut from the same
+    /// pool, so pages neither repeat nor skip hits; past the pool, pages are empty.
     pub total: usize,
     pub offset: usize,
     pub hits: Vec<FusedHit>,
@@ -338,8 +366,14 @@ pub struct UsageAnswer {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RepoUsages {
     pub repo: String,
+    /// The source that answered, or the last one asked when none did.
     pub source: BackendId,
+    /// How `source` answered.
     pub status: BackendStatus,
+    /// Set when the sources asked before `source` did not answer: how each of them failed,
+    /// for example `ast-index unavailable (no index)`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<String>,
     pub usages: Vec<Usage>,
 }
 
@@ -412,5 +446,23 @@ mod tests {
     fn status_is_tagged() {
         let json = serde_json::to_string(&BackendStatus::Unavailable { reason: "no index".into() }).unwrap();
         assert_eq!(json, r#"{"state":"unavailable","reason":"no index"}"#);
+    }
+
+    #[test]
+    fn status_state_and_reason_match_the_json() {
+        let reason = || "why".to_string();
+        let all = [
+            BackendStatus::Ok,
+            BackendStatus::Stale { reason: reason() },
+            BackendStatus::Partial { reason: reason() },
+            BackendStatus::Timeout,
+            BackendStatus::Unavailable { reason: reason() },
+            BackendStatus::Failed { reason: reason() },
+        ];
+        for status in all {
+            let json = serde_json::to_value(&status).unwrap();
+            assert_eq!(json["state"], status.state(), "{status:?}");
+            assert_eq!(json.get("reason").and_then(|value| value.as_str()), status.reason(), "{status:?}");
+        }
     }
 }
