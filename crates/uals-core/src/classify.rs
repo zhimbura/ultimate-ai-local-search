@@ -31,8 +31,76 @@ pub struct Classified {
 
 /// Decides the kind of `raw` (or takes `forced`) and returns the text for backends.
 pub fn classify(raw: &str, forced: Option<QueryKind>) -> Classified {
-    let _ = (raw, forced);
-    todo!("track T6: implement the rules in the module docs")
+    let trimmed = raw.trim();
+    match forced {
+        Some(kind) => {
+            let text = match kind {
+                QueryKind::Regex => regex_inside(trimmed),
+                QueryKind::Literal => literal_inside(trimmed),
+                QueryKind::Identifier | QueryKind::Natural => None,
+            };
+            Classified { kind, text: text.unwrap_or(trimmed).to_string() }
+        }
+        None => detect(trimmed),
+    }
+}
+
+fn detect(trimmed: &str) -> Classified {
+    if let Some(inside) = regex_inside(trimmed) {
+        return Classified { kind: QueryKind::Regex, text: inside.to_string() };
+    }
+    if let Some(inside) = literal_inside(trimmed) {
+        return Classified { kind: QueryKind::Literal, text: inside.to_string() };
+    }
+    let kind = if is_identifier(trimmed) { QueryKind::Identifier } else { QueryKind::Natural };
+    Classified { kind, text: trimmed.to_string() }
+}
+
+/// The text between a leading and a trailing `/`, when at least one character sits between them.
+fn regex_inside(text: &str) -> Option<&str> {
+    let inside = text.strip_prefix('/')?.strip_suffix('/')?;
+    (!inside.is_empty()).then_some(inside)
+}
+
+/// The text between a matching pair of `"`, `'` or `` ` ``, when at least one character sits between.
+fn literal_inside(text: &str) -> Option<&str> {
+    let quote = text.chars().next().filter(|c| matches!(c, '"' | '\'' | '`'))?;
+    let inside = text.strip_prefix(quote)?.strip_suffix(quote)?;
+    (!inside.is_empty()).then_some(inside)
+}
+
+/// One token of `[A-Za-z_$][A-Za-z0-9_$]*` segments joined by `.`, `::` or `#`, optionally ending in
+/// `()`, that looks like code: it has `_`, `$`, a separator, `()` or an uppercase letter.
+fn is_identifier(token: &str) -> bool {
+    let (body, has_call) = match token.strip_suffix("()") {
+        Some(body) => (body, true),
+        None => (token, false),
+    };
+    let mut rest = body;
+    let mut has_separator = false;
+    loop {
+        let Some(after_segment) = skip_segment(rest) else { return false };
+        rest = after_segment;
+        if rest.is_empty() {
+            break;
+        }
+        let Some(after_separator) = rest.strip_prefix("::").or_else(|| rest.strip_prefix(['.', '#'])) else {
+            return false;
+        };
+        has_separator = true;
+        rest = after_separator;
+    }
+    has_call || has_separator || body.chars().any(|c| c == '_' || c == '$' || c.is_ascii_uppercase())
+}
+
+/// The text after one leading segment, or `None` when `text` does not start with a segment.
+fn skip_segment(text: &str) -> Option<&str> {
+    let is_start = |c: char| c.is_ascii_alphabetic() || c == '_' || c == '$';
+    let is_part = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '$';
+    let mut chars = text.char_indices();
+    chars.next().filter(|&(_, c)| is_start(c))?;
+    let end = chars.find(|&(_, c)| !is_part(c)).map_or(text.len(), |(index, _)| index);
+    Some(&text[end..])
 }
 
 /// The simple name inside an identifier: the last segment after `.`, `::` or `#`, without a
@@ -58,5 +126,57 @@ mod tests {
         assert_eq!(bare_name("HostSelector#pick"), "pick");
         assert_eq!(bare_name(" retry() "), "retry");
         assert_eq!(bare_name("R.string.app_name"), "app_name");
+    }
+
+    fn kind_of(raw: &str) -> QueryKind {
+        classify(raw, None).kind
+    }
+
+    #[test]
+    fn degenerate_wrappers_are_not_regex_or_literal() {
+        assert_eq!(kind_of("//"), QueryKind::Natural);
+        assert_eq!(kind_of("/"), QueryKind::Natural);
+        assert_eq!(kind_of("\"\""), QueryKind::Natural);
+        assert_eq!(kind_of("\""), QueryKind::Natural);
+        assert_eq!(kind_of("``"), QueryKind::Natural);
+    }
+
+    #[test]
+    fn identifier_shapes() {
+        for query in ["Foo::bar()", "a.b", "a#b", "_x", "x_", "$", "a::b::C", "Retry", "a1B"] {
+            assert_eq!(kind_of(query), QueryKind::Identifier, "{query}");
+        }
+        for query in
+            ["a", "retry", "()", "a..b", "a.", ".a", "a::", "a:b", "a b", "a()b", "a().b", "1a", "a-b", "ü", "Über"]
+        {
+            assert_eq!(kind_of(query), QueryKind::Natural, "{query}");
+        }
+    }
+
+    #[test]
+    fn wrappers_win_over_identifiers_and_keep_inner_spaces() {
+        assert_eq!(
+            classify("\" HostSelector \"", None),
+            Classified { kind: QueryKind::Literal, text: " HostSelector ".into() }
+        );
+        assert_eq!(classify("/Foo/", None), Classified { kind: QueryKind::Regex, text: "Foo".into() });
+        assert_eq!(classify("  /a b/  ", None).text, "a b");
+    }
+
+    #[test]
+    fn forced_kinds_strip_only_their_own_wrapper() {
+        let forced = |raw: &str, kind| classify(raw, Some(kind)).text;
+        assert_eq!(forced("\"a\"", QueryKind::Regex), "\"a\"");
+        assert_eq!(forced("/a/", QueryKind::Literal), "/a/");
+        assert_eq!(forced("/a/", QueryKind::Natural), "/a/");
+        assert_eq!(forced(" \"a\" ", QueryKind::Identifier), "\"a\"");
+        assert_eq!(forced("//", QueryKind::Regex), "//");
+        assert_eq!(forced("\"\"", QueryKind::Literal), "\"\"");
+        assert_eq!(forced("'a\"", QueryKind::Literal), "'a\"");
+    }
+
+    #[test]
+    fn empty_input_is_natural() {
+        assert_eq!(classify("", None), Classified { kind: QueryKind::Natural, text: String::new() });
     }
 }

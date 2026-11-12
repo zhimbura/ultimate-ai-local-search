@@ -117,7 +117,6 @@ fn golden_files_are_well_formed() {
 }
 
 #[test]
-#[ignore = "track T6 implements classify"]
 fn classify_matches_golden() {
     for case in classify_cases() {
         let got = classify(&case.query, case.forced);
@@ -132,7 +131,6 @@ fn classify_matches_golden() {
 }
 
 #[test]
-#[ignore = "track T6 implements merge and fuse"]
 fn fusion_matches_golden() {
     let config = FusionConfig::default();
     for case in fusion_cases() {
