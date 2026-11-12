@@ -1,0 +1,9 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "Error: Index data for '/work/sample-android' has been lost (collection not found in Milvus). Please re-index using index_codebase with force=true."
+    }
+  ],
+  "isError": true
+}

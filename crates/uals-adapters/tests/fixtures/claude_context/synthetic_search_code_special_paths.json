@@ -1,0 +1,8 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "Found 4 results for query: \"retry with exponential backoff\" in codebase '/work/sample-android'\n\n1. Code snippet (markdown) [sample-android]\n   Location: docs/user guide/Retry Notes.md:3-12\n   Rank: 1\n   Context: \n```markdown\n# Retry\n\n```kotlin\nval p = RetryPolicy(3)\n```\n\nSee also:\n\n2. Not a result block\n```\n\n2. Code snippet (kotlin) [sample-android]\n   Location: core/src/odd:name/Colon: File.kt:7-9\n   Rank: 2\n   Context: \n```kotlin\nval x = 1\n```\n\n3. Code snippet (kotlin) [sample-android]\n   Location: core\\src\\main\\kotlin\\sample\\core\\Analytics.kt:20-30\n   Rank: 3\n   Context: \n```kotlin\nobject Analytics\n```\n\n4. Code snippet (kotlin) [sample-android]\n   Location: core/Empty.kt:1-1\n   Rank: 4\n   Context: \n```kotlin\n\n```\n"
+    }
+  ]
+}

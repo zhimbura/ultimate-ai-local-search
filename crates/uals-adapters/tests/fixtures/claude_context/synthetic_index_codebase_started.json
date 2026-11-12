@@ -1,0 +1,8 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "Started background indexing for codebase '/work/sample-android' using AST splitter.\nUsing 1 custom extensions: .kts\nUsing 1 custom ignore patterns: **/build/**\n\nIndexing is running in the background. You can search the codebase while indexing is in progress, but results may be incomplete until indexing completes."
+    }
+  ]
+}

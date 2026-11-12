@@ -1,0 +1,9 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "Error searching code: 14 UNAVAILABLE: No connection established. Last error: connect ECONNREFUSED 127.0.0.1:19530 Please check if the codebase has been indexed first."
+    }
+  ],
+  "isError": true
+}

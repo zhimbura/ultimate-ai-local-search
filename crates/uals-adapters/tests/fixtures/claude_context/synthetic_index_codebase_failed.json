@@ -1,0 +1,9 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "Error starting indexing: Failed to create collection"
+    }
+  ],
+  "isError": true
+}

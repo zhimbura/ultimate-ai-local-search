@@ -1,23 +1,170 @@
-//! claude-context adapter (track T5): semantic search through the `search_code` tool of
-//! `@zilliz/claude-context-mcp` 0.1.15, with Milvus and an embedding server behind it. Findings
-//! and recorded outputs: `docs/spikes/s1-rmcp.md` and `tests/fixtures/claude_context/`.
+//! claude-context adapter (track T5): semantic search through `@zilliz/claude-context-mcp` 0.1.15
+//! (Milvus and an embedding server behind it), driven through [`McpToolCaller`]. Findings and
+//! recorded outputs: `docs/spikes/s1-rmcp.md` and `tests/fixtures/claude_context/`.
+//!
+//! # How a call goes
+//!
+//! - Every call is about ONE repository: `path` is the absolute `repo.root`, one collection per
+//!   absolute path.
+//! - Before any tool call the adapter probes Milvus with a TCP connect (address from
+//!   `config.env["MILVUS_ADDRESS"]`, else the process environment when `MILVUS_ADDRESS` is in
+//!   `pass_env`, else `127.0.0.1:19530`; 300 ms). Without Milvus the server process crashes about
+//!   150 ms after start and every call dies with `TransportClosed`, so a failed probe answers
+//!   `Unavailable` and no tool is called.
+//! - A closed transport (`TransportClosed`) is `Unavailable`, whichever way the caller reports it.
+//!
+//! # Tools used
+//!
+//! - `search_code {path, query, limit}` with `limit = min(fetch_limit, 50)` (the server's cap).
+//! - `get_indexing_status {path}` for [`SearchBackend::index_state`].
+//! - `index_codebase {path, force, splitter: "ast", ignorePatterns, customExtensions}` to index.
+//!   The server indexes in the background and returns at once.
+//!
+//! # `warm` and `refresh`
+//!
+//! - `warm(repos)` starts indexing (`force: false`) for repositories that are neither indexed nor
+//!   being indexed (a failed earlier attempt is retried). Repositories are handled one after
+//!   another: each call syncs with Milvus inside the server, and one process owns one snapshot.
+//! - `refresh(repo, full: true)` calls `index_codebase` with `force: true`: the server drops the
+//!   collection and rebuilds it in the background.
+//! - `refresh(repo, full: false)`: `handlers.js` has no tool for an incremental update. The server
+//!   syncs every indexed codebase on its own every 5 minutes (`sync.js`), and it also watches the
+//!   file `~/.context/.sync-trigger`: a change to it starts a sync of ALL indexed codebases after
+//!   a 2 s debounce. The adapter writes the current time to that file (directory: `$HOME/.context`,
+//!   override with [`ClaudeContextBackend::with_context_dir`]) and returns; it cannot wait for the
+//!   sync. A repository that is not indexed yet is indexed instead, as in `warm`. The sync is
+//!   skipped when the server runs with `CLAUDE_CONTEXT_TRIGGER_WATCHER=false`.
+//!
+//! # One process per `~/.context`
+//!
+//! claude-context reads and rewrites the global file `~/.context/mcp-codebase-snapshot.json` (and
+//! `~/.context/merkle/`, `mcp-sync.lock`) and lists every codebase the user ever indexed. Two
+//! claude-context processes against the same `~/.context` race on that file and corrupt each
+//! other's state. The adapter cannot prevent this: it is the orchestrator's job to run at most one
+//! claude-context process per home directory (and to reap orphans left by a killed parent).
 
+mod parse;
+
+use std::net::{TcpStream, ToSocketAddrs};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
-use uals_core::backend::{BackendError, McpToolCaller, SearchBackend};
+use ignore::overrides::{Override, OverrideBuilder};
+use serde_json::json;
+use tracing::{debug, warn};
+use uals_core::backend::{BackendError, McpToolCaller, SearchBackend, ToolOutput};
 use uals_core::config::ClaudeContextConfig;
-use uals_core::types::{BackendAnswer, BackendId, IndexState, QueryKind, Repo, SearchRequest};
+use uals_core::types::{BackendAnswer, BackendId, Hit, IndexState, QueryKind, Repo, SearchRequest};
+
+use self::parse::{IndexReply, SearchReply, StatusReply, abbreviate, parse_index, parse_search, parse_status};
+
+/// The server refuses more than 50 results (`Math.min(limit, 50)`, handlers.js:672).
+const MAX_RESULTS: usize = 50;
+const DEFAULT_MILVUS_ADDRESS: &str = "127.0.0.1:19530";
+const MILVUS_ADDRESS_VAR: &str = "MILVUS_ADDRESS";
+/// How long the Milvus probe waits. Milvus is local; a slower answer counts as down.
+pub const MILVUS_PROBE_TIMEOUT: Duration = Duration::from_millis(300);
+/// File the server watches to start a sync (`sync.js`, `setupTriggerWatcher`).
+const SYNC_TRIGGER_FILE: &str = ".sync-trigger";
 
 /// Semantic search over one repository at a time; one claude-context collection per repository.
 pub struct ClaudeContextBackend {
     caller: Arc<dyn McpToolCaller>,
     config: ClaudeContextConfig,
+    context_dir: Option<PathBuf>,
 }
 
 impl ClaudeContextBackend {
     pub fn new(caller: Arc<dyn McpToolCaller>, config: ClaudeContextConfig) -> Self {
-        Self { caller, config }
+        Self { caller, config, context_dir: None }
+    }
+
+    /// Uses this directory instead of `$HOME/.context` for the sync trigger file. It must be the
+    /// `.context` folder of the home directory the claude-context process runs with.
+    #[must_use]
+    pub fn with_context_dir(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.context_dir = Some(dir.into());
+        self
+    }
+
+    /// The `host:port` the Milvus probe connects to.
+    pub fn milvus_address(&self) -> String {
+        let configured = self.config.env.get(MILVUS_ADDRESS_VAR).cloned().or_else(|| {
+            self.config
+                .pass_env
+                .iter()
+                .any(|name| name == MILVUS_ADDRESS_VAR)
+                .then(|| std::env::var(MILVUS_ADDRESS_VAR).ok())
+                .flatten()
+        });
+        normalize_address(configured.as_deref().unwrap_or_default())
+    }
+
+    /// Checks that Milvus accepts TCP connections. `Err` holds the `Unavailable` message.
+    pub async fn probe_milvus(&self) -> Result<(), String> {
+        let address = self.milvus_address();
+        match probe_tcp(&address, MILVUS_PROBE_TIMEOUT).await {
+            Ok(()) => Ok(()),
+            Err(why) => Err(format!("Milvus is not reachable at {address}: {why}")),
+        }
+    }
+
+    async fn ensure_milvus(&self) -> Result<(), BackendError> {
+        self.probe_milvus().await.map_err(BackendError::Unavailable)
+    }
+
+    async fn call(&self, tool: &str, arguments: serde_json::Value) -> Result<ToolOutput, BackendError> {
+        self.caller.call_tool(tool, arguments).await.map_err(closed_transport_is_unavailable)
+    }
+
+    async fn status(&self, repo: &Repo) -> Result<StatusReply, BackendError> {
+        let output = self.call("get_indexing_status", json!({ "path": root_str(repo)? })).await?;
+        Ok(parse_status(&joined_text(&output)?, output.is_error))
+    }
+
+    /// Starts background indexing; "already indexed" and "already indexing" are fine.
+    async fn start_indexing(&self, repo: &Repo, force: bool) -> Result<(), BackendError> {
+        let arguments = json!({
+            "path": root_str(repo)?,
+            "force": force,
+            "splitter": "ast",
+            "ignorePatterns": self.config.ignore_patterns,
+            "customExtensions": self.config.custom_extensions,
+        });
+        let output = self.call("index_codebase", arguments).await?;
+        match parse_index(&joined_text(&output)?, output.is_error) {
+            IndexReply::Started | IndexReply::AlreadyIndexing | IndexReply::AlreadyIndexed => Ok(()),
+            IndexReply::Unreachable(why) => Err(BackendError::Unavailable(why)),
+            IndexReply::Failed(why) => Err(BackendError::Failed(format!("index_codebase failed: {why}"))),
+        }
+    }
+
+    /// Indexes the repository when it has no index and no index is being built.
+    async fn index_if_missing(&self, repo: &Repo) -> Result<(), BackendError> {
+        match self.status(repo).await? {
+            StatusReply::NotIndexed | StatusReply::Failed { .. } => self.start_indexing(repo, false).await,
+            StatusReply::Indexed { .. } | StatusReply::Indexing { .. } => Ok(()),
+            StatusReply::Error(why) => Err(BackendError::Failed(format!("get_indexing_status failed: {why}"))),
+        }
+    }
+
+    /// Asks the server for an incremental sync through its trigger file.
+    async fn touch_sync_trigger(&self) -> Result<(), BackendError> {
+        let dir = self
+            .context_dir
+            .clone()
+            .or_else(|| home_dir().map(|home| home.join(".context")))
+            .ok_or_else(|| BackendError::Failed("cannot find the home directory for ~/.context".into()))?;
+        tokio::fs::create_dir_all(&dir)
+            .await
+            .map_err(|e| BackendError::Failed(format!("cannot create {}: {e}", dir.display())))?;
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis());
+        let file = dir.join(SYNC_TRIGGER_FILE);
+        tokio::fs::write(&file, now.to_string())
+            .await
+            .map_err(|e| BackendError::Failed(format!("cannot write {}: {e}", file.display())))
     }
 }
 
@@ -32,12 +179,245 @@ impl SearchBackend for ClaudeContextBackend {
     }
 
     async fn search(&self, repo: &Repo, request: &SearchRequest) -> Result<BackendAnswer, BackendError> {
-        let _ = (&self.caller, &self.config, repo, request);
-        todo!("track T5")
+        self.ensure_milvus().await?;
+        let filter = path_filter(&repo.root, &request.paths)?;
+        let limit = request.fetch_limit.clamp(1, MAX_RESULTS);
+        let arguments = json!({ "path": root_str(repo)?, "query": request.query, "limit": limit });
+        let output = self.call("search_code", arguments).await?;
+        let text = joined_text(&output)?;
+        match parse_search(&text, output.is_error) {
+            SearchReply::Results { root, indexing, declared, results } => {
+                if declared != results.len() {
+                    warn!(declared, parsed = results.len(), "claude-context result count differs from its header");
+                }
+                let capped = request.fetch_limit > MAX_RESULTS && results.len() >= MAX_RESULTS;
+                let base = root.map_or_else(|| repo.root.clone(), PathBuf::from);
+                let mut hits = Vec::with_capacity(results.len());
+                for result in results {
+                    let path = base.join(&result.rel_path);
+                    // A parent folder can be indexed as one codebase: keep this repository's files.
+                    let Ok(relative) = path.strip_prefix(&repo.root) else {
+                        debug!(path = %path.display(), "claude-context hit outside the repository");
+                        continue;
+                    };
+                    if !filter.as_ref().is_none_or(|filter| path_matches(filter, relative)) {
+                        continue;
+                    }
+                    hits.push(Hit {
+                        backend: BackendId::ClaudeContext,
+                        repo: repo.name.clone(),
+                        path,
+                        lines: result.lines,
+                        symbol: None,
+                        symbol_kind: None,
+                        is_definition: false,
+                        snippet: result.code,
+                        rank: 0,
+                        score: None,
+                    });
+                }
+                hits.truncate(request.fetch_limit);
+                for (position, hit) in (0u32..).zip(hits.iter_mut()) {
+                    hit.rank = position;
+                }
+                let mut notes = Vec::new();
+                if indexing {
+                    notes.push("claude-context is still indexing this repository, results may be incomplete");
+                }
+                if capped {
+                    notes.push("claude-context returns at most 50 results");
+                }
+                let partial = (!notes.is_empty()).then(|| notes.join("; "));
+                Ok(BackendAnswer { hits, stale: None, partial })
+            }
+            SearchReply::NoResults { indexing } => Ok(BackendAnswer {
+                hits: Vec::new(),
+                stale: None,
+                partial: indexing
+                    .then(|| "claude-context is still indexing this repository, results may be incomplete".into()),
+            }),
+            SearchReply::NotIndexed => Err(BackendError::Unavailable(format!(
+                "claude-context has not indexed {}; run `uals refresh` to index it",
+                repo.root.display()
+            ))),
+            SearchReply::IndexLost => Err(BackendError::Unavailable(format!(
+                "the claude-context index of {} is lost (its collection is missing in Milvus); run a full `uals refresh` to rebuild it",
+                repo.root.display()
+            ))),
+            SearchReply::Unreachable(why) => Err(BackendError::Unavailable(format!(
+                "claude-context cannot reach Milvus or the embedding service: {why}"
+            ))),
+            SearchReply::Failed(why) => Err(BackendError::Failed(format!("search_code failed: {why}"))),
+        }
     }
 
     async fn index_state(&self, repo: &Repo) -> IndexState {
-        let _ = repo;
-        todo!("track T5")
+        let state = |indexed: bool, detail: Option<String>| IndexState {
+            backend: BackendId::ClaudeContext,
+            repo: repo.name.clone(),
+            indexed,
+            updated_at_ms: None,
+            stale: None,
+            detail,
+        };
+        if let Err(why) = self.probe_milvus().await {
+            return state(false, Some(why));
+        }
+        match self.status(repo).await {
+            Ok(StatusReply::Indexed { covered_by, stats }) => {
+                let detail = match (stats, covered_by) {
+                    (Some(stats), Some(root)) => Some(format!("{stats}; covered by the index of {root}")),
+                    (Some(stats), None) => Some(stats),
+                    (None, Some(root)) => Some(format!("covered by the index of {root}")),
+                    (None, None) => None,
+                };
+                state(true, detail)
+            }
+            Ok(StatusReply::Indexing { percent }) => {
+                // `percent` is 0..=100 with one decimal; show whole percents.
+                let detail = percent.map_or_else(|| "indexing".to_string(), |p| format!("indexing {p:.0}%"));
+                state(false, Some(detail))
+            }
+            Ok(StatusReply::Failed { error }) => state(false, Some(format!("indexing failed: {error}"))),
+            Ok(StatusReply::NotIndexed) => state(false, Some("not indexed".into())),
+            Ok(StatusReply::Error(why)) => state(false, Some(format!("claude-context status failed: {why}"))),
+            Err(BackendError::Unavailable(why) | BackendError::Failed(why)) => state(false, Some(why)),
+        }
     }
+
+    async fn warm(&self, repos: &[Repo]) -> Result<(), BackendError> {
+        if repos.is_empty() {
+            return Ok(());
+        }
+        self.ensure_milvus().await?;
+        let mut failures = Vec::new();
+        for repo in repos {
+            if let Err(error) = self.index_if_missing(repo).await {
+                warn!(repo = %repo.name, %error, "claude-context warm failed");
+                failures.push(format!("{}: {}", repo.name, error_text(&error)));
+            }
+        }
+        if failures.len() == repos.len() {
+            return Err(BackendError::Failed(failures.join("; ")));
+        }
+        Ok(())
+    }
+
+    async fn refresh(&self, repo: &Repo, full: bool) -> Result<(), BackendError> {
+        self.ensure_milvus().await?;
+        if full {
+            return self.start_indexing(repo, true).await;
+        }
+        match self.status(repo).await? {
+            StatusReply::NotIndexed | StatusReply::Failed { .. } => self.start_indexing(repo, false).await,
+            StatusReply::Indexing { .. } => Ok(()),
+            StatusReply::Indexed { .. } => self.touch_sync_trigger().await,
+            StatusReply::Error(why) => Err(BackendError::Failed(format!("get_indexing_status failed: {why}"))),
+        }
+    }
+}
+
+/// Connects to `address` (`host:port`) within `timeout`. `Err` holds the reason.
+pub async fn probe_tcp(address: &str, timeout: Duration) -> Result<(), String> {
+    let target = address.to_string();
+    let attempt = tokio::task::spawn_blocking(move || {
+        let mut last = "no address".to_string();
+        for socket in target.to_socket_addrs().map_err(|e| e.to_string())? {
+            match TcpStream::connect_timeout(&socket, timeout) {
+                Ok(_) => return Ok(()),
+                Err(e) => last = e.to_string(),
+            }
+        }
+        Err(last)
+    });
+    // Name resolution cannot be interrupted; stop waiting for it after the same budget.
+    match tokio::time::timeout(timeout + Duration::from_millis(100), attempt).await {
+        Ok(Ok(result)) => result,
+        Ok(Err(join)) => Err(join.to_string()),
+        Err(_) => Err("timed out".into()),
+    }
+}
+
+/// `MILVUS_ADDRESS` as `host:port`: removes a scheme, user info and path; adds the default port.
+fn normalize_address(raw: &str) -> String {
+    let raw = raw.trim();
+    let (secure, rest) = match raw.split_once("://") {
+        Some((scheme, rest)) => (scheme.eq_ignore_ascii_case("https"), rest),
+        None => (false, raw),
+    };
+    let rest = rest.split('/').next().unwrap_or_default();
+    let host = rest.rsplit('@').next().unwrap_or_default();
+    if host.is_empty() {
+        return DEFAULT_MILVUS_ADDRESS.to_string();
+    }
+    let has_port = if host.starts_with('[') { host.contains("]:") } else { host.matches(':').count() == 1 };
+    if has_port {
+        host.to_string()
+    } else {
+        let port = if secure { 443 } else { 19530 };
+        format!("{host}:{port}")
+    }
+}
+
+fn root_str(repo: &Repo) -> Result<&str, BackendError> {
+    repo.root
+        .to_str()
+        .ok_or_else(|| BackendError::Failed(format!("repository path is not valid UTF-8: {}", repo.root.display())))
+}
+
+fn joined_text(output: &ToolOutput) -> Result<String, BackendError> {
+    if output.texts.is_empty() {
+        return Err(BackendError::Failed("claude-context returned no text".into()));
+    }
+    Ok(output.texts.join("\n"))
+}
+
+/// rmcp reports a dead server as `TransportClosed`; that is an expected state, not a bug.
+fn closed_transport_is_unavailable(error: BackendError) -> BackendError {
+    match error {
+        BackendError::Failed(message) if is_closed_transport(&message) => BackendError::Unavailable(format!(
+            "the claude-context server is not running ({}); it exits when Milvus is down",
+            abbreviate(&message)
+        )),
+        other => other,
+    }
+}
+
+fn is_closed_transport(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("transport closed") || lower.contains("transportclosed") || lower.contains("connection closed")
+}
+
+fn error_text(error: &BackendError) -> &str {
+    match error {
+        BackendError::Unavailable(text) | BackendError::Failed(text) => text,
+    }
+}
+
+fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from)
+}
+
+/// Whitelist globs of `SearchRequest::paths`; `None` when the whole repository is allowed.
+fn path_filter(root: &Path, globs: &[String]) -> Result<Option<Override>, BackendError> {
+    if globs.is_empty() {
+        return Ok(None);
+    }
+    let mut builder = OverrideBuilder::new(root);
+    for glob in globs {
+        builder.add(glob).map_err(|e| BackendError::Failed(format!("invalid path glob `{glob}`: {e}")))?;
+    }
+    builder.build().map(Some).map_err(|e| BackendError::Failed(format!("invalid path globs: {e}")))
+}
+
+/// A file matches when a glob names it or one of its folders (`app/` selects everything below).
+fn path_matches(filter: &Override, relative: &Path) -> bool {
+    if filter.matched(relative, false).is_whitelist() {
+        return true;
+    }
+    relative
+        .ancestors()
+        .skip(1)
+        .filter(|ancestor| !ancestor.as_os_str().is_empty())
+        .any(|ancestor| filter.matched(ancestor, true).is_whitelist())
 }
