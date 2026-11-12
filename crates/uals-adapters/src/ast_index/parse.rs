@@ -162,6 +162,17 @@ pub struct StateRow {
     pub symbols: u64,
 }
 
+/// One row of the file-stamp SQL ([`file_stamps_sql`]): the modification time (whole seconds)
+/// and size the index recorded for a file.
+#[derive(Debug, Deserialize)]
+pub struct FileStampRow {
+    pub path: String,
+    #[serde(default)]
+    pub mtime: Option<i64>,
+    #[serde(default)]
+    pub size: Option<u64>,
+}
+
 /// Maps ast-index's kind names to `SymbolKind`. `None` for rows that are not definitions:
 /// imports and packages.
 pub fn normalize_kind(kind: &str) -> Option<SymbolKind> {
@@ -187,6 +198,25 @@ pub fn spans_sql(paths: &[String]) -> String {
          FROM symbols s JOIN files f ON f.id = s.file_id WHERE f.path IN ({}) ORDER BY f.path, s.line",
         list.join(",")
     )
+}
+
+/// SQL for the extent rows of the given definitions, each a project-relative path, name and line.
+pub fn definition_extents_sql(definitions: &[(&str, &str, u32)]) -> String {
+    let quote = |text: &str| format!("'{}'", text.replace('\'', "''"));
+    let list: Vec<String> =
+        definitions.iter().map(|(path, name, line)| format!("({},{},{line})", quote(path), quote(name))).collect();
+    format!(
+        "SELECT f.path AS path, s.name AS name, s.kind AS kind, s.line AS line, s.end_line AS end_line \
+         FROM symbols s JOIN files f ON f.id = s.file_id \
+         WHERE (f.path, s.name, s.line) IN (VALUES {}) ORDER BY f.path, s.line",
+        list.join(",")
+    )
+}
+
+/// SQL for the recorded modification time and size of the given project-relative paths.
+pub fn file_stamps_sql(paths: &[String]) -> String {
+    let list: Vec<String> = paths.iter().map(|path| format!("'{}'", path.replace('\'', "''"))).collect();
+    format!("SELECT path, mtime, size FROM files WHERE path IN ({})", list.join(","))
 }
 
 /// SQL for the index state: last update time (a string of milliseconds) and the counts.

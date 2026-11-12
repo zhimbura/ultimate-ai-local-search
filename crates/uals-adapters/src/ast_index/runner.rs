@@ -75,6 +75,9 @@ impl ProcessRunner {
 #[async_trait]
 impl AstIndexRunner for ProcessRunner {
     async fn run(&self, root: &Path, args: &[String]) -> Result<CommandOutput, BackendError> {
+        if !root.is_dir() {
+            return Err(BackendError::Unavailable(format!("repository folder {} does not exist", root.display())));
+        }
         let program =
             which::which(&self.binary).map_err(|_| BackendError::Unavailable("ast-index is not installed".into()))?;
         let output = Command::new(program)

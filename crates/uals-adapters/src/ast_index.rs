@@ -2,6 +2,10 @@
 //! directory, never anywhere else (from another folder it walks up to the nearest marker and may
 //! create stub cache folders). Findings and recorded outputs: `docs/spikes/s2-ast-index.md` and
 //! `tests/fixtures/ast_index/`.
+//!
+//! The adapter is coupled to ast-index internals: it computes the cache path of the database
+//! (`index_db_path`, the djb2 hash of the root) and queries its SQLite tables (`files`,
+//! `symbols`, `metadata`). Checked against ast-index 3.56.0; the live tests catch a layout change.
 
 mod parse;
 mod runner;
@@ -21,19 +25,20 @@ use uals_core::types::{
 
 use crate::path_filter::PathFilter;
 use parse::{
-    Explore, ExploreSymbol, QueryResult, STATE_SQL, SpanRow, StateRow, SymbolList, UsageItem, UsageList,
-    normalize_kind, parse_json, spans_sql,
+    Explore, ExploreSymbol, FileStampRow, QueryResult, STATE_SQL, SpanRow, StateRow, SymbolList, UsageItem, UsageList,
+    definition_extents_sql, file_stamps_sql, normalize_kind, parse_json, spans_sql,
 };
 pub use runner::{AstIndexRunner, CommandOutput, ProcessRunner};
 
 /// Files per `IN (...)` list in one `spans` query.
 const SPAN_CHUNK: usize = 500;
+/// Row limit of the `spans` query: every symbol of up to [`SPAN_CHUNK`] files is wanted, and
+/// the CLI's default of 100 would cut the list.
+const SPAN_ROW_LIMIT: usize = 1_000_000;
 /// Definitions requested from `symbol`; ast-index returns exact, prefix, then substring matches.
 const DEFINITION_LIMIT: usize = 200;
 /// Usages requested when a path filter may drop some of them.
 const FILTERED_USAGE_LIMIT: usize = 1000;
-/// Row limit for `query`, as the CLI takes it (a string); its default of 100 would cut a span list.
-const QUERY_LIMIT: &str = "1000000";
 
 /// Symbols, usages and symbol spans from ast-index.
 pub struct AstIndexBackend {
@@ -65,9 +70,16 @@ impl AstIndexBackend {
         parse_json(command, &output)
     }
 
-    async fn run_query<T: serde::de::DeserializeOwned>(&self, repo: &Repo, sql: &str) -> Result<Vec<T>, BackendError> {
+    /// Runs `sql` and returns at most `limit` rows; the CLI's default of 100 would cut a long list.
+    async fn run_query<T: serde::de::DeserializeOwned>(
+        &self,
+        repo: &Repo,
+        sql: &str,
+        limit: usize,
+    ) -> Result<Vec<T>, BackendError> {
+        let limit = limit.to_string();
         let result: QueryResult<T> =
-            self.run_json(repo, "query", &["query", sql, "--limit", QUERY_LIMIT, "--format", "json"]).await?;
+            self.run_json(repo, "query", &["query", sql, "--limit", &limit, "--format", "json"]).await?;
         Ok(result.rows)
     }
 
@@ -140,10 +152,9 @@ impl AstIndexBackend {
         if definitions.is_empty() {
             return;
         }
-        let mut paths: Vec<String> = definitions.iter().map(|definition| definition.path.clone()).collect();
-        paths.sort();
-        paths.dedup();
-        match self.run_query::<SpanRow>(repo, &spans_sql(&paths)).await {
+        let wanted: Vec<(&str, &str, u32)> =
+            definitions.iter().map(|d| (d.path.as_str(), d.name.as_str(), d.line)).collect();
+        match self.run_query::<SpanRow>(repo, &definition_extents_sql(&wanted), wanted.len()).await {
             Ok(rows) => {
                 for definition in definitions {
                     definition.end_line = rows
@@ -171,6 +182,30 @@ impl AstIndexBackend {
         let output = self.runner.run(&repo.root, &args).await?;
         let result: QueryResult<StateRow> = parse_json("query", &output)?;
         Ok(result.rows.into_iter().next())
+    }
+
+    /// A reason when any of `files` differs on disk from what the index recorded (modification
+    /// second or size, or gone), `None` when all match or the index cannot be asked.
+    async fn stale_reason(&self, repo: &Repo, files: impl Iterator<Item = &Path>) -> Option<String> {
+        let mut relative: Vec<String> = files.filter_map(|file| relative_path(&repo.root, file)).collect();
+        relative.sort();
+        relative.dedup();
+        let mut changed = 0usize;
+        for chunk in relative.chunks(SPAN_CHUNK) {
+            let stamps = match self.run_query::<FileStampRow>(repo, &file_stamps_sql(chunk), chunk.len()).await {
+                Ok(rows) => rows,
+                Err(error) => {
+                    tracing::warn!(repo = %repo.name, %error, "cannot read file stamps; staleness is unknown");
+                    return None;
+                }
+            };
+            changed += stamps.iter().filter(|stamp| differs_on_disk(&repo.root, stamp)).count();
+        }
+        match changed {
+            0 => None,
+            1 => Some("1 file changed since the index was built".into()),
+            count => Some(format!("{count} files changed since the index was built")),
+        }
     }
 
     async fn natural_hits(&self, repo: &Repo, request: &SearchRequest) -> Result<Vec<Hit>, BackendError> {
@@ -286,6 +321,24 @@ fn kind_class(kind: SymbolKind) -> u8 {
     }
 }
 
+/// The last line of `text` that is not blank, trimmed.
+fn last_text_line(text: &str) -> Option<&str> {
+    text.lines().map(str::trim).rfind(|line| !line.is_empty())
+}
+
+/// Whether the file is gone or its modification second or size differs from the recorded stamp.
+fn differs_on_disk(root: &Path, stamp: &FileStampRow) -> bool {
+    let Ok(meta) = std::fs::metadata(root.join(&stamp.path)) else {
+        return true;
+    };
+    let seconds = meta
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .and_then(|age| i64::try_from(age.as_secs()).ok());
+    seconds != stamp.mtime || Some(meta.len()) != stamp.size
+}
+
 /// `path` relative to the repository root with `/` separators; `None` outside the root.
 fn relative_path(root: &Path, path: &Path) -> Option<String> {
     let relative = path.strip_prefix(root).ok()?;
@@ -314,7 +367,8 @@ impl SearchBackend for AstIndexBackend {
                 ));
             }
         };
-        Ok(BackendAnswer { hits, stale: None, partial: None })
+        let stale = self.stale_reason(repo, hits.iter().map(|hit| hit.path.as_path())).await;
+        Ok(BackendAnswer { hits, stale, partial: None })
     }
 
     async fn index_state(&self, repo: &Repo) -> IndexState {
@@ -348,7 +402,8 @@ impl SearchBackend for AstIndexBackend {
         if output.success() {
             Ok(())
         } else {
-            let reason = output.stderr.trim().lines().next().unwrap_or("no error text").to_string();
+            let reason = last_text_line(&output.stderr).or_else(|| last_text_line(&output.stdout));
+            let reason = reason.unwrap_or("no error text");
             Err(BackendError::Failed(format!("ast-index {command} exited with {:?}: {reason}", output.exit_code)))
         }
     }
@@ -370,7 +425,7 @@ impl UsageSource for AstIndexBackend {
         }
         let list = self.usage_items(repo, name, limit).await?;
         let complete = !list.pagination.truncated && list.items.len() <= limit;
-        let usages = list
+        let usages: Vec<Usage> = list
             .items
             .into_iter()
             .take(limit)
@@ -381,7 +436,8 @@ impl UsageSource for AstIndexBackend {
                 context: item.context,
             })
             .collect();
-        Ok(UsageAnswer { usages, complete, stale: None })
+        let stale = self.stale_reason(repo, usages.iter().map(|usage| usage.path.as_path())).await;
+        Ok(UsageAnswer { usages, complete, stale })
     }
 }
 
@@ -393,7 +449,7 @@ impl SpanProvider for AstIndexBackend {
         relative.dedup();
         let mut spans = Vec::new();
         for chunk in relative.chunks(SPAN_CHUNK) {
-            for row in self.run_query::<SpanRow>(repo, &spans_sql(chunk)).await? {
+            for row in self.run_query::<SpanRow>(repo, &spans_sql(chunk), SPAN_ROW_LIMIT).await? {
                 let Some(kind) = normalize_kind(&row.kind) else {
                     continue;
                 };
