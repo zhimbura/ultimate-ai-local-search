@@ -199,7 +199,7 @@ async fn a_crash_during_a_call_is_replayed_once_then_reported() {
     let first = child.process_group().unwrap();
 
     let error = child.call_tool("crash", json!({})).await.unwrap_err();
-    let BackendError::Failed(message) = error else { panic!("expected Failed, got {error:?}") };
+    let BackendError::Unavailable(message) = error else { panic!("expected Unavailable, got {error:?}") };
     assert!(message.contains("fake server 2 is up"), "stderr tail is part of the message: {message}");
     assert_eq!(fx.starts(), 2, "the call was replayed once on a fresh server and not more");
 
@@ -232,13 +232,14 @@ async fn failures_back_off_and_report_unavailable() {
     let child = fx.spawn(&[("FAKE_FAIL_AFTER", "1")]).await;
     killpg(Pid::from_raw(child.process_group().unwrap()), Signal::SIGKILL).unwrap();
 
-    // Failures 1 and 2 (the dead server, then a failed start), then 3 (a failed start): back off 1 s.
-    let error = ping(&child).await.unwrap_err();
-    let BackendError::Failed(message) = error else { panic!("expected Failed, got {error:?}") };
-    assert!(message.contains("boom: start number 2"), "{message}");
-    let error = ping(&child).await.unwrap_err();
-    assert!(matches!(error, BackendError::Failed(_)), "{error:?}");
-    assert_eq!(fx.starts(), 3);
+    // The dead server is not a failure by itself; each failed start is one. Three of them back off 1 s.
+    for start in 2..=4 {
+        let error = ping(&child).await.unwrap_err();
+        let BackendError::Unavailable(message) = error else { panic!("expected Unavailable, got {error:?}") };
+        assert!(message.contains(&format!("boom: start number {start}")), "{message}");
+        assert!(!message.contains("next start in"), "start {start} must be attempted: {message}");
+    }
+    assert_eq!(fx.starts(), 4);
     assert_eq!(child.process_group(), None);
 
     // While backing off no server is started.
@@ -248,16 +249,35 @@ async fn failures_back_off_and_report_unavailable() {
         assert!(message.contains("3 consecutive failures"), "{message}");
         assert!(message.contains("next start in"), "{message}");
     }
-    assert_eq!(fx.starts(), 3);
+    assert_eq!(fx.starts(), 4);
 
     // After 1 s one more attempt is made (and fails), then the backoff doubles to 2 s.
     tokio::time::sleep(Duration::from_millis(1100)).await;
     let error = ping(&child).await.unwrap_err();
-    assert!(matches!(error, BackendError::Failed(_)), "{error:?}");
-    assert_eq!(fx.starts(), 4);
+    let BackendError::Unavailable(message) = error else { panic!("expected Unavailable, got {error:?}") };
+    assert!(message.contains("boom: start number 5"), "{message}");
+    assert_eq!(fx.starts(), 5);
     let error = ping(&child).await.unwrap_err();
     let BackendError::Unavailable(message) = error else { panic!("expected Unavailable, got {error:?}") };
     assert!(message.contains("4 consecutive failures"), "{message}");
+}
+
+#[tokio::test]
+async fn a_server_that_dies_on_every_call_backs_off_after_three_calls() {
+    let fx = Fixture::new();
+    let child = fx.spawn(&[]).await;
+
+    // Each call hits a dead server, replays once on a fresh one that dies too: one failure per call.
+    for _ in 0..3 {
+        let error = child.call_tool("crash", json!({})).await.unwrap_err();
+        assert!(matches!(error, BackendError::Unavailable(_)), "{error:?}");
+    }
+    assert_eq!(fx.starts(), 6, "the first call crashes the running server, the next two start two each");
+
+    let error = ping(&child).await.unwrap_err();
+    let BackendError::Unavailable(message) = error else { panic!("expected Unavailable, got {error:?}") };
+    assert!(message.contains("3 consecutive failures"), "{message}");
+    assert_eq!(fx.starts(), 6, "no server is started while backing off");
 }
 
 #[tokio::test]
@@ -294,7 +314,7 @@ async fn spawn_errors_are_reported_without_hanging() {
     spec.args = vec!["-c".into(), "echo 'cannot load model' >&2; exit 3".into()];
     let started = Instant::now();
     let error = McpChild::spawn(spec).await.err().unwrap();
-    let BackendError::Failed(message) = error else { panic!("expected Failed, got {error:?}") };
+    let BackendError::Unavailable(message) = error else { panic!("expected Unavailable, got {error:?}") };
     assert!(message.contains("cannot load model"), "{message}");
     assert!(started.elapsed() < Duration::from_secs(5), "must not wait for the 10 s handshake deadline");
 }
