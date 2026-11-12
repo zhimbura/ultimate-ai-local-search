@@ -9,12 +9,17 @@ use std::path::Path;
 
 use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
+use uals_core::config::OutputConfig;
 use uals_core::types::{QueryKind, Repo, SearchResponse, UsagesResponse};
 
 /// What the harness needs from a search engine.
 pub trait Engine {
     /// The repositories of the workspace; their roots turn absolute hit paths into relative ones.
     fn repos(&self) -> &[Repo];
+
+    /// The output settings the engine renders results with; they decide how much text an agent
+    /// receives for one response.
+    fn output(&self) -> &OutputConfig;
 
     /// Runs a search for `query` (kind detected when `None`) returning at most `limit` hits.
     fn search(
@@ -34,7 +39,8 @@ pub trait Engine {
 /// ```json
 /// { "repos":  [{"name": "sample-web", "root": "/ws/sample-web"}],
 ///   "search": {"<query text>": <SearchResponse>},
-///   "usages": {"<symbol>": <UsagesResponse>} }
+///   "usages": {"<symbol>": <UsagesResponse>},
+///   "output": {"max_output_chars": 12000} }
 /// ```
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MockEngine {
@@ -46,6 +52,9 @@ pub struct MockEngine {
     /// Canned usages responses by symbol.
     #[serde(default)]
     pub usages: HashMap<String, UsagesResponse>,
+    /// The output settings of the engine the responses came from; the defaults when absent.
+    #[serde(default)]
+    pub output: OutputConfig,
 }
 
 impl MockEngine {
@@ -64,6 +73,10 @@ impl MockEngine {
 impl Engine for MockEngine {
     fn repos(&self) -> &[Repo] {
         &self.repos
+    }
+
+    fn output(&self) -> &OutputConfig {
+        &self.output
     }
 
     async fn search(&self, query: &str, _kind: Option<QueryKind>, limit: usize) -> Result<SearchResponse> {
@@ -112,6 +125,12 @@ impl Engine for AnyEngine {
     fn repos(&self) -> &[Repo] {
         match self {
             AnyEngine::Mock(engine) => engine.repos(),
+        }
+    }
+
+    fn output(&self) -> &OutputConfig {
+        match self {
+            AnyEngine::Mock(engine) => engine.output(),
         }
     }
 

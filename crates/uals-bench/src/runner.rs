@@ -4,11 +4,12 @@ use std::time::Instant;
 
 use anyhow::{Result, ensure};
 
+use uals_core::render::{Format, render_search};
 use uals_core::types::UsagesResponse;
 
 use crate::engine::Engine;
 use crate::gold::{GoldQuery, GoldUsages, Half, QueryType};
-use crate::metrics::{UsageScore, first_correct_rank, score_usages, tokens_of};
+use crate::metrics::{UsageScore, first_correct_rank, score_usages, tokens_of_text};
 use crate::report::{Filters, QueryResult, Report, SCHEMA_VERSION, summarize};
 
 /// Settings of one run.
@@ -93,7 +94,7 @@ async fn run_first_pass<E: Engine>(engine: &E, selected: &[&GoldQuery], limit: u
             Ok(response) => {
                 result.rank_primary = first_correct_rank(engine.repos(), &response.hits, &gold.expected, false);
                 result.rank_any = first_correct_rank(engine.repos(), &response.hits, &gold.expected, true);
-                result.tokens = tokens_of(&response);
+                result.tokens = tokens_of_text(&render_search(&response, Format::Concise, engine.output()));
             }
             Err(error) => {
                 eprintln!("query {}: {error:#}", gold.id);
@@ -166,23 +167,32 @@ async fn all_usages<E: Engine>(engine: &E, symbol: &str, page_size: usize) -> Re
 
 #[cfg(test)]
 mod tests {
+    use std::sync::LazyLock;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    use uals_core::config::OutputConfig;
     use uals_core::types::{QueryKind, Repo, SearchResponse, UsagesResponse};
 
     use super::*;
     use crate::engine::MockEngine;
     use crate::gold::{Definition, Expected, ExpectedUsage, Role};
 
+    static DEFAULT_OUTPUT: LazyLock<OutputConfig> = LazyLock::new(OutputConfig::default);
+
     /// Counts calls; answers every query with an empty result.
     struct Counting {
         calls: AtomicUsize,
         repos: Vec<Repo>,
+        output: OutputConfig,
     }
 
     impl Engine for Counting {
         fn repos(&self) -> &[Repo] {
             &self.repos
+        }
+
+        fn output(&self) -> &OutputConfig {
+            &self.output
         }
 
         async fn search(&self, query: &str, _: Option<QueryKind>, _: usize) -> Result<SearchResponse> {
@@ -228,7 +238,7 @@ mod tests {
 
     #[tokio::test]
     async fn warm_repeats_time_every_query_each_pass() {
-        let engine = Counting { calls: AtomicUsize::new(0), repos: vec![] };
+        let engine = Counting { calls: AtomicUsize::new(0), repos: vec![], output: OutputConfig::default() };
         let queries = [gold("1", QueryType::Natural, Half::A), gold("2", QueryType::Config, Half::B)];
         let report = run(&engine, &queries, &[], &options(4)).await.unwrap();
         assert_eq!(engine.calls.load(Ordering::SeqCst), 2 + 2 * 4);
@@ -265,12 +275,18 @@ mod tests {
             &[]
         }
 
+        fn output(&self) -> &OutputConfig {
+            &DEFAULT_OUTPUT
+        }
+
         async fn search(&self, query: &str, kind: Option<QueryKind>, limit: usize) -> Result<SearchResponse> {
             if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
                 anyhow::bail!("backend starting");
             }
             tokio::time::sleep(std::time::Duration::from_millis(30)).await;
-            Counting { calls: AtomicUsize::new(0), repos: vec![] }.search(query, kind, limit).await
+            Counting { calls: AtomicUsize::new(0), repos: vec![], output: OutputConfig::default() }
+                .search(query, kind, limit)
+                .await
         }
 
         async fn usages(&self, _: &str, _: usize, _: usize) -> Result<UsagesResponse> {
@@ -364,6 +380,10 @@ mod tests {
             &[]
         }
 
+        fn output(&self) -> &OutputConfig {
+            &DEFAULT_OUTPUT
+        }
+
         async fn search(&self, _: &str, _: Option<QueryKind>, _: usize) -> Result<SearchResponse> {
             anyhow::bail!("not used")
         }
@@ -379,6 +399,36 @@ mod tests {
     async fn paging_that_does_not_advance_fails_the_call() {
         let report = run(&Stuck, &[], &[all_three()], &options(0)).await.unwrap();
         assert!(report.usages[0].failed);
+    }
+
+    const ONE_HIT: &str = r#"{"repos": [{"name": "r", "root": "/ws/r"}],
+        "search": {"query 1": {"query": "query 1", "kind": "natural", "total": 1, "offset": 0, "backends": [],
+          "hits": [{"repo": "r", "path": "/ws/r/a", "lines": {"start": 1, "end": 2}, "is_definition": false,
+                    "pinned": false, "focus_line": 1, "score": 1.0, "sources": []}]}}}"#;
+
+    #[tokio::test]
+    async fn tokens_are_those_of_the_text_an_agent_receives() {
+        let engine = MockEngine::from_json(ONE_HIT).unwrap();
+        let queries = [gold("1", QueryType::Natural, Half::A)];
+        let report = run(&engine, &queries, &[], &options(0)).await.unwrap();
+        let response = engine.search("query 1", None, 30).await.unwrap();
+        let text =
+            uals_core::render::render_search(&response, uals_core::render::Format::Concise, &OutputConfig::default());
+        assert_eq!(report.queries[0].tokens, text.chars().count().div_ceil(4) as u64);
+    }
+
+    #[tokio::test]
+    async fn tokens_follow_the_output_budget_of_the_engine() {
+        let mut wide = MockEngine::from_json(ONE_HIT).unwrap();
+        let response = wide.search.get_mut("query 1").unwrap();
+        let hit = response.hits[0].clone();
+        response.hits.extend([hit.clone(), hit]);
+        let narrow =
+            MockEngine { output: OutputConfig { max_output_chars: 20, ..OutputConfig::default() }, ..wide.clone() };
+        let queries = [gold("1", QueryType::Natural, Half::A)];
+        let wide = run(&wide, &queries, &[], &options(0)).await.unwrap();
+        let narrow = run(&narrow, &queries, &[], &options(0)).await.unwrap();
+        assert!(narrow.queries[0].tokens < wide.queries[0].tokens, "the budget drops hits the agent never sees");
     }
 
     #[tokio::test]

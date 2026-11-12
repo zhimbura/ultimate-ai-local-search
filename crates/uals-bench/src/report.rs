@@ -36,7 +36,7 @@ pub struct QueryResult {
     pub rank_primary: Option<u32>,
     /// 1-based rank of the first hit matching a `primary` or `secondary` entry.
     pub rank_any: Option<u32>,
-    /// Characters / 4 of the compact JSON response; 0 when the call failed.
+    /// Characters / 4 of the concise text an agent receives for the response; 0 when the call failed.
     pub tokens: u64,
     /// Wall time of the first call of this query, in milliseconds.
     pub latency_ms: f64,
@@ -55,7 +55,7 @@ pub struct Group {
     pub primary: RankStats,
     /// Ranks counting `primary` and `secondary` entries.
     pub with_secondary: RankStats,
-    /// Mean response size in tokens (characters / 4).
+    /// Mean size of the concise text an agent receives, in tokens (characters / 4).
     pub mean_tokens: f64,
 }
 

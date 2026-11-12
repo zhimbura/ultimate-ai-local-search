@@ -47,7 +47,7 @@ fn quality_row(out: &mut String, name: &str, g: &Group, latency: Option<&Report>
 /// and the rank of the first correct hit for every query.
 pub fn render(reports: &[Report]) -> String {
     let mut out = String::from("# uals-bench report\n\n");
-    out.push_str("Hit@k and MRR count a hit as correct when it matches a `primary` entry; `MRR+sec` also counts `secondary` ones. `tokens` is the mean response size (characters / 4).\n\n");
+    out.push_str("Hit@k and MRR count a hit as correct when it matches a `primary` entry; `MRR+sec` also counts `secondary` ones. `tokens` is the mean size of the concise text an agent receives (characters / 4).\n\n");
 
     out.push_str("## Overall\n\n");
     quality_header(&mut out, true);
