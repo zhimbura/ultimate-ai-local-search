@@ -432,7 +432,10 @@ async fn unparsable_output_is_a_failure() {
         FakeRunner::new()
             .on("usages", CommandOutput { stdout: String::new(), stderr: "boom\n".into(), exit_code: Some(101) }),
     );
-    assert!(matches!(backend(&crashed).usages(&repo(), "X", 5).await, Err(BackendError::Failed(_))));
+    match backend(&crashed).usages(&repo(), "X", 5).await {
+        Err(BackendError::Failed(reason)) => assert!(reason.ends_with("failed (exit code 101): boom"), "{reason}"),
+        other => panic!("expected Failed, got {other:?}"),
+    }
 }
 
 #[tokio::test]
@@ -524,7 +527,12 @@ async fn refresh_failure_reports_the_last_stderr_line_or_stdout() {
         exit_code: Some(1),
     };
     let quiet = CommandOutput { stdout: "Index is corrupted\n".into(), stderr: "\n".into(), exit_code: Some(2) };
-    for (output, expected) in [(noisy, "database is locked"), (quiet, "Index is corrupted")] {
+    let killed = CommandOutput { stdout: String::new(), stderr: "Killed\n".into(), exit_code: None };
+    for (output, expected) in [
+        (noisy, "failed (exit code 1): Error: database is locked"),
+        (quiet, "failed (exit code 2): Index is corrupted"),
+        (killed, "failed (killed by a signal): Killed"),
+    ] {
         let runner = Arc::new(FakeRunner::new().on("update", output));
         match backend(&runner).refresh(&repo(), false).await {
             Err(BackendError::Failed(reason)) => assert!(reason.ends_with(expected), "{reason}"),

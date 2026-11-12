@@ -27,7 +27,7 @@ pub fn parse_json<T: DeserializeOwned>(command: &str, output: &CommandOutput) ->
             return Err(missing_index());
         }
         let reason = stderr.lines().next().unwrap_or("no error text");
-        return Err(BackendError::Failed(format!("ast-index {command} exited with {:?}: {reason}", output.exit_code)));
+        return Err(BackendError::Failed(format!("ast-index {command} failed ({}): {reason}", output.exit_text())));
     }
     if !(stdout.starts_with('{') || stdout.starts_with('[')) {
         if stdout.contains("ast-index rebuild") {

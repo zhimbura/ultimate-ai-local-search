@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
 use uals_core::config::Config;
 use uals_core::render::{render_search, render_usages};
@@ -42,9 +42,9 @@ pub enum Command {
     Refresh(RefreshArgs),
     /// Print the repositories uals searches from a folder, as JSON.
     Workspace {
-        /// Start folder. Default: $UALS_WORKSPACE, then the current folder.
-        #[arg(env = "UALS_WORKSPACE")]
-        path: Option<PathBuf>,
+        /// The folder to start from. Default: $UALS_WORKSPACE, then the current folder.
+        #[arg(long)]
+        workspace: Option<PathBuf>,
     },
     /// Run the MCP server on stdin and stdout.
     Mcp,
@@ -107,12 +107,9 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
                 return Ok(ExitCode::FAILURE);
             }
         }
-        Command::Workspace { path } => {
-            let start = match path {
-                Some(path) => path,
-                None => std::env::current_dir().context("cannot read the current folder")?,
-            };
-            println!("{}", serde_json::to_string_pretty(&workspace::discover(&start, &config)?)?);
+        Command::Workspace { workspace } => {
+            let folder = workspace_folder(workspace.as_deref(), None)?;
+            println!("{}", serde_json::to_string_pretty(&workspace::discover(&folder, &config)?)?);
         }
         Command::Mcp => mcp::serve(config).await?,
         Command::Hook(HookCommand::PostEdit) => hook::post_edit(&config, std::io::stdin().lock()).await?,

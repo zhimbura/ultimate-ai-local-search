@@ -1,7 +1,8 @@
 //! `uals hook post-edit`: a Claude Code `PostToolUse` hook for file edits. It reads the hook input
 //! on stdin, finds the repository that holds the edited file, and runs an incremental
 //! `ast-index update` there when that repository already has an index. Creating an index is left
-//! to `uals refresh`. Input without a file path is ignored.
+//! to `uals refresh`. Input without a file path is ignored, and so is a file that no repository
+//! holds (a note or a plan outside the workspace): it is not an error.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -14,10 +15,11 @@ use uals_adapters::ast_index::AstIndexBackend;
 use uals_core::backend::SearchBackend;
 use uals_core::config::Config;
 use uals_core::types::Repo;
-use uals_core::workspace;
+use uals_core::workspace::{self, WorkspaceError};
 
-/// How long the update may take. Claude Code stops a hook after 60 s by default; the update ends
-/// first so that ast-index is never killed by the hook runner.
+/// How long the update may take. After this the hook stops `ast-index update` itself (the process
+/// gets SIGKILL when the call is dropped) and exits 1 with a timeout error. Claude Code's default
+/// hook timeout is 60 s, so the hook ends first.
 const UPDATE_DEADLINE: Duration = Duration::from_secs(50);
 
 /// The part of the hook input this hook reads.
@@ -44,7 +46,10 @@ pub async fn post_edit(config: &Config, input: impl Read) -> Result<()> {
         debug!("the hook input names no file");
         return Ok(());
     };
-    let repo = repo_of(&file, config)?;
+    let Some(repo) = repo_of(&file, config)? else {
+        debug!(file = %file.display(), "no repository holds the file");
+        return Ok(());
+    };
     let ast_index = AstIndexBackend::new(config.ast_index.clone());
     if !ast_index.index_state(&repo).await.indexed {
         debug!(repo = %repo.name, "no ast-index index; not creating one");
@@ -66,17 +71,20 @@ fn edited_file(input: HookInput) -> Option<PathBuf> {
 }
 
 /// The repository that holds `file`: the deepest repository of the workspace discovered from the
-/// file's folder.
-fn repo_of(file: &Path, config: &Config) -> Result<Repo> {
+/// file's folder, or `None` when there is no such repository.
+fn repo_of(file: &Path, config: &Config) -> Result<Option<Repo>> {
     let folder = file.parent().with_context(|| format!("{} has no folder", file.display()))?;
     let folder = folder.canonicalize().with_context(|| format!("cannot read {}", folder.display()))?;
-    let found = workspace::discover(&folder, config)?;
-    found
+    let found = match workspace::discover(&folder, config) {
+        Ok(found) => found,
+        Err(WorkspaceError::NoRepos(_)) => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    Ok(found
         .repos
         .into_iter()
         .filter(|repo| folder.starts_with(&repo.root))
-        .max_by_key(|repo| repo.root.components().count())
-        .with_context(|| format!("no repository holds {}", file.display()))
+        .max_by_key(|repo| repo.root.components().count()))
 }
 
 #[cfg(test)]
@@ -118,17 +126,60 @@ mod tests {
         ];
         config.workspaces.insert("nested".into(), WorkspaceConfig { root: outer.clone(), exclude: Vec::new(), repos });
 
-        let repo = repo_of(&inner.join("src/Main.kt"), &config).expect("a repository");
+        let repo = repo_of(&inner.join("src/Main.kt"), &config).expect("no error").expect("a repository");
 
         assert_eq!(repo.root, inner);
     }
 
     #[test]
-    fn a_file_outside_any_repository_is_an_error() {
+    fn a_file_in_a_workspace_but_in_no_repository_has_no_repository() {
+        let root = tempfile::tempdir().expect("temp dir");
+        let outer = root.path().canonicalize().expect("canonical").join("ws");
+        std::fs::create_dir_all(outer.join("lib")).expect("folders");
+        std::fs::create_dir_all(outer.join("docs")).expect("folders");
+        let mut config = Config::default();
+        let repos = vec![RepoConfig { name: "lib".into(), path: outer.join("lib") }];
+        config.workspaces.insert("ws".into(), WorkspaceConfig { root: outer.clone(), exclude: Vec::new(), repos });
+
+        let repo = repo_of(&outer.join("docs/plan.md"), &config).expect("no error");
+
+        assert_eq!(repo, None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_folder_that_cannot_be_read_is_an_error() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tempfile::tempdir().expect("temp dir");
+        let locked = root.path().join("locked");
+        std::fs::create_dir(&locked).expect("folder");
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).expect("lock");
+        let readable = std::fs::read_dir(&locked).is_ok();
+
+        let result = repo_of(&locked.join("x.txt"), &Config::default());
+
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).expect("unlock");
+        if !readable {
+            assert!(result.is_err(), "{result:?}");
+        }
+    }
+
+    #[test]
+    fn a_file_outside_any_repository_has_no_repository() {
         let root = tempfile::tempdir().expect("temp dir");
 
-        let error = repo_of(&root.path().join("loose.txt"), &Config::default()).expect_err("no repository");
+        let repo = repo_of(&root.path().join("loose.txt"), &Config::default()).expect("no error");
 
-        assert!(error.to_string().contains("no repositories"), "{error:#}");
+        assert_eq!(repo, None);
+    }
+
+    #[test]
+    fn a_file_in_a_missing_folder_is_an_error() {
+        let root = tempfile::tempdir().expect("temp dir");
+
+        let error = repo_of(&root.path().join("gone/loose.txt"), &Config::default()).expect_err("missing folder");
+
+        assert!(error.to_string().contains("cannot read"), "{error:#}");
     }
 }

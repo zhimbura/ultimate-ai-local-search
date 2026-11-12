@@ -194,3 +194,95 @@ pub fn repos_in(folder: &Path, names: &[String], config: &Config) -> Result<(Wor
     let repos = select_repos(&workspace, names)?;
     Ok((workspace, repos))
 }
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+    use pretty_assertions::assert_eq;
+    use serde_json::json;
+    use uals_core::render::Format;
+
+    use super::*;
+    use crate::cli::{Cli, Command};
+
+    fn search_from_flags(flags: &[&str]) -> SearchArgs {
+        match Cli::try_parse_from(["uals", "search"].into_iter().chain(flags.iter().copied())).expect("flags").command {
+            Command::Search(args) => args,
+            other => panic!("expected search, got {other:?}"),
+        }
+    }
+
+    fn usages_from_flags(flags: &[&str]) -> UsagesArgs {
+        match Cli::try_parse_from(["uals", "usages"].into_iter().chain(flags.iter().copied())).expect("flags").command {
+            Command::Usages(args) => args,
+            other => panic!("expected usages, got {other:?}"),
+        }
+    }
+
+    fn full_search() -> SearchParams {
+        SearchParams {
+            query: "HostSelector".into(),
+            kind: Some(QueryKind::Regex),
+            paths: vec!["src/**/*.kt".into(), "!**/test/**".into()],
+            limit: Some(7),
+            offset: 14,
+            format: Format::Json,
+        }
+    }
+
+    #[test]
+    fn search_params_carry_every_field_from_json_and_from_flags() {
+        let from_json: SearchArgs = serde_json::from_value(json!({
+            "query": "HostSelector", "kind": "regex", "paths": ["src/**/*.kt", "!**/test/**"],
+            "limit": 7, "offset": 14, "format": "json"
+        }))
+        .expect("json");
+        let from_flags = search_from_flags(&[
+            "HostSelector",
+            "--kind",
+            "regex",
+            "--path",
+            "src/**/*.kt",
+            "--path",
+            "!**/test/**",
+            "--limit",
+            "7",
+            "--offset",
+            "14",
+            "--format",
+            "json",
+        ]);
+
+        assert_eq!(from_json.params(), full_search());
+        assert_eq!(from_flags.params(), full_search());
+    }
+
+    #[test]
+    fn search_params_default_when_only_the_query_is_given() {
+        let from_json: SearchArgs = serde_json::from_value(json!({"query": "HostSelector"})).expect("json");
+        let from_flags = search_from_flags(&["HostSelector"]);
+
+        assert_eq!(from_json.params(), SearchParams::new("HostSelector"));
+        assert_eq!(from_flags.params(), SearchParams::new("HostSelector"));
+    }
+
+    #[test]
+    fn usages_params_carry_every_field_from_json_and_from_flags() {
+        let expected = UsagesParams { symbol: "markFailed".into(), limit: Some(5), offset: 10 };
+        let from_json: UsagesArgs =
+            serde_json::from_value(json!({"symbol": "markFailed", "limit": 5, "offset": 10})).expect("json");
+        let from_flags = usages_from_flags(&["markFailed", "--limit", "5", "--offset", "10"]);
+
+        assert_eq!(from_json.params(), expected);
+        assert_eq!(from_flags.params(), expected);
+    }
+
+    #[test]
+    fn usages_params_default_when_only_the_symbol_is_given() {
+        let expected = UsagesParams { symbol: "markFailed".into(), limit: None, offset: 0 };
+        let from_json: UsagesArgs = serde_json::from_value(json!({"symbol": "markFailed"})).expect("json");
+
+        assert_eq!(from_json.params(), expected);
+        assert_eq!(usages_from_flags(&["markFailed"]).params(), expected);
+    }
+}
