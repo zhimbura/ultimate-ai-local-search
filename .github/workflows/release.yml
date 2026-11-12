@@ -35,17 +35,7 @@ jobs:
       - name: Package
         env:
           TAG: ${{ github.ref_name }}
-          TARGET: ${{ matrix.target }}
-        run: |
-          set -euo pipefail
-          name="uals-${TAG}-${TARGET}"
-          mkdir -p "dist/${name}"
-          cp "target/${TARGET}/release/uals" "dist/${name}/"
-          cp LICENSE README.md "dist/${name}/"
-          tar -C dist -czf "dist/${name}.tar.gz" "${name}"
-          cd dist
-          if command -v sha256sum >/dev/null; then sha256sum "${name}.tar.gz" > "${name}.tar.gz.sha256"
-          else shasum -a 256 "${name}.tar.gz" > "${name}.tar.gz.sha256"; fi
+        run: scripts/package-release.sh "${{ matrix.target }}" "target/${{ matrix.target }}/release/uals" "$TAG" dist
 
       - uses: actions/upload-artifact@v4
         with:

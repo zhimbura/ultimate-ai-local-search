@@ -32,6 +32,8 @@ flowchart LR
 
 A single token is an identifier when it has an uppercase letter, `_`, `$`, a separator (`.`, `::`, `#`) or `()`. One plain lowercase word is a natural query. A weight of 0 means the backend is not asked. The weights are in the config (`fusion.weights`).
 
+**Exact text.** The text search is not asked for a natural query, even for one lowercase word: `retry` finds symbol names and meaning, not every line with that word. To search text, quote the string (`"connection refused"`), write a `/regex/`, or set `kind` to `literal` or `regex`. Those queries use the text search only. An identifier query also uses it, with weight 0.7.
+
 **Fusion.** Every backend gives one list over all repositories. A hit adds `weight / (k + rank + 1)` to its score, with `k = 60`. Raw backend scores do not count. Ranks that come from one repository at a time are interleaved: the first hits of all repositories, then the second hits.
 
 **Merge by symbol.** Hits that point into the same enclosing symbol (class, function) become one result, whichever backend found them. Hits outside any known symbol join when their line ranges are at most 3 lines apart. A result lists its sources, for example `ast-index#1 lexical#1 semble#2`.
@@ -58,10 +60,10 @@ Then restart your agent. `install.sh` runs on macOS and Linux from a checkout.
 
 - The `uals` binary in `~/.local/bin`: a release archive checked by SHA-256, or built from this checkout with `--from-source`.
 - ast-index 3.56.0 in the same folder, unless ast-index 3.56.0 or newer is already on `PATH`.
-- The semantic backend. For `semble` (default): uv 0.10.5 in the same folder when uv is missing, then `uv tool install 'semble[mcp]==0.7.3'`, with the `semble` command in the same folder. For `claude-context`: see below.
-- A file in that folder that the installer did not put there is moved aside to `<name>.bak.<time>` first. `uninstall.sh` puts it back.
-- `~/.config/uals/config.toml` with absolute tool paths, only when no config exists. An existing config is never changed. API keys stay out of it.
-- The `uals` entry in the Claude Code config (`~/.claude.json`), with a timestamped backup.
+- The semantic backend. For `semble` (default): Semble 0.7.3 in its own folder, `~/.local/share/uals/semble`, with its own Python when the system has no Python 3.10 or newer. The installer takes uv from `PATH`; when there is none, it downloads uv into that folder. Only `uals` and `ast-index` go into `~/.local/bin`. A Semble 0.7.3 that is already on `PATH` is used as it is. For `claude-context`: see below.
+- A file in `~/.local/bin` that the installer did not put there is moved aside to `<name>.bak.<time>` first. `uninstall.sh` puts it back.
+- `${XDG_CONFIG_HOME:-~/.config}/uals/config.toml` with absolute tool paths, only when no config exists. An existing config is never changed, even when `--semantic` names another backend: to switch, edit `semantic.default`. API keys stay out of it.
+- The `uals` entry in the Claude Code config (`~/.claude.json`). `scripts/configure-mcp.sh` writes the file atomically and tries again when the file changed during the edit. Before a rewrite it saves a backup, `<config>.bak.YYYYmmdd-HHMMSS`. The 3 newest backups of that form stay and older ones are deleted.
 - `~/.local/share/uals/install-manifest`: a record of what the installer created, used by `uninstall.sh`.
 
 At the end it runs `uals doctor` and exits with its code. It never edits shell rc files: if `~/.local/bin` is not on your `PATH`, add it yourself.
@@ -146,7 +148,7 @@ uals mcp                      # run the MCP server on stdin and stdout
 uals hook post-edit           # Claude Code hook, reads JSON on stdin
 ```
 
-`uals refresh` exits with 1 when a backend failed. A backend that is unavailable is reported but is not a failure. `uals doctor` takes `--format concise|detailed|json`. The global option `--config <file>` works with every command.
+`uals refresh` exits with 1 when a backend failed. A backend that is unavailable is reported but is not a failure. `uals refresh` and `uals doctor` take `--format concise|detailed|json`; for both, `detailed` prints the same as `concise`. The global option `--config <file>` works with every command.
 
 ### Which folder is searched
 
@@ -172,7 +174,7 @@ uals finds the repositories of that folder like this. The first rule that applie
 claude mcp add --scope user uals -- ~/.local/bin/uals mcp
 ```
 
-Or add this to the `mcpServers` object in `~/.claude.json`, with the absolute path of the binary:
+Or add this to the `mcpServers` object in `~/.claude.json`, with the absolute path of the binary (the same entry is in [mcp/uals.template.json](mcp/uals.template.json)):
 
 ```json
 {
@@ -188,6 +190,12 @@ Or add this to the `mcpServers` object in `~/.claude.json`, with the absolute pa
 ```
 
 For any other MCP client, start `uals mcp` as a stdio server with the same command and arguments. Put variables such as `UALS_WORKSPACE`, `UALS_CONFIG` or `UALS_LOG` in the `env` object.
+
+With a cloud embedder (claude-context), the API key goes into `env`:
+
+```json
+"env": { "OPENAI_API_KEY": "sk-REPLACE_ME" }
+```
 
 ## Configuration
 
@@ -311,6 +319,7 @@ If `uals` is not on the `PATH` of Claude Code, write the full path in `command`.
 ## Troubleshooting
 
 - `uals doctor` checks the config, ast-index, the semantic backend and the MCP registration. One line per check: `✓` ok, `!` warning, `✗` failure, `-` skipped. It exits with 1 when a check failed.
+- `uals doctor` does more than read. For Semble it runs a search in a temporary folder under the system temp folder; the first run may download the model and may take up to 120 s. For claude-context it calls the local embedder and creates and then deletes a test collection `uals_doctor_<pid>` in Milvus.
 - `uals status` shows what each backend knows about each repository. `not indexed (no index; run ...)` means run `uals refresh`.
 - `uals workspace` shows which repositories uals found. If the list is wrong, pass `--workspace` or add a `[workspaces.<name>]` entry.
 - Logs go to stderr, never to stdout (stdout carries the MCP protocol). The default level is `warn`. For more: `UALS_LOG=debug uals search HostSelector`. In an MCP client, set `UALS_LOG` in the `env` of the server entry and read the client's MCP log.
@@ -326,6 +335,7 @@ If `uals` is not on the `PATH` of Claude Code, write the full path in `command`.
 - With claude-context and a cloud embedder (OpenAI, VoyageAI, Gemini, OpenRouter), code chunks are sent to that provider. With Ollama or LM Studio they stay on your machine.
 - uals sends no telemetry.
 - The benchmark queries are private. Only aggregate numbers are published.
+- CI checks tracked files only for absolute home paths (`/Users/…`, `/home/…`). Private names are caught only by the local pre-commit hook, which reads a deny-list on the developer's machine (`scripts/check-private.sh`). CI does not have that list.
 
 ## Benchmark
 
@@ -351,7 +361,16 @@ On this set no semantic backend beats fused search without semantics, and every 
 ./uninstall.sh --purge      # also delete the Milvus volume (your claude-context index)
 ```
 
-It removes the uals entry from the Claude Code config, restores claude-context entries that the installer removed, deletes the files the installer created (`.env` too), puts back files the installer moved aside, removes uv and Semble when the installer installed them, and stops the Docker stack when the installer started it. `--purge` is irreversible.
+What it does:
+
+- Removes only the top-level `uals` entry in `~/.claude.json` and puts back the `uals` entry that was there before the install. `uals` entries inside projects are not touched.
+- Deletes `~/.claude.json` when nothing is left in it except an empty `mcpServers`.
+- Restores claude-context entries that the installer removed. Entries of projects that no longer exist stay in the saved file.
+- Deletes the files the installer created, puts back files it moved aside, and puts back the earlier `.env`.
+- Removes Semble and the uv the installer installed, and stops the Docker stack when the installer started it.
+- A failed step does not stop it. Failed steps stay in the manifest and the exit code is 1.
+
+`--purge` is irreversible.
 
 ## Development
 
@@ -365,7 +384,7 @@ scripts/check-private.sh         # no absolute home paths or private names in tr
 git config core.hooksPath .githooks   # run check-private.sh before every commit
 ```
 
-`rust-toolchain.toml` pins the Rust toolchain. CI runs fmt, clippy and tests on Linux and macOS, plus cargo-deny, `check-private.sh` and shellcheck.
+`rust-toolchain.toml` pins the Rust toolchain. CI runs fmt, clippy and tests on Linux and macOS, plus cargo-deny, `check-private.sh` and shellcheck. The `install` job builds a release binary, packs it with `scripts/package-release.sh` (the script the release workflow uses), then runs `scripts/ci-install-check.sh` on Linux (x86_64, musl) and macOS (arm64): install, install again (the manifest and the `~/.claude.json` backups do not change), `uals doctor`, uninstall (files return to the state before the install). `scripts/check-pins.sh` checks that the tool versions in `install.sh` match the ones `uals doctor` was tested with.
 
 **Crates:**
 
