@@ -14,7 +14,7 @@ use crate::setup;
 
 /// The Semble version uals was tested with.
 const SEMBLE_TESTED: Version = Version::new(0, 7, 3);
-const CLAUDE_CONTEXT_TESTED: Version = Version::new(0, 1, 15);
+const CLAUDE_CONTEXT_TESTED: Version = Version::new(0, 1, 16);
 /// A dependency of claude-context loads ES modules with `require`, which Node supports from 22.12.
 const NODE_MINIMUM: Version = Version::new(22, 12, 0);
 /// How long the search through Semble may take. The first run may download Semble's model.

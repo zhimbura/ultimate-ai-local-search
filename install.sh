@@ -12,9 +12,9 @@ UALS_REPO="zhimbura/ultimate-ai-local-search"
 AST_INDEX_VERSION="3.56.0"          # minimum; uals was tested with it
 SEMBLE_SPEC="semble[mcp]==0.7.3"
 SEMBLE_VERSION="0.7.3"
-CLAUDE_CONTEXT_VERSION="0.1.15"
+CLAUDE_CONTEXT_VERSION="0.1.16"
 NODE_MIN="22.12.0"                  # a claude-context dependency uses require(ESM)
-UV_VERSION="0.10.5"
+UV_VERSION="0.13.8"
 
 # SHA-256 of the ast-index release assets (the release has no checksum files).
 ast_index_sha256() {
@@ -440,7 +440,7 @@ write_env_file() {
   {
     echo "MILVUS_PORT=$MILVUS_PORT"
     echo "MILVUS_HEALTH_PORT=${MILVUS_HEALTH_PORT:-9091}"
-    echo "MILVUS_VERSION=${MILVUS_VERSION:-v2.5.6}"
+    echo "MILVUS_VERSION=${MILVUS_VERSION:-v2.6.27}"
     echo "MILVUS_ADDRESS=127.0.0.1:$MILVUS_PORT"
     echo "EMBEDDING_PROVIDER=$EMB_PROVIDER"
     echo "EMBEDDING_MODEL=$MODEL"

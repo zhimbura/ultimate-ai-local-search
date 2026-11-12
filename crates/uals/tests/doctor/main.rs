@@ -24,7 +24,7 @@ fn claude_context(http: &FakeHttp, overrides: &[(&str, &str)]) -> (Sandbox, std:
     let sandbox = Sandbox::new();
     sandbox.versioned("ast-index", "ast-index 3.56.0");
     sandbox.versioned("node", "v22.13.1");
-    let entry = sandbox.package("0.1.15");
+    let entry = sandbox.package("0.1.16");
     let config = sandbox.config(&claude_context_config(&entry, http, overrides));
     (sandbox, config)
 }
@@ -280,7 +280,7 @@ fn a_package_of_another_version_is_a_warning() {
     assert_eq!(run.code(), Some(0), "{}", run.stdout());
     let line = run.check("claude-context package");
     assert!(line.starts_with("! claude-context package: 0.1.9 at "), "{line}");
-    assert!(line.contains("tested with 0.1.15"), "{line}");
+    assert!(line.contains("tested with 0.1.16"), "{line}");
 }
 
 // claude-context: embedder
