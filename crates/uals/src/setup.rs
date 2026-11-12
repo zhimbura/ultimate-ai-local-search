@@ -22,6 +22,9 @@ use crate::orchestrator::{Backends, Orchestrator};
 /// Where the uals process that runs claude-context keeps its lock, relative to the home folder.
 const CLAUDE_CONTEXT_LOCK: &str = ".local/state/uals/claude-context.lock";
 
+/// How long a locked server gets to end after SIGTERM before it is killed.
+const LOCKED_SERVER_STOP_BOUND: Duration = Duration::from_secs(1);
+
 /// An orchestrator with every backend the config enables.
 pub fn orchestrator(config: Config) -> Orchestrator {
     Orchestrator::new(backends(&config), config)
@@ -139,11 +142,18 @@ fn lock_single_instance(path: &Path, what: &str) -> Result<File, BackendError> {
     }
 }
 
-/// A server that holds a lock while it runs. Fields drop in order: the server stops first, then
-/// the lock is released.
+/// A server that holds a lock while it runs. Dropping it stops the server's process group and
+/// waits for it to end, then the lock is released, so no other process can start a second server
+/// while this one still runs.
 struct Locked {
     server: McpChild,
     _lock: File,
+}
+
+impl Drop for Locked {
+    fn drop(&mut self) {
+        self.server.stop_and_wait(LOCKED_SERVER_STOP_BOUND);
+    }
 }
 
 #[async_trait]
@@ -155,7 +165,28 @@ impl McpToolCaller for Locked {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+    use std::os::unix::fs::PermissionsExt;
+    use std::process::Command;
+    use std::time::Instant;
+
     use super::*;
+
+    /// An MCP server that ignores SIGTERM and answers only `initialize`.
+    const STUBBORN_SERVER: &str = r#"#!/bin/sh
+trap '' TERM
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":"2025-11-25","capabilities":{"tools":{}},"serverInfo":{"name":"fake","version":"0"}}}\n' "$id" ;;
+  esac
+done
+"#;
+
+    fn group_exists(pgid: i32) -> bool {
+        Command::new("kill").args(["-0", "--", &format!("-{pgid}")]).output().unwrap().status.success()
+    }
 
     #[test]
     fn only_one_holder_gets_the_lock() {
@@ -172,5 +203,34 @@ mod tests {
 
         drop(first);
         assert!(lock_single_instance(&path, "claude-context").is_ok(), "the lock is free after the holder drops it");
+    }
+
+    // A current-thread runtime: tokio cannot kill the child behind the test's back while it blocks.
+    #[tokio::test]
+    async fn the_lock_is_released_only_after_a_stubborn_server_is_dead() {
+        let folder = tempfile::tempdir().expect("temp dir");
+        let script = folder.path().join("stubborn-server");
+        std::fs::write(&script, STUBBORN_SERVER).expect("write the server");
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).expect("make it executable");
+        let lock_path = folder.path().join("state/server.lock");
+        let lock = lock_single_instance(&lock_path, "stubborn").expect("the lock is free");
+        let spec = ChildSpec {
+            name: "stubborn".into(),
+            program: script,
+            args: vec![],
+            env: BTreeMap::new(),
+            pass_env: vec![],
+            cwd: None,
+        };
+        let server = McpChild::spawn(spec).await.expect("the server starts");
+        let pgid = server.process_group().expect("a running server has a group");
+        assert!(group_exists(pgid));
+
+        let started = Instant::now();
+        drop(Locked { server, _lock: lock });
+
+        assert!(!group_exists(pgid), "the server must be dead when the drop returns");
+        assert!(started.elapsed() < Duration::from_secs(3), "the wait is bounded");
+        assert!(lock_single_instance(&lock_path, "stubborn").is_ok(), "the lock is free once the server is dead");
     }
 }

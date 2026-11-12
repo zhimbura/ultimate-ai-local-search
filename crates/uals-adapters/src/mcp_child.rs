@@ -6,16 +6,20 @@
 //! - [`McpToolCaller::call_tool`] runs on that connection; several calls may be in flight at once.
 //!   Dropping the future is safe: rmcp sends `notifications/cancelled` and the connection stays usable.
 //! - A crashed server is detected (`ServiceError::TransportClosed`, or the process group is gone;
-//!   rmcp's `is_closed()` alone is not trusted) and respawned by the next call. After 3 consecutive
-//!   failures the respawn backs off 1 s, 2 s, 4 s ... up to 60 s and calls fail fast with
-//!   `BackendError::Unavailable` until the backoff ends. A call that hit a dead server is replayed
-//!   once on the fresh one, never more.
-//! - Dropping the `McpChild` sends SIGTERM to the whole process group and SIGKILL 200 ms later.
+//!   rmcp's `is_closed()` alone is not trusted) and respawned by the next call. A call that hit a
+//!   dead server is replayed once on the fresh one, never more; when the replay finds the server
+//!   dead as well the call fails with `BackendError::Unavailable`.
+//! - A failure is a failed start, or a call that found the server dead twice; a dead server alone
+//!   is not one. After 3 consecutive failures the respawn backs off 1 s, 2 s, 4 s ... up to 60 s
+//!   and calls fail fast with `BackendError::Unavailable` until the backoff ends. A server that
+//!   exits before the handshake ends is `Unavailable` too.
+//! - Dropping the `McpChild` sends SIGTERM to the whole process group and SIGKILL 200 ms later,
+//!   unless the group is gone by then. [`McpChild::stop_and_wait`] does the same and waits.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::path::PathBuf;
 use std::process::Stdio;
-use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
 
@@ -23,7 +27,7 @@ use async_trait::async_trait;
 use process_wrap::tokio::{CommandWrap, KillOnDrop};
 use rmcp::ServiceExt;
 use rmcp::model::CallToolRequestParams;
-use rmcp::service::{RoleClient, RunningService, ServiceError};
+use rmcp::service::{ClientInitializeError, RoleClient, RunningService, ServiceError};
 use rmcp::transport::TokioChildProcess;
 use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 use tokio::sync::Mutex;
@@ -37,6 +41,8 @@ const STDERR_TAIL_LINES: usize = 20;
 const STDERR_LINE_MAX: usize = 400;
 /// Time between SIGTERM and SIGKILL when the process group is stopped.
 const KILL_GRACE: Duration = Duration::from_millis(200);
+/// How often the process group is checked while waiting for it to end.
+const GROUP_POLL: Duration = Duration::from_millis(10);
 /// Consecutive failures after which respawning backs off.
 const BACKOFF_AFTER_FAILURES: u32 = 3;
 /// Delay after the first failure past the threshold; it doubles with every further failure.
@@ -145,6 +151,13 @@ impl McpChild {
         Ok(Self { shared })
     }
 
+    /// Stops the current server's process group and waits until it is gone: SIGTERM at once,
+    /// SIGKILL when `bound` has passed. Blocks the calling thread.
+    pub fn stop_and_wait(&self, bound: Duration) {
+        let pgid = self.shared.pgid.load(Ordering::SeqCst);
+        stop_group_and_wait(pgid, bound);
+    }
+
     /// Process group id of the current server process (equal to its pid), `None` while no server
     /// runs (before a respawn, or while backing off).
     pub fn process_group(&self) -> Option<i32> {
@@ -207,12 +220,15 @@ impl Shared {
         conn
     }
 
-    /// Drops the current connection (its process group is stopped by the caller) and counts the
-    /// failure.
+    /// Drops the current connection; its process group is stopped by the caller.
     fn forget_connection(&self, slot: &mut Slot) {
         slot.conn = None;
         self.pgid.store(0, Ordering::SeqCst);
-        slot.note_failure();
+    }
+
+    /// Counts a call that found the server dead and could not be completed on a fresh one.
+    async fn record_failure(&self) {
+        self.slot.lock().await.note_failure();
     }
 
     /// Clears the failure count and the backoff after a call went through.
@@ -249,7 +265,7 @@ impl Shared {
         let pid = transport.id().and_then(|pid| i32::try_from(pid).ok()).unwrap_or(0);
         // From here on dropping `group` stops the whole process group, also when the handshake
         // fails or this future is dropped.
-        let group = GroupGuard { pgid: pid };
+        let group = GroupGuard::new(pid);
         let stderr_tail: StderrTail = Arc::new(StdMutex::new(VecDeque::new()));
         if let Some(stderr) = stderr {
             tokio::spawn(drain_stderr(name.clone(), stderr, Arc::clone(&stderr_tail)));
@@ -273,13 +289,26 @@ async fn handshake(
         Ok(Ok(client)) => Ok(client),
         Ok(Err(error)) => {
             tokio::time::sleep(STDERR_DRAIN_GRACE).await;
-            Err(BackendError::Failed(format!("{name} handshake failed: {error}{}", stderr_suffix(stderr_tail))))
+            let message = format!("{name} handshake failed: {error}{}", stderr_suffix(stderr_tail));
+            // A server that exits before it answers cannot start (a missing dependency, a model that
+            // does not load): the same expected case as a missing binary. Anything else is a
+            // protocol error.
+            Err(if server_exited(&error) { BackendError::Unavailable(message) } else { BackendError::Failed(message) })
         }
         Err(_) => Err(BackendError::Unavailable(format!(
             "{name} did not answer the handshake within {}s{}",
             HANDSHAKE_TIMEOUT.as_secs(),
             stderr_suffix(stderr_tail)
         ))),
+    }
+}
+
+/// Whether the handshake ended because the server's pipe closed.
+fn server_exited(error: &ClientInitializeError) -> bool {
+    match error {
+        ClientInitializeError::ConnectionClosed(_) | ClientInitializeError::TransportError { .. } => true,
+        ClientInitializeError::LegacyFallbackFailed { fallback, .. } => server_exited(fallback),
+        _ => false,
     }
 }
 
@@ -349,6 +378,7 @@ impl McpToolCaller for McpChild {
             Err(error) => {
                 if is_transport_failure(&error) {
                     shared.discard(&conn).await;
+                    shared.record_failure().await;
                 }
                 Err(map_service_error(server, name, &error, &conn))
             }
@@ -361,9 +391,15 @@ fn is_transport_failure(error: &ServiceError) -> bool {
     matches!(error, ServiceError::TransportClosed | ServiceError::TransportSend(_))
 }
 
-/// The `BackendError` for a failed call, with the server's last stderr lines.
+/// The `BackendError` for a failed call, with the server's last stderr lines: `Unavailable` when
+/// the server is gone, `Failed` for everything else.
 fn map_service_error(server: &str, tool: &str, error: &ServiceError, conn: &Connection) -> BackendError {
-    BackendError::Failed(format!("{server}: call to '{tool}' failed: {error}{}", stderr_suffix(&conn.stderr_tail)))
+    let stderr = stderr_suffix(&conn.stderr_tail);
+    if is_transport_failure(error) {
+        BackendError::Unavailable(format!("{server} is down: call to '{tool}' failed: {error}{stderr}"))
+    } else {
+        BackendError::Failed(format!("{server}: call to '{tool}' failed: {error}{stderr}"))
+    }
 }
 
 /// Converts the rmcp result through its JSON form, so only the wire shape matters.
@@ -414,49 +450,45 @@ fn stderr_suffix(tail: &StdMutex<VecDeque<String>>) -> String {
     if text.is_empty() { String::new() } else { format!("; server stderr (last lines):\n{text}") }
 }
 
-/// Stops the server's process group when dropped: SIGTERM at once, SIGKILL after [`KILL_GRACE`].
-/// The whole group is signalled, never only the child pid, so helper processes die too.
+/// Stops the server's process group when dropped: SIGTERM at once, SIGKILL after [`KILL_GRACE`]
+/// when the group is still there. The whole group is signalled, never only the child pid, so
+/// helper processes die too.
 struct GroupGuard {
     pgid: i32,
+    terminated: AtomicBool,
 }
 
 impl GroupGuard {
+    fn new(pgid: i32) -> Self {
+        Self { pgid, terminated: AtomicBool::new(false) }
+    }
+
     /// The process group id (equal to the child's pid).
     fn pgid(&self) -> i32 {
         self.pgid
     }
 
     /// Whether the process group still has a process.
-    #[cfg(unix)]
     fn exists(&self) -> bool {
-        use nix::errno::Errno;
-        if self.pgid <= 0 {
-            return false;
-        }
-        !matches!(nix::sys::signal::killpg(nix::unistd::Pid::from_raw(self.pgid), None), Err(Errno::ESRCH))
-    }
-
-    #[cfg(not(unix))]
-    fn exists(&self) -> bool {
-        true
+        group_exists(self.pgid)
     }
 
     /// SIGTERM now, SIGKILL later from a detached thread, so this never blocks the runtime and
-    /// still happens while the runtime shuts down. Repeating it is harmless.
+    /// still happens while the runtime shuts down. Only the first call does anything.
     #[cfg(unix)]
     fn terminate(&self) {
         use nix::sys::signal::{Signal, killpg};
         use nix::unistd::Pid;
-        if self.pgid <= 0 {
+        if self.pgid <= 0 || self.terminated.swap(true, Ordering::SeqCst) {
             return;
         }
-        let pgid = Pid::from_raw(self.pgid);
-        if killpg(pgid, Signal::SIGTERM).is_err() {
+        if killpg(Pid::from_raw(self.pgid), Signal::SIGTERM).is_err() {
             return;
         }
+        let pgid = self.pgid;
         std::thread::spawn(move || {
-            std::thread::sleep(KILL_GRACE);
-            let _ = killpg(pgid, Signal::SIGKILL);
+            wait_for_group_to_end(pgid, KILL_GRACE);
+            kill_group_if_present(pgid);
         });
     }
 
@@ -470,6 +502,56 @@ impl Drop for GroupGuard {
         self.terminate();
     }
 }
+
+/// Whether process group `pgid` still has a process.
+#[cfg(unix)]
+fn group_exists(pgid: i32) -> bool {
+    use nix::errno::Errno;
+    if pgid <= 0 {
+        return false;
+    }
+    !matches!(nix::sys::signal::killpg(nix::unistd::Pid::from_raw(pgid), None), Err(Errno::ESRCH))
+}
+
+#[cfg(not(unix))]
+fn group_exists(_pgid: i32) -> bool {
+    true
+}
+
+/// Polls until process group `pgid` is gone or `bound` has passed.
+fn wait_for_group_to_end(pgid: i32, bound: Duration) {
+    let deadline = Instant::now() + bound;
+    while group_exists(pgid) && Instant::now() < deadline {
+        std::thread::sleep(GROUP_POLL);
+    }
+}
+
+/// SIGKILL to process group `pgid`, only while the group still exists.
+#[cfg(unix)]
+fn kill_group_if_present(pgid: i32) {
+    if group_exists(pgid) {
+        let _ = nix::sys::signal::killpg(nix::unistd::Pid::from_raw(pgid), nix::sys::signal::Signal::SIGKILL);
+    }
+}
+
+#[cfg(not(unix))]
+fn kill_group_if_present(_pgid: i32) {}
+
+/// SIGTERM to process group `pgid`, then waits up to `bound` for it to end and sends SIGKILL if it
+/// has not.
+#[cfg(unix)]
+fn stop_group_and_wait(pgid: i32, bound: Duration) {
+    use nix::sys::signal::{Signal, killpg};
+    if pgid <= 0 || killpg(nix::unistd::Pid::from_raw(pgid), Signal::SIGTERM).is_err() {
+        return;
+    }
+    wait_for_group_to_end(pgid, bound);
+    kill_group_if_present(pgid);
+    wait_for_group_to_end(pgid, KILL_GRACE);
+}
+
+#[cfg(not(unix))]
+fn stop_group_and_wait(_pgid: i32, _bound: Duration) {}
 
 #[cfg(test)]
 mod tests {
