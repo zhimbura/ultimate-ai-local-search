@@ -23,8 +23,10 @@
 //! # `warm` and `refresh`
 //!
 //! - `warm(repos)` starts indexing (`force: false`) for repositories that are neither indexed nor
-//!   being indexed (a failed earlier attempt is retried). Repositories are handled one after
-//!   another: each call syncs with Milvus inside the server, and one process owns one snapshot.
+//!   being indexed (a failed earlier attempt is retried). It checks Milvus, starts one detached
+//!   task and returns. The task handles the repositories one after another (each call syncs with
+//!   Milvus inside the server, and one process owns one snapshot), each under
+//!   [`WARM_REPO_TIMEOUT`], and logs the outcome per repository.
 //! - `refresh(repo, full: true)` calls `index_codebase` with `force: true`: the server drops the
 //!   collection and rebuilds it in the background.
 //! - `refresh(repo, full: false)`: `handlers.js` has no tool for an incremental update. The server
@@ -77,20 +79,26 @@ const NOTE_RESULT_CAP: &str = "claude-context returns at most 50 results";
 const MILVUS_ADDRESS_VAR: &str = "MILVUS_ADDRESS";
 /// How long the Milvus probe waits. Milvus is local; a slower answer counts as down.
 pub const MILVUS_PROBE_TIMEOUT: Duration = Duration::from_millis(300);
+/// How long `warm` waits for the server to start indexing one repository before it moves on.
+/// A hung call must not stall the repositories behind it; the server answers the first indexing of
+/// a large repository in the background, so this only bounds a call that never answers.
+pub const WARM_REPO_TIMEOUT: Duration = Duration::from_secs(600);
 /// File the server watches to start a sync (`sync.js`, `setupTriggerWatcher`).
 const SYNC_TRIGGER_FILE: &str = ".sync-trigger";
 
 /// Semantic search over one repository at a time; one claude-context collection per repository.
+#[derive(Clone)]
 pub struct ClaudeContextBackend {
     caller: Arc<dyn McpToolCaller>,
     config: ClaudeContextConfig,
     context_dir: Option<PathBuf>,
+    warm_timeout: Duration,
 }
 
 impl ClaudeContextBackend {
     /// Searches through the claude-context MCP server behind `caller`.
     pub fn new(caller: Arc<dyn McpToolCaller>, config: ClaudeContextConfig) -> Self {
-        Self { caller, config, context_dir: None }
+        Self { caller, config, context_dir: None, warm_timeout: WARM_REPO_TIMEOUT }
     }
 
     /// Uses this directory instead of `$HOME/.context` for the sync trigger file. It must be the
@@ -98,6 +106,13 @@ impl ClaudeContextBackend {
     #[must_use]
     pub fn with_context_dir(mut self, dir: impl Into<PathBuf>) -> Self {
         self.context_dir = Some(dir.into());
+        self
+    }
+
+    /// Gives each repository of `warm` this long instead of [`WARM_REPO_TIMEOUT`].
+    #[must_use]
+    pub fn with_warm_timeout(mut self, timeout: Duration) -> Self {
+        self.warm_timeout = timeout;
         self
     }
 
@@ -162,6 +177,17 @@ impl ClaudeContextBackend {
             StatusReply::NotIndexed | StatusReply::Failed { .. } => self.start_indexing(repo, false).await,
             StatusReply::Indexed { .. } | StatusReply::Indexing { .. } => Ok(()),
             StatusReply::Error(why) => Err(BackendError::Failed(format!("get_indexing_status failed: {why}"))),
+        }
+    }
+
+    /// Starts indexing the repositories one after another and logs how each went.
+    async fn warm_each(&self, repos: &[Repo]) {
+        for repo in repos {
+            match tokio::time::timeout(self.warm_timeout, self.index_if_missing(repo)).await {
+                Ok(Ok(())) => debug!(repo = %repo.name, "claude-context index is started or ready"),
+                Ok(Err(error)) => warn!(repo = %repo.name, %error, "claude-context warm failed"),
+                Err(_) => warn!(repo = %repo.name, timeout = ?self.warm_timeout, "claude-context warm timed out"),
+            }
         }
     }
 
@@ -278,16 +304,9 @@ impl SearchBackend for ClaudeContextBackend {
             return Ok(());
         }
         self.ensure_milvus().await?;
-        let mut failures = Vec::new();
-        for repo in repos {
-            if let Err(error) = self.index_if_missing(repo).await {
-                warn!(repo = %repo.name, %error, "claude-context warm failed");
-                failures.push(format!("{}: {}", repo.name, error_text(&error)));
-            }
-        }
-        if failures.len() == repos.len() {
-            return Err(BackendError::Failed(failures.join("; ")));
-        }
+        let backend = self.clone();
+        let repos = repos.to_vec();
+        tokio::spawn(async move { backend.warm_each(&repos).await });
         Ok(())
     }
 
@@ -405,13 +424,6 @@ fn closed_transport_is_unavailable(error: BackendError) -> BackendError {
 fn is_closed_transport(message: &str) -> bool {
     let lower = message.to_ascii_lowercase();
     lower.contains("transport closed") || lower.contains("transportclosed") || lower.contains("connection closed")
-}
-
-/// The message inside a `BackendError`.
-fn error_text(error: &BackendError) -> &str {
-    match error {
-        BackendError::Unavailable(text) | BackendError::Failed(text) => text,
-    }
 }
 
 /// The user's home directory (`HOME`, or `USERPROFILE` on Windows).

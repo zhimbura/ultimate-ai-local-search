@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
@@ -22,6 +22,9 @@ use uals_core::types::{BackendAnswer, BackendId, Hit, IndexState, LineRange, Que
 const GLOB_OVERFETCH: usize = 4;
 /// How many repositories `warm` indexes at once.
 const WARM_CONCURRENCY: usize = 4;
+/// How long one `warm` search may take. The first search of a large repository builds its index,
+/// which takes minutes; a call that never answers must not hold a `warm` slot forever.
+pub const WARM_SEARCH_TIMEOUT: Duration = Duration::from_secs(600);
 /// The query used by `warm`: any text works, the point is to make Semble build the index.
 const WARM_QUERY: &str = "main entry point";
 /// `max_snippet_lines` value that makes Semble leave out the snippet text; the adapter reports
@@ -31,6 +34,7 @@ const NO_SNIPPET_LINES: u32 = 0;
 /// Semantic search over one repository at a time.
 pub struct SembleBackend {
     inner: Arc<Inner>,
+    warm_timeout: Duration,
 }
 
 struct Inner {
@@ -44,7 +48,17 @@ struct Inner {
 impl SembleBackend {
     /// Searches through Semble's MCP `search` tool, called on `caller`.
     pub fn new(caller: Arc<dyn McpToolCaller>, config: SembleConfig) -> Self {
-        Self { inner: Arc::new(Inner { caller, config, indexed: Mutex::new(HashMap::new()) }) }
+        Self {
+            inner: Arc::new(Inner { caller, config, indexed: Mutex::new(HashMap::new()) }),
+            warm_timeout: WARM_SEARCH_TIMEOUT,
+        }
+    }
+
+    /// Gives each search of `warm` this long instead of [`WARM_SEARCH_TIMEOUT`].
+    #[must_use]
+    pub fn with_warm_timeout(mut self, timeout: Duration) -> Self {
+        self.warm_timeout = timeout;
+        self
     }
 }
 
@@ -153,11 +167,13 @@ impl SearchBackend for SembleBackend {
             let inner = Arc::clone(&self.inner);
             let repo = repo.clone();
             let permits = Arc::clone(&permits);
+            let timeout = self.warm_timeout;
             tokio::spawn(async move {
                 let Ok(_permit) = permits.acquire().await else { return };
-                match inner.run_search(&repo, WARM_QUERY, 1).await {
-                    Ok(_) => tracing::debug!(repo = %repo.name, "semble index is ready"),
-                    Err(error) => tracing::debug!(repo = %repo.name, %error, "semble warm-up failed"),
+                match tokio::time::timeout(timeout, inner.run_search(&repo, WARM_QUERY, 1)).await {
+                    Ok(Ok(_)) => tracing::debug!(repo = %repo.name, "semble index is ready"),
+                    Ok(Err(error)) => tracing::debug!(repo = %repo.name, %error, "semble warm-up failed"),
+                    Err(_) => tracing::debug!(repo = %repo.name, ?timeout, "semble warm-up timed out"),
                 }
             });
         }

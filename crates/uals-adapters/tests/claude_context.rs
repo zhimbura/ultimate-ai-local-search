@@ -21,6 +21,8 @@ const ROOT: &str = "/work/sample-android";
 struct FakeCaller {
     replies: Mutex<HashMap<String, VecDeque<Result<ToolOutput, BackendError>>>>,
     calls: Mutex<Vec<(String, Value)>>,
+    /// Calls about this path never answer.
+    hung_path: Mutex<Option<String>>,
 }
 
 impl FakeCaller {
@@ -37,6 +39,22 @@ impl FakeCaller {
         self
     }
 
+    fn hang_on(self: &Arc<Self>, path: &str) -> &Arc<Self> {
+        *self.hung_path.lock().unwrap() = Some(path.to_string());
+        self
+    }
+
+    /// Waits until the caller has seen `count` calls of `tool`.
+    async fn wait_for_calls(&self, tool: &str, count: usize) {
+        for _ in 0..200 {
+            if self.calls().iter().filter(|(name, _)| name == tool).count() >= count {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        panic!("{tool} was not called {count} times: {:?}", self.calls());
+    }
+
     fn calls(&self) -> Vec<(String, Value)> {
         self.calls.lock().unwrap().clone()
     }
@@ -49,7 +67,11 @@ impl FakeCaller {
 #[async_trait]
 impl McpToolCaller for FakeCaller {
     async fn call_tool(&self, name: &str, arguments: Value) -> Result<ToolOutput, BackendError> {
+        let hung = self.hung_path.lock().unwrap().as_deref() == arguments["path"].as_str();
         self.calls.lock().unwrap().push((name.to_string(), arguments));
+        if hung {
+            std::future::pending::<()>().await;
+        }
         self.replies
             .lock()
             .unwrap()
@@ -557,6 +579,7 @@ async fn warm_indexes_only_repositories_without_an_index() {
         .collect();
 
     backend(&caller, &milvus).warm(&repos).await.unwrap();
+    caller.wait_for_calls("index_codebase", 2).await;
 
     let index_calls: Vec<_> = caller.calls().into_iter().filter(|(tool, _)| tool == "index_codebase").collect();
     assert_eq!(index_calls.len(), 2);
@@ -584,26 +607,60 @@ async fn warm_treats_already_indexed_and_already_indexing_as_success() {
     caller.reply("index_codebase", "synthetic_index_codebase_already_indexed");
     let repos = [repo(), Repo { name: "web".into(), root: PathBuf::from("/work/web") }];
     backend(&caller, &milvus).warm(&repos).await.unwrap();
+    caller.wait_for_calls("index_codebase", 2).await;
 }
 
 #[tokio::test]
-async fn warm_fails_only_when_every_repository_fails() {
+async fn warm_goes_on_with_the_next_repository_after_a_failure() {
     let milvus = FakeMilvus::start();
-    let repos = [repo(), Repo { name: "web".into(), root: PathBuf::from("/work/web") }];
-
-    let caller = FakeCaller::new();
-    caller.reply("get_indexing_status", "synthetic_get_indexing_status_not_indexed");
-    caller.reply("index_codebase", "synthetic_index_codebase_failed");
-    caller.reply("get_indexing_status", "synthetic_get_indexing_status_indexed");
-    assert!(backend(&caller, &milvus).warm(&repos).await.is_ok());
-
     let caller = FakeCaller::new();
     caller.reply("get_indexing_status", "synthetic_get_indexing_status_not_indexed");
     caller.reply("index_codebase", "synthetic_index_codebase_failed");
     caller.reply("get_indexing_status", "synthetic_get_indexing_status_not_indexed");
     caller.reply("index_codebase", "synthetic_index_codebase_milvus_unreachable");
-    let error = backend(&caller, &milvus).warm(&repos).await.unwrap_err();
-    assert!(failed(error).contains("android"));
+    caller.reply("get_indexing_status", "synthetic_get_indexing_status_not_indexed");
+    caller.reply("index_codebase", "synthetic_index_codebase_started");
+    let repos: Vec<Repo> = ["android", "web", "tools"]
+        .iter()
+        .map(|name| Repo { name: (*name).into(), root: PathBuf::from(format!("/work/{name}")) })
+        .collect();
+
+    backend(&caller, &milvus).warm(&repos).await.unwrap();
+
+    caller.wait_for_calls("index_codebase", 3).await;
+    let paths: Vec<_> = caller
+        .calls()
+        .into_iter()
+        .filter(|(tool, _)| tool == "index_codebase")
+        .map(|(_, args)| args["path"].clone())
+        .collect();
+    assert_eq!(paths, vec![json!("/work/android"), json!("/work/web"), json!("/work/tools")]);
+}
+
+#[tokio::test]
+async fn warm_returns_while_a_repository_hangs_and_indexes_the_others() {
+    let milvus = FakeMilvus::start();
+    let caller = FakeCaller::new();
+    caller.hang_on("/work/hung");
+    caller.reply("get_indexing_status", "synthetic_get_indexing_status_not_indexed");
+    caller.reply("index_codebase", "synthetic_index_codebase_started");
+    let repos = [
+        Repo { name: "hung".into(), root: PathBuf::from("/work/hung") },
+        Repo { name: "web".into(), root: PathBuf::from("/work/web") },
+    ];
+    let backend = backend(&caller, &milvus).with_warm_timeout(std::time::Duration::from_millis(100));
+
+    let returned = tokio::time::timeout(std::time::Duration::from_secs(2), backend.warm(&repos)).await;
+
+    assert!(returned.is_ok(), "warm waited for a hung call");
+    caller.wait_for_calls("index_codebase", 1).await;
+    let indexed: Vec<_> = caller
+        .calls()
+        .into_iter()
+        .filter(|(tool, _)| tool == "index_codebase")
+        .map(|(_, args)| args["path"].clone())
+        .collect();
+    assert_eq!(indexed, vec![json!("/work/web")]);
 }
 
 #[tokio::test]
