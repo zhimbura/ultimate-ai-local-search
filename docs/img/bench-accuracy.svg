@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 350" width="760" height="350" role="img" aria-label="Correct answers">
+<title>Correct answers</title>
+<style>
+  .bg { fill: #ffffff; } .ink { fill: #1f2328; } .muted { fill: #59636e; } .grid { stroke: #d1d9e0; }
+  .base { fill: #9aa4ae; } .uals { fill: #2f81f7; } .good { fill: #1a7f37; } .flat { fill: #9a6700; }
+  .whisker { stroke: #1f2328; }
+  text { font-family: -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif; }
+  @media (prefers-color-scheme: dark) {
+    .bg { fill: #0d1117; } .ink { fill: #e6edf3; } .muted { fill: #9198a1; } .grid { stroke: #3d444d; }
+    .base { fill: #656c76; } .uals { fill: #4493f8; } .good { fill: #3fb950; } .flat { fill: #d29922; }
+    .whisker { stroke: #e6edf3; }
+  }
+</style>
+<rect class="bg" width="760" height="350" rx="8"/>
+<text class="ink" x="20" y="30" font-size="17" font-weight="600">Correct answers</text>
+<text class="muted" x="20" y="50" font-size="13">Search: expected file among the answers. All usages: share of expected files found</text>
+<rect class="base" x="470" y="20" width="12" height="12" rx="2"/><text class="ink" x="488" y="30" font-size="13">without uals</text><rect class="uals" x="590" y="20" width="12" height="12" rx="2"/><text class="ink" x="608" y="30" font-size="13">with uals</text>
+<line class="grid" x1="60" x2="740" y1="290.0" y2="290.0"/>
+<text class="muted" x="52" y="294.0" font-size="11" text-anchor="end">0</text>
+<line class="grid" x1="60" x2="740" y1="240.0" y2="240.0"/>
+<text class="muted" x="52" y="244.0" font-size="11" text-anchor="end">25</text>
+<line class="grid" x1="60" x2="740" y1="190.0" y2="190.0"/>
+<text class="muted" x="52" y="194.0" font-size="11" text-anchor="end">50</text>
+<line class="grid" x1="60" x2="740" y1="140.0" y2="140.0"/>
+<text class="muted" x="52" y="144.0" font-size="11" text-anchor="end">75</text>
+<line class="grid" x1="60" x2="740" y1="90.0" y2="90.0"/>
+<text class="muted" x="52" y="94.0" font-size="11" text-anchor="end">100</text>
+<rect class="base" x="77.0" y="130.0" width="37.4" height="160.0" rx="3"/>
+<text class="ink" x="95.7" y="125.0" font-size="11" text-anchor="middle">80%</text>
+<rect class="uals" x="118.4" y="90.0" width="37.4" height="200.0" rx="3"/>
+<text class="ink" x="137.1" y="85.0" font-size="11" text-anchor="middle">100%</text>
+<text class="ink" x="116.4" y="310" font-size="12" text-anchor="middle">identifier</text>
+<rect class="base" x="190.3" y="110.0" width="37.4" height="180.0" rx="3"/>
+<text class="ink" x="209.0" y="105.0" font-size="11" text-anchor="middle">90%</text>
+<rect class="uals" x="231.7" y="90.0" width="37.4" height="200.0" rx="3"/>
+<text class="ink" x="250.4" y="85.0" font-size="11" text-anchor="middle">100%</text>
+<text class="ink" x="229.7" y="310" font-size="12" text-anchor="middle">plain words</text>
+<rect class="base" x="303.7" y="90.0" width="37.4" height="200.0" rx="3"/>
+<text class="ink" x="322.4" y="85.0" font-size="11" text-anchor="middle">100%</text>
+<rect class="uals" x="345.1" y="90.0" width="37.4" height="200.0" rx="3"/>
+<text class="ink" x="363.8" y="85.0" font-size="11" text-anchor="middle">100%</text>
+<text class="ink" x="343.1" y="310" font-size="12" text-anchor="middle">cross-repo</text>
+<rect class="base" x="417.0" y="90.0" width="37.4" height="200.0" rx="3"/>
+<text class="ink" x="435.7" y="85.0" font-size="11" text-anchor="middle">100%</text>
+<rect class="uals" x="458.4" y="110.0" width="37.4" height="180.0" rx="3"/>
+<text class="ink" x="477.1" y="105.0" font-size="11" text-anchor="middle">90%</text>
+<text class="ink" x="456.4" y="310" font-size="12" text-anchor="middle">config / build</text>
+<rect class="base" x="530.3" y="169.8" width="37.4" height="120.2" rx="3"/>
+<text class="ink" x="549.0" y="164.8" font-size="11" text-anchor="middle">60%</text>
+<rect class="uals" x="571.7" y="90.0" width="37.4" height="200.0" rx="3"/>
+<text class="ink" x="590.4" y="85.0" font-size="11" text-anchor="middle">100%</text>
+<text class="ink" x="569.7" y="310" font-size="12" text-anchor="middle">all usages</text>
+<rect class="base" x="643.7" y="115.8" width="37.4" height="174.2" rx="3"/>
+<text class="ink" x="662.4" y="110.8" font-size="11" text-anchor="middle">87%</text>
+<rect class="uals" x="685.1" y="94.2" width="37.4" height="195.8" rx="3"/>
+<text class="ink" x="703.8" y="89.2" font-size="11" text-anchor="middle">98%</text>
+<text class="ink" x="683.1" y="310" font-size="12" text-anchor="middle" font-weight="600">all tasks</text>
+</svg>
