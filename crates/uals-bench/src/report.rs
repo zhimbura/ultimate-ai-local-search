@@ -67,6 +67,9 @@ pub struct UsageSummary {
     /// Number of symbols whose usages call failed; they are not in the means.
     #[serde(default)]
     pub failed: usize,
+    /// Number of averaged symbols whose answer was not complete; their recall is a lower bound.
+    #[serde(default)]
+    pub incomplete: usize,
     /// Mean of `UsageScore::file_recall`.
     pub file_recall: f64,
     /// Mean of `UsageScore::file_precision`.
@@ -157,6 +160,7 @@ fn usage_summary(all: &[UsageScore]) -> Option<UsageSummary> {
     Some(UsageSummary {
         symbols: scores.len(),
         failed: all.len() - scores.len(),
+        incomplete: scores.iter().filter(|score| score.incomplete).count(),
         file_recall: avg(|s| s.file_recall),
         file_precision: avg(|s| s.file_precision),
         line_recall: avg(|s| s.line_recall),

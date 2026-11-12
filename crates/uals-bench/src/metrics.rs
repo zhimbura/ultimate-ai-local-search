@@ -119,6 +119,10 @@ pub struct UsageScore {
     /// True when the usages call failed: every number above is 0 and means nothing.
     #[serde(default)]
     pub failed: bool,
+    /// True when the engine said its answer is not complete (a source hit its limit): the
+    /// recall is a lower bound.
+    #[serde(default)]
+    pub incomplete: bool,
 }
 
 impl UsageScore {
@@ -135,6 +139,7 @@ impl UsageScore {
             expected_lines: 0,
             found_lines: 0,
             failed: true,
+            incomplete: false,
         }
     }
 }
@@ -144,7 +149,8 @@ fn ratio(part: usize, whole: usize) -> f64 {
     if whole == 0 { 0.0 } else { part as f64 / whole as f64 }
 }
 
-/// Compares the usages the engine found with the gold ones.
+/// Compares the usages the engine found with the gold ones. `incomplete` is set when the
+/// response says it is not complete.
 ///
 /// - The definition line itself is not a usage: it is dropped from the found set.
 /// - Found usages are deduplicated by (repo, path, line).
@@ -186,6 +192,7 @@ pub fn score_usages(repos: &[Repo], gold: &GoldUsages, response: &UsagesResponse
         expected_lines: expected.len(),
         found_lines: found.len(),
         failed: false,
+        incomplete: !response.complete,
     }
 }
 

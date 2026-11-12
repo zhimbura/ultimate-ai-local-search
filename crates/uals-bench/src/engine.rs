@@ -24,8 +24,9 @@ pub trait Engine {
         limit: usize,
     ) -> impl Future<Output = Result<SearchResponse>> + Send;
 
-    /// Finds the usages of `symbol`, at most `limit` of them.
-    fn usages(&self, symbol: &str, limit: usize) -> impl Future<Output = Result<UsagesResponse>> + Send;
+    /// Finds the usages of `symbol`: one page of at most `limit` usages, starting at `offset`.
+    /// `UsagesResponse::next_offset` is the offset of the next page, `None` after the last one.
+    fn usages(&self, symbol: &str, limit: usize, offset: usize) -> impl Future<Output = Result<UsagesResponse>> + Send;
 }
 
 /// The content of a mock responses file.
@@ -72,14 +73,20 @@ impl Engine for MockEngine {
         Ok(response)
     }
 
-    async fn usages(&self, symbol: &str, limit: usize) -> Result<UsagesResponse> {
+    async fn usages(&self, symbol: &str, limit: usize, offset: usize) -> Result<UsagesResponse> {
         let mut response =
             self.usages.get(symbol).cloned().ok_or_else(|| anyhow!("no canned usages response for \"{symbol}\""))?;
-        let mut left = limit;
+        let total: usize = response.repos.iter().map(|repo| repo.usages.len()).sum();
+        let (mut skip, mut left) = (offset, limit);
         for repo in &mut response.repos {
+            let skipped = skip.min(repo.usages.len());
+            repo.usages.drain(..skipped);
+            skip -= skipped;
             repo.usages.truncate(left);
             left -= repo.usages.len();
         }
+        response.offset = offset;
+        response.next_offset = (offset.saturating_add(limit) < total).then_some(offset + limit);
         Ok(response)
     }
 }
@@ -114,9 +121,9 @@ impl Engine for AnyEngine {
         }
     }
 
-    async fn usages(&self, symbol: &str, limit: usize) -> Result<UsagesResponse> {
+    async fn usages(&self, symbol: &str, limit: usize, offset: usize) -> Result<UsagesResponse> {
         match self {
-            AnyEngine::Mock(engine) => engine.usages(symbol, limit).await,
+            AnyEngine::Mock(engine) => engine.usages(symbol, limit, offset).await,
         }
     }
 }
@@ -142,7 +149,7 @@ mod tests {
         assert_eq!(engine.search("q", None, 2).await.unwrap().hits.len(), 2);
         let error = engine.search("other", None, 30).await.unwrap_err();
         assert!(error.to_string().contains("no canned search response"));
-        assert!(engine.usages("s", 5).await.is_err());
+        assert!(engine.usages("s", 5, 0).await.is_err());
     }
 
     #[test]

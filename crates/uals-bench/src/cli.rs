@@ -64,7 +64,7 @@ pub enum Command {
         /// Hits requested per query.
         #[arg(long, default_value_t = 30)]
         limit: usize,
-        /// Usages requested per symbol.
+        /// Usages requested per page; every page of a symbol is read.
         #[arg(long, default_value_t = 500)]
         usages_limit: usize,
     },

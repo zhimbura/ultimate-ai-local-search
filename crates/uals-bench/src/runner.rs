@@ -2,7 +2,9 @@
 
 use std::time::Instant;
 
-use anyhow::Result;
+use anyhow::{Result, ensure};
+
+use uals_core::types::UsagesResponse;
 
 use crate::engine::Engine;
 use crate::gold::{GoldQuery, GoldUsages, Half, QueryType};
@@ -24,7 +26,7 @@ pub struct RunOptions {
     pub warm_repeats: usize,
     /// Hits requested per query.
     pub limit: usize,
-    /// Usages requested per symbol.
+    /// Usages requested per page; every page of a symbol is read.
     pub usages_limit: usize,
 }
 
@@ -127,10 +129,10 @@ async fn time_warm_passes<E: Engine>(
 }
 
 /// Scores the usages of every gold symbol; a failed call gives a score marked `failed`.
-async fn score_all_usages<E: Engine>(engine: &E, usages: &[GoldUsages], limit: usize) -> Vec<UsageScore> {
+async fn score_all_usages<E: Engine>(engine: &E, usages: &[GoldUsages], page_size: usize) -> Vec<UsageScore> {
     let mut scores = Vec::with_capacity(usages.len());
     for gold in usages {
-        match engine.usages(&gold.symbol, limit).await {
+        match all_usages(engine, &gold.symbol, page_size).await {
             Ok(response) => scores.push(score_usages(engine.repos(), gold, &response)),
             Err(error) => {
                 eprintln!("usages {}: {error:#}", gold.id);
@@ -139,6 +141,27 @@ async fn score_all_usages<E: Engine>(engine: &E, usages: &[GoldUsages], limit: u
         }
     }
     scores
+}
+
+/// Reads the usages of `symbol` page by page until the engine has no next offset, and joins the
+/// pages into one response: usages of a repository are concatenated, `complete` holds only when
+/// every page was complete. A next offset that does not move forward is an error.
+async fn all_usages<E: Engine>(engine: &E, symbol: &str, page_size: usize) -> Result<UsagesResponse> {
+    let mut all = engine.usages(symbol, page_size, 0).await?;
+    let mut next = all.next_offset.take();
+    while let Some(offset) = next {
+        let page = engine.usages(symbol, page_size, offset).await?;
+        next = page.next_offset;
+        ensure!(next.is_none_or(|following| following > offset), "usages paging does not move past offset {offset}");
+        all.complete &= page.complete;
+        for repo in page.repos {
+            match all.repos.iter_mut().find(|known| known.repo == repo.repo) {
+                Some(known) => known.usages.extend(repo.usages),
+                None => all.repos.push(repo),
+            }
+        }
+    }
+    Ok(all)
 }
 
 #[cfg(test)]
@@ -175,7 +198,7 @@ mod tests {
             })
         }
 
-        async fn usages(&self, _: &str, _: usize) -> Result<UsagesResponse> {
+        async fn usages(&self, _: &str, _: usize, _: usize) -> Result<UsagesResponse> {
             anyhow::bail!("not used")
         }
     }
@@ -250,7 +273,7 @@ mod tests {
             Counting { calls: AtomicUsize::new(0), repos: vec![] }.search(query, kind, limit).await
         }
 
-        async fn usages(&self, _: &str, _: usize) -> Result<UsagesResponse> {
+        async fn usages(&self, _: &str, _: usize, _: usize) -> Result<UsagesResponse> {
             anyhow::bail!("not used")
         }
     }
@@ -274,19 +297,88 @@ mod tests {
                              "usages": [{"repo": "r", "path": "/ws/r/b.kt", "line": 4}]}]}}}"#,
         )
         .unwrap();
-        let usage = |id: &str, symbol: &str| GoldUsages {
-            id: id.into(),
-            symbol: symbol.into(),
-            definition: Definition { repo: "r".into(), path: "a.kt".into(), line: 1 },
-            expected_usages: vec![ExpectedUsage { repo: "r".into(), path: "b.kt".into(), lines: vec![4] }],
-            method: None,
-        };
-        let gold_usages = [usage("u1", "Known"), usage("u2", "Missing")];
+        let expected = || vec![("r", "b.kt", vec![4])];
+        let gold_usages = [usage("u1", "Known", expected()), usage("u2", "Missing", expected())];
         let report = run(&engine, &[], &gold_usages, &options(0)).await.unwrap();
         let summary = report.summary.usages.expect("usages were run");
         assert_eq!(summary.line_recall, 1.0, "the failed symbol must not pull the mean down");
         assert_eq!((summary.symbols, summary.failed), (1, 1));
         assert!(report.usages[1].failed && !report.usages[0].failed);
+    }
+
+    fn usage(id: &str, symbol: &str, expected: Vec<(&str, &str, Vec<u32>)>) -> GoldUsages {
+        GoldUsages {
+            id: id.into(),
+            symbol: symbol.into(),
+            definition: Definition { repo: "r".into(), path: "a.kt".into(), line: 1 },
+            expected_usages: expected
+                .into_iter()
+                .map(|(repo, path, lines)| ExpectedUsage { repo: repo.into(), path: path.into(), lines })
+                .collect(),
+            method: None,
+        }
+    }
+
+    /// Three usages of `S`: two in repository `r`, one in `q`.
+    fn three_usages(complete: bool) -> MockEngine {
+        MockEngine::from_json(&format!(
+            r#"{{"repos": [{{"name": "r", "root": "/ws/r"}}, {{"name": "q", "root": "/ws/q"}}],
+                "usages": {{"S": {{"symbol": "S", "total": 3, "offset": 0, "complete": {complete},
+                  "repos": [
+                    {{"repo": "r", "source": "ast-index", "status": {{"state": "ok"}}, "usages": [
+                        {{"repo": "r", "path": "/ws/r/b.kt", "line": 3}}, {{"repo": "r", "path": "/ws/r/b.kt", "line": 4}}]}},
+                    {{"repo": "q", "source": "lexical", "status": {{"state": "ok"}}, "usages": [
+                        {{"repo": "q", "path": "/ws/q/c.kt", "line": 5}}]}}]}}}}}}"#
+        ))
+        .unwrap()
+    }
+
+    fn all_three() -> GoldUsages {
+        usage("u1", "S", vec![("r", "b.kt", vec![3, 4]), ("q", "c.kt", vec![5])])
+    }
+
+    #[tokio::test]
+    async fn usages_are_paged_until_the_engine_has_no_next_offset() {
+        let engine = three_usages(true);
+        let report = run(&engine, &[], &[all_three()], &RunOptions { usages_limit: 2, ..options(0) }).await.unwrap();
+        let score = &report.usages[0];
+        assert_eq!((score.line_recall, score.found_lines), (1.0, 3), "a page held only two usages");
+        assert!(!score.incomplete && !score.failed);
+    }
+
+    #[tokio::test]
+    async fn an_incomplete_answer_is_marked_and_counted() {
+        let engine = three_usages(false);
+        let report = run(&engine, &[], &[all_three()], &RunOptions { usages_limit: 2, ..options(0) }).await.unwrap();
+        assert!(report.usages[0].incomplete);
+        assert_eq!(report.usages[0].line_recall, 1.0);
+        let summary = report.summary.usages.unwrap();
+        assert_eq!((summary.symbols, summary.incomplete), (1, 1));
+    }
+
+    /// Always answers with the same next offset.
+    struct Stuck;
+
+    impl Engine for Stuck {
+        fn repos(&self) -> &[Repo] {
+            &[]
+        }
+
+        async fn search(&self, _: &str, _: Option<QueryKind>, _: usize) -> Result<SearchResponse> {
+            anyhow::bail!("not used")
+        }
+
+        async fn usages(&self, symbol: &str, limit: usize, _: usize) -> Result<UsagesResponse> {
+            let mut page = three_usages(true).usages(symbol, limit, 0).await?;
+            page.next_offset = Some(1);
+            Ok(page)
+        }
+    }
+
+    #[tokio::test]
+    async fn paging_that_does_not_advance_fails_the_call() {
+        let report = run(&Stuck, &[], &[all_three()], &options(0)).await.unwrap();
+        assert!(report.usages[0].failed);
     }
 
     #[tokio::test]
