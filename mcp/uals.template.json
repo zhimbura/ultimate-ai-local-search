@@ -1,0 +1,25 @@
+{
+  "_comment": "Sample uals entry for manual setup. install.sh writes it into ~/.claude.json for you (scripts/configure-mcp.sh). Use the absolute path of the uals binary: Claude Code may start it with a short PATH. env holds only the API keys of a cloud embedder (claude-context); Semble needs none.",
+
+  "mcpServers": {
+    "uals": {
+      "type": "stdio",
+      "command": "/absolute/path/to/uals",
+      "args": ["mcp"],
+      "env": {}
+    }
+  },
+
+  "_with_a_cloud_embedder_example": {
+    "mcpServers": {
+      "uals": {
+        "type": "stdio",
+        "command": "/absolute/path/to/uals",
+        "args": ["mcp"],
+        "env": {
+          "OPENAI_API_KEY": "sk-REPLACE_ME"
+        }
+      }
+    }
+  }
+}

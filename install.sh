@@ -1,11 +1,32 @@
 #!/usr/bin/env bash
-# ultimate-ai-local-search — one-command local code search for AI agents.
-# Tiers: ast-index (symbols) + claude-context/Milvus (semantic) + rg/grep (text).
-# macOS + Linux. Idempotent: safe to re-run.
+# uals (ultimate-ai-local-search): one code search for AI agents.
+# Installs the uals binary, ast-index (symbols) and a semantic backend (Semble by default),
+# writes the uals config and registers uals in the Claude Code config.
+# macOS + Linux. Run from a checkout. Safe to re-run.
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$REPO_DIR"
+
+# ─── pinned versions: this file is the only place that holds them ───────────
+UALS_REPO="zhimbura/ultimate-ai-local-search"
+AST_INDEX_VERSION="3.56.0"          # minimum; uals was tested with it
+SEMBLE_SPEC="semble[mcp]==0.7.3"
+SEMBLE_VERSION="0.7.3"
+CLAUDE_CONTEXT_VERSION="0.1.15"
+NODE_MIN="22.12.0"                  # a claude-context dependency uses require(ESM)
+UV_VERSION="0.10.5"
+
+# SHA-256 of the ast-index release assets (the release has no checksum files).
+ast_index_sha256() {
+  case "$1" in
+    darwin-arm64)  echo 51f010c7a86f2049bd6347a0844ca6466c9b617e6962e2374f1f899e5cde23ba;;
+    darwin-x86_64) echo 4355138d45edf200058a122a8746baaed5c08d76223fe42f4dff5b15294c6195;;
+    linux-arm64)   echo 088e7f30ccd39629e9987e4d5e09d576e0c92190207fc4ab49f991a6b904edb0;;
+    linux-x86_64)  echo 88c84ed45c16528c1884da0c960110aed42bc6697a5bba1604d954863bf6a1b8;;
+    *) return 1;;
+  esac
+}
 
 # ─── pretty output ───────────────────────────────────────────────────────────
 if [ -t 1 ]; then B=$'\033[1m'; G=$'\033[32m'; Y=$'\033[33m'; R=$'\033[31m'; C=$'\033[36m'; N=$'\033[0m'; else B=; G=; Y=; R=; C=; N=; fi
@@ -18,273 +39,530 @@ have() { command -v "$1" >/dev/null 2>&1; }
 # shellcheck source=scripts/lib/env.sh
 . "$REPO_DIR/scripts/lib/env.sh"
 
-# ─── flags / non-interactive ─────────────────────────────────────────────────
+# ─── flags ───────────────────────────────────────────────────────────────────
 usage() {
   cat <<EOF
 Usage: ./install.sh [options]
 
-One-command local code search for AI agents: ast-index + claude-context/Milvus + rg/grep.
-Safe to re-run: an existing .env supplies the defaults (flags override it) and is
-backed up to .env.bak.<YYYYmmdd-HHMMSS> before being rewritten.
+Installs uals (one code search for AI agents) with ast-index and a semantic backend.
+Safe to re-run: what is in place is left alone, and every file the installer rewrites
+gets a backup first.
 
 Options:
-  --provider <name>   ollama | lmstudio | openai | voyageai | gemini | openrouter
-                      (default: from existing .env; with --yes and no .env: ollama)
-  --model <name>      embedding model (default: per-provider)
-  --dimension <n>     embedding dimension — must match the model (default: per-provider)
-  -y, --yes           non-interactive: never prompt; a missing cloud API key is an error
-  --no-smoke          skip the smoke test at the end
-  --skip-ast-index    do not install ast-index (Tier 1)
-  -h, --help          show this help
+  --semantic <name>    semble | claude-context | none (default: semble)
+  -y, --yes            never prompt; a missing cloud API key is an error
+  --from-source        build uals from this checkout with cargo (--locked)
+  --version <tag>      release to install (default: the latest GitHub release)
+  --bin-dir <dir>      where binaries go (default: ~/.local/bin)
+  --skip-ast-index     do not install ast-index
+  --no-mcp             do not register uals in the Claude Code config
+  --remove-claude-context
+                       remove direct claude-context MCP entries from that config
+                       (they are saved first; uninstall.sh puts them back)
+  --no-doctor          do not run 'uals doctor' at the end
+  --provider <name>    claude-context only: ollama | lmstudio | openai | voyageai | gemini | openrouter
+  --model <name>       claude-context only: embedding model (default: per provider)
+  --dimension <n>      claude-context only: embedding dimension, must match the model
+  -h, --help           show this help
 
-Environment (flags win over env, env wins over .env):
-  PROVIDER, MODEL, DIMENSION, ASSUME_YES=1   same as the flags above
+Environment:
+  UALS_DOWNLOAD_BASE   release download base URL (file:// works; for tests)
+  CLAUDE_CONFIG        Claude Code config to edit (default: ~/.claude.json)
+  UALS_CONFIG          uals config to write (default: ~/.config/uals/config.toml)
   OPENAI_API_KEY, VOYAGEAI_API_KEY, GEMINI_API_KEY, OPENROUTER_API_KEY
-                                             cloud API key for the chosen provider
-  OLLAMA_HOST                                Ollama URL (default http://127.0.0.1:11434)
-  MILVUS_PORT, MILVUS_HEALTH_PORT, MILVUS_VERSION, ETCD_VERSION, MINIO_VERSION
-                                             Milvus stack settings (see .env.example)
-  AST_INDEX_VERSION                          prebuilt ast-index version on Linux without brew
-  CLAUDE_CONTEXT_VERSION                     pinned @zilliz/claude-context-mcp version
+                       cloud API key for the chosen claude-context provider
+  OLLAMA_HOST          Ollama URL (default http://127.0.0.1:11434)
+  MILVUS_PORT, MILVUS_HEALTH_PORT, MILVUS_VERSION
+                       Milvus settings, claude-context only (see .env.example)
+
+Exit code: the exit code of 'uals doctor'; non-zero on an install error.
 EOF
 }
 
-PROVIDER="${PROVIDER:-}"; MODEL="${MODEL:-}"; DIMENSION="${DIMENSION:-}"
-ASSUME_YES="${ASSUME_YES:-0}"; DO_SMOKE=1; DO_AST=1
+SEMANTIC=semble; ASSUME_YES=0; FROM_SOURCE=0; VERSION=""; BIN_DIR="$HOME/.local/bin"
+DO_AST=1; DO_MCP=1; REMOVE_CC=0; DO_DOCTOR=1
+PROVIDER=""; MODEL=""; DIMENSION=""
 while [ $# -gt 0 ]; do case "$1" in
-  --provider|--model|--dimension) [ $# -ge 2 ] || die "$1 needs a value"
-    case "$1" in --provider) PROVIDER="$2";; --model) MODEL="$2";; --dimension) DIMENSION="$2";; esac; shift 2;;
+  --semantic|--version|--bin-dir|--provider|--model|--dimension)
+    [ $# -ge 2 ] || die "$1 needs a value"
+    case "$1" in
+      --semantic) SEMANTIC="$2";; --version) VERSION="$2";; --bin-dir) BIN_DIR="$2";;
+      --provider) PROVIDER="$2";; --model) MODEL="$2";; --dimension) DIMENSION="$2";;
+    esac; shift 2;;
   --yes|-y) ASSUME_YES=1; shift;;
-  --no-smoke) DO_SMOKE=0; shift;;
+  --from-source) FROM_SOURCE=1; shift;;
   --skip-ast-index) DO_AST=0; shift;;
+  --no-mcp) DO_MCP=0; shift;;
+  --remove-claude-context) REMOVE_CC=1; shift;;
+  --no-doctor) DO_DOCTOR=0; shift;;
   -h|--help) usage; exit 0;;
   *) die "unknown flag: $1";;
 esac; done
 
+case "$SEMANTIC" in semble|claude-context|none) ;; *) die "--semantic must be semble, claude-context or none";; esac
+if [ "$SEMANTIC" != claude-context ] && [ -n "$PROVIDER$MODEL$DIMENSION" ]; then
+  warn "--provider/--model/--dimension only apply to --semantic claude-context: ignored"
+fi
+[ "$FROM_SOURCE" = 0 ] || [ -z "$VERSION" ] || die "--from-source and --version exclude each other"
+
 OS="$(uname -s)"; ARCH="$(uname -m)"
 case "$OS" in Darwin) PLATFORM=macos;; Linux) PLATFORM=linux;; *) die "unsupported OS: $OS (use install.ps1 on Windows)";; esac
-say "${B}ultimate-ai-local-search${N} — platform: $PLATFORM/$ARCH"
+case "$PLATFORM/$ARCH" in
+  macos/arm64|macos/aarch64)  TARGET=aarch64-apple-darwin;      AST_ASSET=darwin-arm64;;
+  macos/x86_64)               TARGET=x86_64-apple-darwin;       AST_ASSET=darwin-x86_64;;
+  linux/x86_64|linux/amd64)   TARGET=x86_64-unknown-linux-musl; AST_ASSET=linux-x86_64;;
+  linux/arm64|linux/aarch64)  TARGET=aarch64-unknown-linux-musl; AST_ASSET=linux-arm64;;
+  *) die "unsupported platform: $PLATFORM/$ARCH";;
+esac
+say "${B}uals${N} installer, platform: $PLATFORM/$ARCH"
 
-# ─── prerequisites ───────────────────────────────────────────────────────────
-ensure_pkg() { # ensure_pkg <cmd> <brew-formula> [linux-apt-pkg]
+# Paths. The bin dir must be absolute: the config and the MCP entry store it.
+mkdir -p "$BIN_DIR" 2>/dev/null || true
+[ -d "$BIN_DIR" ] || die "cannot use bin dir: $BIN_DIR"
+BIN_DIR="$(cd "$BIN_DIR" && pwd)"
+DATA_DIR="$HOME/.local/share/uals"
+MANIFEST="$DATA_DIR/install-manifest"
+CLAUDE_CONFIG="${CLAUDE_CONFIG:-$HOME/.claude.json}"
+UALS_CONFIG_PATH="${UALS_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/uals/config.toml}"
+CC_DIR="$DATA_DIR/claude-context"
+DOWNLOAD_BASE="${UALS_DOWNLOAD_BASE:-https://github.com/$UALS_REPO/releases/download}"
+
+TMP_ROOT="$(mktemp -d)"
+trap 'rm -rf "$TMP_ROOT"' EXIT
+
+# ─── manifest: one line per thing THIS installer created or started ──────────
+#   <kind> <value>   kinds: file, moved-aside, uv-installed, uv-tool, dir, emptydir, docker-stack,
+#                    config-file, mcp-entry, saved-mcp
+manifest_add() {
+  local line="$1 $2"
+  mkdir -p "$DATA_DIR"
+  grep -qxF -- "$line" "$MANIFEST" 2>/dev/null || printf '%s\n' "$line" >> "$MANIFEST"
+}
+in_manifest() { grep -qxF -- "$1 $2" "$MANIFEST" 2>/dev/null; }
+
+# ─── helpers ─────────────────────────────────────────────────────────────────
+sha256_of() {
+  if have shasum; then shasum -a 256 "$1" | awk '{print $1}'
+  else sha256sum "$1" | awk '{print $1}'; fi
+}
+fetch() { curl -fsSL --retry 2 -o "$2" "$1"; }          # fetch <url> <dest>
+first_version() { sed -n 's/[^0-9]*\([0-9][0-9]*\(\.[0-9][0-9]*\)*\).*/\1/p' | head -n1; }
+ver_ge() { [ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -n1)" = "$2" ]; }   # ver_ge <have> <min>
+toml_str() { printf '"%s"' "$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g')"; }
+
+# install_bin <src> <dst> [manifest-kind]: put an executable in place, atomically.
+# Unchanged: returns 1 and changes nothing. A file that is not ours is moved aside first, and
+# uninstall.sh puts it back (manifest kind moved-aside).
+install_bin() {
+  local src="$1" dst="$2" kind="${3:-file}"
+  if [ -e "$dst" ] && cmp -s "$src" "$dst"; then return 1; fi
+  if [ -e "$dst" ] && ! in_manifest "$kind" "$dst" && ! in_manifest file "$dst" && ! in_manifest uv-installed "$dst"; then
+    local bak; bak="$dst.bak.$(date +%Y%m%d-%H%M%S)"
+    mv -f "$dst" "$bak" || die "cannot move $dst aside"
+    manifest_add moved-aside "$bak"
+    warn "$dst was not installed by uals: moved to $bak (uninstall.sh puts it back)"
+  fi
+  { install -m755 "$src" "$dst.new.$$" && mv -f "$dst.new.$$" "$dst"; } || die "cannot install $dst"
+  manifest_add "$kind" "$dst"
+}
+
+SUDO=""
+ensure_pkg() { # ensure_pkg <cmd> <brew-formula> [apt-pkg]
   local cmd="$1" brew_f="$2" apt_p="${3:-$1}"
   have "$cmd" && return 0
   say "installing $cmd…"
   if have brew; then brew install "$brew_f"
-  elif [ "$PLATFORM" = linux ] && have apt-get; then sudo apt-get update -qq && sudo apt-get install -y "$apt_p"
-  else die "can't install '$cmd' automatically — install it manually and re-run"; fi
+  elif [ "$PLATFORM" = linux ] && have apt-get; then
+    if [ "$(id -u)" != 0 ]; then have sudo || die "need root or sudo to install $cmd"; SUDO=sudo; fi
+    $SUDO apt-get update -qq && $SUDO apt-get install -y "$apt_p"
+  else die "cannot install '$cmd' automatically: install it and re-run"; fi
 }
-ensure_pkg jq jq
+
+# ─── prerequisites ───────────────────────────────────────────────────────────
 ensure_pkg curl curl
-have docker || die "Docker not found. Install Docker Desktop / OrbStack / Docker Engine, then re-run."
-docker info >/dev/null 2>&1 || die "Docker is installed but not running. Start it and re-run."
-docker compose version >/dev/null 2>&1 || die "Docker Compose v2 required (docker compose ...)."
-ok "docker + jq + curl ready"
+have tar || die "tar not found"
+have shasum || have sha256sum || die "no SHA-256 tool (shasum or sha256sum)"
+ensure_pkg jq jq
+ok "curl, tar, SHA-256 tool and jq ready"
 
-# Node is NOT used by this installer, but the claude-context MCP server is launched by
-# your agent via `npx` — and it needs Node 22+ (a dep uses require(ESM), unsupported <22.12).
-# Warn (don't fail) so semantic search works later.
-if have node && have npx; then
-  node_major=$(node --version 2>/dev/null | sed 's/^v//; s/\..*//')
-  if [ "${node_major:-0}" -ge 22 ] 2>/dev/null; then
-    ok "node present ($(node --version 2>/dev/null))"
-  else
-    warn "Node $(node --version 2>/dev/null) is too OLD — claude-context needs Node 22+ (require(ESM))."
-    warn "  Upgrade before using semantic search: 'nvm install 22' or https://nodejs.org."
+# ─── uals ────────────────────────────────────────────────────────────────────
+UALS_BIN="$BIN_DIR/uals"
+install_uals() {
+  if [ "$FROM_SOURCE" = 1 ]; then
+    have cargo || die "--from-source needs cargo (install Rust: https://rustup.rs)"
+    [ -f "$REPO_DIR/Cargo.toml" ] || die "no Cargo.toml in $REPO_DIR: run install.sh from a checkout"
+    say "building uals from source (cargo build --release --locked)…"
+    cargo build --release --locked -p uals
+    local built="$REPO_DIR/target/release/uals"
+    [ -x "$built" ] || die "cargo did not produce $built"
+    if install_bin "$built" "$UALS_BIN"; then ok "uals → $UALS_BIN (built from source)"
+    else ok "uals already up to date ($UALS_BIN)"; fi
+    return
   fi
-else
-  warn "Node.js/npx not found — not needed for THIS install, but REQUIRED afterward (Node 22+):"
-  warn "  your AI agent runs the claude-context MCP via 'npx @zilliz/claude-context-mcp'."
-  warn "  Install Node.js 22+ (brew install node · https://nodejs.org), else the MCP server won't start."
-fi
 
-# ─── Tier 1: ast-index (structural) ──────────────────────────────────────────
+  local tag="$VERSION"
+  if [ -z "$tag" ]; then
+    say "looking up the latest uals release…"
+    tag="$(curl -fsSL -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/$UALS_REPO/releases/latest" 2>/dev/null | jq -r '.tag_name // empty' 2>/dev/null || true)"
+    [ -n "$tag" ] || die "no uals release found on GitHub: use --from-source (needs cargo) or --version <tag>"
+  fi
+  case "$tag" in v*) ;; *) tag="v$tag";; esac
+  if [ -x "$UALS_BIN" ] && "$UALS_BIN" --version 2>/dev/null | grep -qF -- "${tag#v}"; then
+    ok "uals ${tag#v} already installed ($UALS_BIN)"; return
+  fi
+
+  local name="uals-$tag-$TARGET" dl="$TMP_ROOT/uals"
+  mkdir -p "$dl"
+  say "downloading $name…"
+  fetch "$DOWNLOAD_BASE/$tag/$name.tar.gz" "$dl/$name.tar.gz" || die "cannot download $DOWNLOAD_BASE/$tag/$name.tar.gz"
+  fetch "$DOWNLOAD_BASE/$tag/$name.tar.gz.sha256" "$dl/$name.tar.gz.sha256" || die "cannot download the .sha256 of $name.tar.gz"
+  local want got
+  want="$(awk '{print $1; exit}' "$dl/$name.tar.gz.sha256")"; got="$(sha256_of "$dl/$name.tar.gz")"
+  [ -n "$want" ] && [ "$want" = "$got" ] || die "SHA-256 mismatch for $name.tar.gz (want ${want:-none}, got $got)"
+  tar -xzf "$dl/$name.tar.gz" -C "$dl"
+  [ -f "$dl/$name/uals" ] || die "the archive has no $name/uals"
+  if install_bin "$dl/$name/uals" "$UALS_BIN"; then ok "uals $tag → $UALS_BIN"
+  else ok "uals already up to date ($UALS_BIN)"; fi
+}
+install_uals
+
+# ─── ast-index ───────────────────────────────────────────────────────────────
+AST_BIN=""
+ast_ok() { [ -x "$1" ] && ver_ge "$("$1" --version 2>/dev/null | first_version)" "$AST_INDEX_VERSION"; }
 if [ "$DO_AST" = 1 ]; then
-  if have ast-index; then ok "ast-index present ($(ast-index --version 2>/dev/null || echo ok))"
-  elif have brew; then
-    say "installing ast-index (Tier 1: structural symbol search)…"
-    brew tap defendend/ast-index >/dev/null 2>&1 || true
-    brew install ast-index && brew trust defendend/ast-index/ast-index 2>/dev/null || warn "ast-index install failed — Tier 1 optional, continuing"
-  elif [ "$PLATFORM" = linux ]; then
-    # No Homebrew (typical on Linux): grab the prebuilt binary from GitHub releases.
-    av="${AST_INDEX_VERSION:-3.48.0}"
-    case "$ARCH" in
-      x86_64|amd64) aarch=linux-x86_64;;
-      arm64|aarch64) aarch=linux-arm64;;
-      *) aarch="";;
-    esac
-    if [ -n "$aarch" ]; then
-      say "installing ast-index $av (prebuilt $aarch)…"
-      td="$(mktemp -d)"
-      if curl -fsSL "https://github.com/defendend/Claude-ast-index-search/releases/download/v${av}/ast-index-v${av}-${aarch}.tar.gz" -o "$td/ai.tgz" && tar -xzf "$td/ai.tgz" -C "$td" 2>/dev/null; then
-        if install -m755 "$td/ast-index" /usr/local/bin/ast-index 2>/dev/null; then ok "ast-index → /usr/local/bin"
-        else mkdir -p "$HOME/.local/bin"; install -m755 "$td/ast-index" "$HOME/.local/bin/ast-index" && ok "ast-index → ~/.local/bin (ensure it's on PATH)"; fi
-      else warn "ast-index download failed — Tier 1 optional, continuing"; fi
-      rm -rf "$td"
-    else warn "no prebuilt ast-index for $ARCH — skipping Tier 1"; fi
+  if ast_ok "$BIN_DIR/ast-index"; then AST_BIN="$BIN_DIR/ast-index"
+  elif have ast-index && ast_ok "$(command -v ast-index)"; then AST_BIN="$(command -v ast-index)"
+  fi
+  if [ -n "$AST_BIN" ]; then ok "ast-index present ($AST_BIN)"
   else
-    warn "Homebrew not found — skipping ast-index (Tier 1). Binary: github.com/defendend/Claude-ast-index-search/releases"
+    say "installing ast-index $AST_INDEX_VERSION ($AST_ASSET)…"
+    dl="$TMP_ROOT/ast"; mkdir -p "$dl"
+    asset="ast-index-v$AST_INDEX_VERSION-$AST_ASSET.tar.gz"
+    fetch "https://github.com/defendend/Claude-ast-index-search/releases/download/v$AST_INDEX_VERSION/$asset" "$dl/$asset" || die "cannot download $asset"
+    want="$(ast_index_sha256 "$AST_ASSET")"; got="$(sha256_of "$dl/$asset")"
+    [ "$want" = "$got" ] || die "SHA-256 mismatch for $asset (want $want, got $got)"
+    tar -xzf "$dl/$asset" -C "$dl"
+    [ -f "$dl/ast-index" ] || die "the archive has no ast-index"
+    install_bin "$dl/ast-index" "$BIN_DIR/ast-index" || true
+    AST_BIN="$BIN_DIR/ast-index"
+    ok "ast-index $AST_INDEX_VERSION → $AST_BIN"
   fi
 fi
 
-# ─── existing .env → defaults (flags/env still win) ──────────────────────────
-ENV_PROVIDER=""
-if [ -f "$REPO_DIR/.env" ]; then
-  say "found existing .env — using it for defaults (flags override)"
-  env_load_file "$REPO_DIR/.env" defaults
-  case "${EMBEDDING_PROVIDER:-}" in
-    Ollama) ENV_PROVIDER=ollama;;
-    OpenAI) case "${OPENAI_BASE_URL:-}" in *:1234*) ENV_PROVIDER=lmstudio;; *) ENV_PROVIDER=openai;; esac;;
-    VoyageAI) ENV_PROVIDER=voyageai;;
-    Gemini) ENV_PROVIDER=gemini;;
-    OpenRouter) ENV_PROVIDER=openrouter;;
-  esac
-  [ -n "$PROVIDER" ] || PROVIDER="$ENV_PROVIDER"
-  # model/dimension in .env belong to its provider — reuse only when it is the one chosen
-  if [ -n "$PROVIDER" ] && [ "$PROVIDER" = "$ENV_PROVIDER" ]; then
-    MODEL="${MODEL:-${EMBEDDING_MODEL:-}}"; DIMENSION="${DIMENSION:-${EMBEDDING_DIMENSION:-}}"
+# ─── semantic backend: semble ────────────────────────────────────────────────
+SEMBLE_BIN=""
+install_semble() {
+  local uv_bin=""
+  if [ -x "$BIN_DIR/uv" ]; then uv_bin="$BIN_DIR/uv"; elif have uv; then uv_bin="$(command -v uv)"; fi
+  if [ -z "$uv_bin" ]; then
+    say "installing uv $UV_VERSION…"
+    local name="uv-$TARGET" dl="$TMP_ROOT/uv" base="https://github.com/astral-sh/uv/releases/download/$UV_VERSION"
+    mkdir -p "$dl"
+    fetch "$base/$name.tar.gz" "$dl/$name.tar.gz" || die "cannot download $name.tar.gz"
+    fetch "$base/$name.tar.gz.sha256" "$dl/$name.tar.gz.sha256" || die "cannot download the .sha256 of $name.tar.gz"
+    local want got
+    want="$(awk '{print $1; exit}' "$dl/$name.tar.gz.sha256")"; got="$(sha256_of "$dl/$name.tar.gz")"
+    [ -n "$want" ] && [ "$want" = "$got" ] || die "SHA-256 mismatch for $name.tar.gz (want ${want:-none}, got $got)"
+    tar -xzf "$dl/$name.tar.gz" -C "$dl"
+    install_bin "$dl/$name/uvx" "$BIN_DIR/uvx" || true
+    install_bin "$dl/$name/uv" "$BIN_DIR/uv" uv-installed || true
+    uv_bin="$BIN_DIR/uv"
+    ok "uv $UV_VERSION → $uv_bin"
   fi
-fi
 
-# ─── provider selection ──────────────────────────────────────────────────────
-if [ -z "$PROVIDER" ] && [ "$ASSUME_YES" = 1 ]; then
-  PROVIDER=ollama
-  say "--yes: no provider given — defaulting to ollama"
-fi
-if [ -z "$PROVIDER" ]; then
-  cat <<EOF
+  local was_installed=0 tool_bin
+  if "$uv_bin" tool list 2>/dev/null | grep -q '^semble '; then was_installed=1; fi
+  if "$uv_bin" tool list 2>/dev/null | grep -qF "semble v$SEMBLE_VERSION"; then
+    tool_bin="$("$uv_bin" tool dir --bin)/semble"
+    ok "semble $SEMBLE_VERSION already installed"
+  else
+    say "installing $SEMBLE_SPEC…"
+    local log="$TMP_ROOT/uv-tool.log"
+    UV_TOOL_BIN_DIR="$BIN_DIR" "$uv_bin" tool install --force --python ">=3.10" "$SEMBLE_SPEC" >"$log" 2>&1 || { cat "$log" >&2; die "cannot install $SEMBLE_SPEC"; }
+    tool_bin="$BIN_DIR/semble"
+    [ "$was_installed" = 1 ] || manifest_add uv-tool "$BIN_DIR"
+    ok "semble $SEMBLE_VERSION → $tool_bin"
+  fi
+  SEMBLE_BIN="$tool_bin"
+}
+[ "$SEMANTIC" != semble ] || install_semble
+
+# ─── semantic backend: claude-context (Milvus + embedder + npm package) ─────
+EMB_PROVIDER=""; OPENAI_BASE_URL=""; OLLAMA_HOST="${OLLAMA_HOST:-http://127.0.0.1:11434}"
+API_KEY_VAR=""; API_KEY_VAL=""; NODE_BIN=""
+ENV_FILE="$REPO_DIR/.env"
+
+select_provider() {
+  local env_provider=""
+  if [ -f "$ENV_FILE" ]; then
+    say "found existing .env: using it for defaults (flags override)"
+    env_load_file "$ENV_FILE" defaults
+    case "${EMBEDDING_PROVIDER:-}" in
+      Ollama) env_provider=ollama;;
+      OpenAI) case "${OPENAI_BASE_URL:-}" in *:1234*) env_provider=lmstudio;; *) env_provider=openai;; esac;;
+      VoyageAI) env_provider=voyageai;;
+      Gemini) env_provider=gemini;;
+      OpenRouter) env_provider=openrouter;;
+    esac
+    [ -n "$PROVIDER" ] || PROVIDER="$env_provider"
+    # model/dimension in .env belong to its provider: reuse only when it is the one chosen
+    if [ -n "$PROVIDER" ] && [ "$PROVIDER" = "$env_provider" ]; then
+      MODEL="${MODEL:-${EMBEDDING_MODEL:-}}"; DIMENSION="${DIMENSION:-${EMBEDDING_DIMENSION:-}}"
+    fi
+  fi
+  MILVUS_PORT="${MILVUS_PORT:-19530}"
+
+  if [ -z "$PROVIDER" ] && [ "$ASSUME_YES" = 1 ]; then
+    PROVIDER=ollama
+    say "--yes: no provider given, defaulting to ollama"
+  fi
+  if [ -z "$PROVIDER" ]; then
+    cat <<EOF
 
 Where should embeddings be computed?
   ${B}Local${N} (private, free, offline):
-    1) Ollama       — headless, simplest
-    2) LM Studio    — via lms CLI + REST :1234
+    1) Ollama       headless, simplest
+    2) LM Studio    via lms CLI + REST :1234
   ${B}Cloud${N} (needs an API key):
-    3) OpenAI       — text-embedding-3-small/large
-    4) VoyageAI     — voyage-code-3 (best for code)
-    5) Gemini       — text-embedding-004
-    6) OpenRouter   — proxy to many providers
+    3) OpenAI       text-embedding-3-small/large
+    4) VoyageAI     voyage-code-3 (best for code)
+    5) Gemini       text-embedding-004
+    6) OpenRouter   proxy to many providers
 EOF
-  read -rp "Choose [1-6] (default 1): " choice
-  case "${choice:-1}" in
-    1) PROVIDER=ollama;; 2) PROVIDER=lmstudio;; 3) PROVIDER=openai;;
-    4) PROVIDER=voyageai;; 5) PROVIDER=gemini;; 6) PROVIDER=openrouter;;
-    *) die "invalid choice";;
+    read -rp "Choose [1-6] (default 1): " choice
+    case "${choice:-1}" in
+      1) PROVIDER=ollama;; 2) PROVIDER=lmstudio;; 3) PROVIDER=openai;;
+      4) PROVIDER=voyageai;; 5) PROVIDER=gemini;; 6) PROVIDER=openrouter;;
+      *) die "invalid choice";;
+    esac
+  fi
+
+  # An empty OPENAI_BASE_URL left over from .env must not leak into the cloud providers.
+  OPENAI_BASE_URL=""
+  case "$PROVIDER" in
+    ollama)     EMB_PROVIDER=Ollama;  MODEL="${MODEL:-nomic-embed-text}";               DIMENSION="${DIMENSION:-768}";;
+    lmstudio)   EMB_PROVIDER=OpenAI;  MODEL="${MODEL:-text-embedding-nomic-embed-text-v1.5}"; DIMENSION="${DIMENSION:-768}"; OPENAI_BASE_URL="http://127.0.0.1:1234/v1";;
+    openai)     EMB_PROVIDER=OpenAI;  MODEL="${MODEL:-text-embedding-3-small}";          DIMENSION="${DIMENSION:-1536}";;
+    voyageai)   EMB_PROVIDER=VoyageAI;MODEL="${MODEL:-voyage-code-3}";                   DIMENSION="${DIMENSION:-1024}";;
+    gemini)     EMB_PROVIDER=Gemini;  MODEL="${MODEL:-text-embedding-004}";              DIMENSION="${DIMENSION:-768}";;
+    openrouter) EMB_PROVIDER=OpenRouter; MODEL="${MODEL:-openai/text-embedding-3-small}";DIMENSION="${DIMENSION:-1536}";;
+    *) die "unknown provider: $PROVIDER";;
   esac
+  say "provider=${B}$PROVIDER${N} model=${B}$MODEL${N} dim=${B}$DIMENSION${N}"
+}
+
+setup_provider() {
+  case "$PROVIDER" in
+    ollama)
+      ollama_up() { curl -fsS --noproxy '*' "$OLLAMA_HOST/api/tags" >/dev/null 2>&1; }
+      if ! have ollama; then
+        say "installing Ollama…"
+        if [ "$PLATFORM" = macos ] && have brew; then brew install ollama
+        else curl -fsSL https://ollama.com/install.sh | sh; fi
+      fi
+      if have ollama && ! ollama_up; then
+        say "starting Ollama…"
+        if [ "$PLATFORM" = macos ] && have brew; then brew services start ollama >/dev/null 2>&1 || ( ollama serve >/dev/null 2>&1 & )
+        else ( ollama serve >/dev/null 2>&1 & ); fi
+        for _ in $(seq 1 30); do ollama_up && break; sleep 1; done
+        ollama_up || die "Ollama API did not come up at $OLLAMA_HOST within 30s: start it ('ollama serve') and re-run"
+      fi
+      say "pulling model $MODEL…"; ollama pull "$MODEL"
+      ;;
+    lmstudio)
+      local lms="$HOME/.lmstudio/bin/lms"
+      have lms && lms=lms
+      if [ ! -x "$lms" ] && ! have lms; then
+        if [ "$PLATFORM" = macos ] && have brew; then brew install --cask lm-studio || die "install LM Studio manually: https://lmstudio.ai"
+        else die "LM Studio: install it from https://lmstudio.ai, then re-run (the 'lms' CLI is needed)"; fi
+        lms="$HOME/.lmstudio/bin/lms"
+      fi
+      say "downloading model + starting LM Studio server…"
+      "$lms" get "$MODEL" 2>/dev/null || warn "could not auto-download '$MODEL': load it in LM Studio"
+      "$lms" server start 2>/dev/null || warn "could not start LM Studio server: start it (port 1234)"
+      "$lms" load "$MODEL" --yes 2>/dev/null || warn "could not load '$MODEL': load it in LM Studio, else the server reports 'No models loaded'"
+      ;;
+    openai)     API_KEY_VAR=OPENAI_API_KEY;     API_KEY_VAL="${OPENAI_API_KEY:-}"
+                [ "$API_KEY_VAL" = lm-studio ] && API_KEY_VAL="";;   # placeholder left by an LM Studio .env
+    voyageai)   API_KEY_VAR=VOYAGEAI_API_KEY;   API_KEY_VAL="${VOYAGEAI_API_KEY:-}";;
+    gemini)     API_KEY_VAR=GEMINI_API_KEY;     API_KEY_VAL="${GEMINI_API_KEY:-}";;
+    openrouter) API_KEY_VAR=OPENROUTER_API_KEY; API_KEY_VAL="${OPENROUTER_API_KEY:-}";;
+  esac
+  if [ -n "$API_KEY_VAR" ] && [ -z "$API_KEY_VAL" ]; then
+    [ "$ASSUME_YES" = 1 ] && die "$API_KEY_VAR is required for $PROVIDER (--yes disables the prompt): export it or put it in .env"
+    read -rsp "Enter $API_KEY_VAR: " API_KEY_VAL; echo
+    [ -n "$API_KEY_VAL" ] || die "$API_KEY_VAR is required for $PROVIDER"
+  fi
+  return 0
+}
+
+write_env_file() {
+  local new="$TMP_ROOT/env.new"
+  {
+    echo "MILVUS_PORT=$MILVUS_PORT"
+    echo "MILVUS_HEALTH_PORT=${MILVUS_HEALTH_PORT:-9091}"
+    echo "MILVUS_VERSION=${MILVUS_VERSION:-v2.5.6}"
+    echo "MILVUS_ADDRESS=127.0.0.1:$MILVUS_PORT"
+    echo "EMBEDDING_PROVIDER=$EMB_PROVIDER"
+    echo "EMBEDDING_MODEL=$MODEL"
+    echo "EMBEDDING_DIMENSION=$DIMENSION"
+    [ -z "$OPENAI_BASE_URL" ] || echo "OPENAI_BASE_URL=$OPENAI_BASE_URL"
+    [ "$PROVIDER" != lmstudio ] || echo "OPENAI_API_KEY=lm-studio"
+    [ "$PROVIDER" != ollama ] || echo "OLLAMA_HOST=$OLLAMA_HOST"
+    [ -z "$API_KEY_VAR" ] || echo "$API_KEY_VAR=$API_KEY_VAL"
+  } > "$new"
+  if [ -f "$ENV_FILE" ] && cmp -s "$new" "$ENV_FILE"; then ok ".env already up to date"; return; fi
+  local existed=0
+  if [ -f "$ENV_FILE" ]; then
+    existed=1
+    local bak; bak="$ENV_FILE.bak.$(date +%Y%m%d-%H%M%S)"
+    cp -p "$ENV_FILE" "$bak"; chmod 600 "$bak"
+    ok "previous .env backed up to ${bak##*/}"
+  fi
+  ( umask 077; cat "$new" > "$ENV_FILE" )
+  chmod 600 "$ENV_FILE"
+  [ "$existed" = 1 ] || manifest_add file "$ENV_FILE"
+  ok ".env written (chmod 600, gitignored)"
+}
+
+start_milvus() {
+  have docker || die "Docker not found. Install Docker Desktop / OrbStack / Docker Engine, then re-run."
+  docker info >/dev/null 2>&1 || die "Docker is installed but not running. Start it and re-run."
+  docker compose version >/dev/null 2>&1 || die "Docker Compose v2 required (docker compose ...)."
+  local health_port="${MILVUS_HEALTH_PORT:-9091}"
+  local state
+  state="$(docker inspect -f '{{.State.Running}}' uals-milvus 2>/dev/null || true)"
+  if [ "$state" = true ]; then
+    ok "Milvus container uals-milvus is already running: left as it is"
+  elif [ "$state" = false ]; then
+    say "starting the existing uals-milvus container…"
+    docker start uals-milvus >/dev/null
+  else
+    say "starting Milvus (one container, embedded etcd)…"
+    docker compose --env-file "$ENV_FILE" up -d
+    manifest_add docker-stack "$REPO_DIR"
+  fi
+  say "waiting for Milvus to become healthy (first run can take ~1-2 min)…"
+  local i
+  for i in $(seq 1 60); do
+    if curl -fsS --noproxy '*' "http://127.0.0.1:${health_port}/healthz" >/dev/null 2>&1; then ok "Milvus healthy"; return; fi
+    [ "$i" = 60 ] && die "Milvus did not become healthy. Check: docker compose logs milvus"
+    sleep 3
+  done
+}
+
+install_claude_context() {
+  have node && have npm || die "claude-context needs Node.js >= $NODE_MIN and npm"
+  NODE_BIN="$(command -v node)"
+  ver_ge "$("$NODE_BIN" --version | first_version)" "$NODE_MIN" || die "Node $("$NODE_BIN" --version) is too old: claude-context needs >= $NODE_MIN (require(ESM))"
+  select_provider
+  setup_provider
+  write_env_file
+  start_milvus
+  local pkg="$CC_DIR/node_modules/@zilliz/claude-context-mcp/package.json"
+  if [ -f "$pkg" ] && [ "$(jq -r .version "$pkg")" = "$CLAUDE_CONTEXT_VERSION" ]; then
+    ok "claude-context $CLAUDE_CONTEXT_VERSION already installed"
+  else
+    say "installing @zilliz/claude-context-mcp@$CLAUDE_CONTEXT_VERSION into $CC_DIR…"
+    [ -d "$CC_DIR" ] || manifest_add dir "$CC_DIR"
+    mkdir -p "$CC_DIR"
+    npm install --prefix "$CC_DIR" --no-audit --no-fund --loglevel=error "@zilliz/claude-context-mcp@$CLAUDE_CONTEXT_VERSION"
+    ok "claude-context $CLAUDE_CONTEXT_VERSION → $CC_DIR"
+  fi
+}
+[ "$SEMANTIC" != claude-context ] || install_claude_context
+
+# ─── uals config ─────────────────────────────────────────────────────────────
+# Absolute tool paths: Claude Code may start `uals mcp` with a short PATH.
+loopback_url() { case "$1" in http://127.0.0.1|http://127.0.0.1[:/]*|https://127.0.0.1|https://127.0.0.1[:/]*) return 0;; *) return 1;; esac; }
+
+render_config() {
+  echo "# Written by install.sh. Tool paths are absolute because Claude Code may start uals with a short PATH."
+  echo "# Never put API keys here: list the variable names in pass_env."
+  if [ -n "$AST_BIN" ]; then
+    printf '\n[ast_index]\nbinary = %s\n' "$(toml_str "$AST_BIN")"
+  fi
+  printf '\n[semantic]\ndefault = %s\n' "$(toml_str "$SEMANTIC")"
+  case "$SEMANTIC" in
+    semble)
+      printf '\n[semantic.semble]\ncommand = [%s]\n' "$(toml_str "$SEMBLE_BIN")";;
+    claude-context)
+      local env_items="" pass_items="" kv
+      add_env() { kv="$1 = $(toml_str "$2")"; env_items="${env_items:+$env_items, }$kv"; }
+      add_pass() { pass_items="${pass_items:+$pass_items, }$(toml_str "$1")"; }
+      add_env MILVUS_ADDRESS "127.0.0.1:$MILVUS_PORT"
+      add_env EMBEDDING_PROVIDER "$EMB_PROVIDER"
+      add_env EMBEDDING_MODEL "$MODEL"
+      add_env EMBEDDING_DIMENSION "$DIMENSION"
+      if [ "$PROVIDER" = ollama ]; then
+        if loopback_url "$OLLAMA_HOST"; then add_env OLLAMA_HOST "$OLLAMA_HOST"
+        else add_pass OLLAMA_HOST; warn "OLLAMA_HOST is not a 127.0.0.1 address: left out of config.toml, passed by name"; fi
+      fi
+      if [ -n "$OPENAI_BASE_URL" ]; then
+        if loopback_url "$OPENAI_BASE_URL"; then add_env OPENAI_BASE_URL "$OPENAI_BASE_URL"
+        else add_pass OPENAI_BASE_URL; fi
+      fi
+      if [ "$PROVIDER" = lmstudio ]; then add_env OPENAI_API_KEY lm-studio   # placeholder, not a secret
+      elif [ -n "$API_KEY_VAR" ]; then add_pass "$API_KEY_VAR"; fi
+      printf '\n[semantic.claude_context]\nnode = %s\nenv = { %s }\n' "$(toml_str "$NODE_BIN")" "$env_items"
+      [ -z "$pass_items" ] || printf 'pass_env = [%s]\n' "$pass_items"
+      ;;
+  esac
+}
+
+toml_get() { # toml_get <file> <section> <key>: the raw value of key, empty when missing
+  awk -v sec="$2" -v key="$3" '
+    /^[ \t]*\[/ { cur = $0; gsub(/[][ \t]/, "", cur); next }
+    cur == sec { k = $0; sub(/[ \t]*=.*/, "", k); gsub(/^[ \t]+/, "", k)
+      if (k == key) { v = $0; sub(/^[^=]*=[ \t]*/, "", v); sub(/[ \t]+$/, "", v); print v; exit } }' "$1"
+}
+note_diff() { # note_diff <label> <existing raw> <wanted raw>
+  if [ "$2" != "$3" ]; then warn "  $1: config has ${2:-(default)}, the chosen options give $3"; fi
+}
+
+write_or_compare_config() {
+  if [ -f "$UALS_CONFIG_PATH" ]; then
+    ok "uals config exists: left as it is ($UALS_CONFIG_PATH)"
+    if [ -n "$AST_BIN" ]; then note_diff "ast_index.binary" "$(toml_get "$UALS_CONFIG_PATH" ast_index binary)" "$(toml_str "$AST_BIN")"; fi
+    note_diff "semantic.default" "$(toml_get "$UALS_CONFIG_PATH" semantic default)" "$(toml_str "$SEMANTIC")"
+    if [ "$SEMANTIC" = semble ]; then note_diff "semantic.semble.command" "$(toml_get "$UALS_CONFIG_PATH" semantic.semble command)" "[$(toml_str "$SEMBLE_BIN")]"; fi
+    return
+  fi
+  mkdir -p "$(dirname "$UALS_CONFIG_PATH")"
+  render_config > "$UALS_CONFIG_PATH"
+  manifest_add config-file "$UALS_CONFIG_PATH"
+  ok "uals config written ($UALS_CONFIG_PATH)"
+}
+write_or_compare_config
+
+# ─── MCP registration ────────────────────────────────────────────────────────
+if [ "$DO_MCP" = 1 ]; then
+  had_entry=0; had_saved=0
+  if [ -f "$CLAUDE_CONFIG" ] && jq -e '.mcpServers.uals' "$CLAUDE_CONFIG" >/dev/null 2>&1; then had_entry=1; fi
+  [ ! -f "$DATA_DIR/removed-mcp/claude-context.json" ] || had_saved=1
+  mcp_args=(--uals-bin "$UALS_BIN" --config "$CLAUDE_CONFIG")
+  [ "$SEMANTIC" != claude-context ] || [ ! -f "$ENV_FILE" ] || mcp_args+=(--env-file "$ENV_FILE")
+  [ "$REMOVE_CC" = 0 ] || mcp_args+=(--remove-claude-context)
+  bash "$REPO_DIR/scripts/configure-mcp.sh" "${mcp_args[@]}"
+  [ "$had_entry" = 1 ] || manifest_add mcp-entry "$CLAUDE_CONFIG"
+  if [ "$had_saved" = 0 ] && [ -f "$DATA_DIR/removed-mcp/claude-context.json" ]; then manifest_add saved-mcp "$CLAUDE_CONFIG"; fi
 fi
 
-# defaults per provider: MODEL + DIMENSION + claude-context EMBEDDING_PROVIDER
-EMB_PROVIDER=""; OPENAI_BASE_URL=""; OLLAMA_HOST="${OLLAMA_HOST:-http://127.0.0.1:11434}"
-case "$PROVIDER" in
-  ollama)     EMB_PROVIDER=Ollama;  MODEL="${MODEL:-nomic-embed-text}";               DIMENSION="${DIMENSION:-768}";;
-  lmstudio)   EMB_PROVIDER=OpenAI;  MODEL="${MODEL:-text-embedding-nomic-embed-text-v1.5}"; DIMENSION="${DIMENSION:-768}"; OPENAI_BASE_URL="http://127.0.0.1:1234/v1";;
-  openai)     EMB_PROVIDER=OpenAI;  MODEL="${MODEL:-text-embedding-3-small}";          DIMENSION="${DIMENSION:-1536}";;
-  voyageai)   EMB_PROVIDER=VoyageAI;MODEL="${MODEL:-voyage-code-3}";                   DIMENSION="${DIMENSION:-1024}";;
-  gemini)     EMB_PROVIDER=Gemini;  MODEL="${MODEL:-text-embedding-004}";              DIMENSION="${DIMENSION:-768}";;
-  openrouter) EMB_PROVIDER=OpenRouter; MODEL="${MODEL:-openai/text-embedding-3-small}";DIMENSION="${DIMENSION:-1536}";;
-  *) die "unknown provider: $PROVIDER";;
+# ─── doctor ──────────────────────────────────────────────────────────────────
+rc=0
+if [ "$DO_DOCTOR" = 1 ]; then
+  say "running uals doctor…"
+  "$UALS_BIN" doctor || rc=$?
+fi
+
+printf '\n%s\n' "${G}${B}Done.${N}"
+echo "Next steps:"
+echo "  1) ${B}Restart your AI agent${N} (Claude Code / etc.) so it loads the uals MCP server."
+case ":$PATH:" in
+  *":$BIN_DIR:"*) ;;
+  *) echo "  2) $BIN_DIR is not on your PATH. To use the 'uals' command, add this line to your shell profile:"
+     echo "       export PATH=\"$BIN_DIR:\$PATH\"";;
 esac
-say "provider=${B}$PROVIDER${N} model=${B}$MODEL${N} dim=${B}$DIMENSION${N}"
-
-# ─── provider setup (local install / cloud key prompt) ───────────────────────
-API_KEY_VAR=""; API_KEY_VAL=""
-case "$PROVIDER" in
-  ollama)
-    ollama_up() { curl -fsS --noproxy '*' "$OLLAMA_HOST/api/tags" >/dev/null 2>&1; }
-    if ! have ollama; then
-      say "installing Ollama…"
-      if [ "$PLATFORM" = macos ] && have brew; then brew install ollama
-      else curl -fsSL https://ollama.com/install.sh | sh; fi
-    fi
-    if have ollama && ! ollama_up; then
-      say "starting Ollama…"
-      if [ "$PLATFORM" = macos ] && have brew; then brew services start ollama >/dev/null 2>&1 || ( ollama serve >/dev/null 2>&1 & )
-      else ( ollama serve >/dev/null 2>&1 & ); fi
-      for _ in $(seq 1 30); do ollama_up && break; sleep 1; done
-      ollama_up || die "Ollama API did not come up at $OLLAMA_HOST within 30s — start it manually ('ollama serve') and re-run"
-    fi
-    say "pulling model $MODEL…"; ollama pull "$MODEL"
-    ;;
-  lmstudio)
-    LMS="$HOME/.lmstudio/bin/lms"
-    have lms && LMS=lms
-    if [ ! -x "$LMS" ] && ! have lms; then
-      if [ "$PLATFORM" = macos ] && have brew; then brew install --cask lm-studio || die "install LM Studio manually: https://lmstudio.ai"
-      else die "LM Studio: install from https://lmstudio.ai then re-run (need 'lms' CLI)"; fi
-      LMS="$HOME/.lmstudio/bin/lms"
-    fi
-    say "downloading model + starting LM Studio server…"
-    "$LMS" get "$MODEL" 2>/dev/null || warn "could not auto-download '$MODEL' — load it in LM Studio manually"
-    "$LMS" server start 2>/dev/null || warn "could not start LM Studio server — start it manually (port 1234)"
-    "$LMS" load "$MODEL" --yes 2>/dev/null || warn "could not load '$MODEL' — load it in LM Studio manually, else the server reports 'No models loaded'"
-    ;;
-  openai)     API_KEY_VAR=OPENAI_API_KEY;     API_KEY_VAL="${OPENAI_API_KEY:-}"
-              [ "$API_KEY_VAL" = lm-studio ] && API_KEY_VAL="";;   # placeholder left by an LM Studio .env
-  voyageai)   API_KEY_VAR=VOYAGEAI_API_KEY;   API_KEY_VAL="${VOYAGEAI_API_KEY:-}";;
-  gemini)     API_KEY_VAR=GEMINI_API_KEY;     API_KEY_VAL="${GEMINI_API_KEY:-}";;
-  openrouter) API_KEY_VAR=OPENROUTER_API_KEY; API_KEY_VAL="${OPENROUTER_API_KEY:-}";;
-esac
-if [ -n "$API_KEY_VAR" ] && [ -z "$API_KEY_VAL" ]; then
-  [ "$ASSUME_YES" = 1 ] && die "$API_KEY_VAR is required for $PROVIDER (--yes disables the prompt): export it or put it in .env"
-  read -rsp "Enter $API_KEY_VAR: " API_KEY_VAL; echo
-  [ -n "$API_KEY_VAL" ] || die "$API_KEY_VAR is required for $PROVIDER"
-fi
-
-# ─── write .env ──────────────────────────────────────────────────────────────
-say "writing .env"
-if [ -f "$REPO_DIR/.env" ]; then
-  env_backup="$REPO_DIR/.env.bak.$(date +%Y%m%d-%H%M%S)"
-  cp -p "$REPO_DIR/.env" "$env_backup"; chmod 600 "$env_backup"
-  ok "previous .env backed up to ${env_backup##*/}"
-fi
-{
-  echo "MILVUS_PORT=${MILVUS_PORT:-19530}"
-  echo "MILVUS_HEALTH_PORT=${MILVUS_HEALTH_PORT:-9091}"
-  echo "MILVUS_VERSION=${MILVUS_VERSION:-v2.5.6}"
-  echo "ETCD_VERSION=${ETCD_VERSION:-v3.5.18}"
-  echo "MINIO_VERSION=${MINIO_VERSION:-RELEASE.2023-03-20T20-16-18Z}"
-  echo "MILVUS_ADDRESS=127.0.0.1:${MILVUS_PORT:-19530}"
-  echo "AST_INDEX_VERSION=${AST_INDEX_VERSION:-3.48.0}"
-  echo "CLAUDE_CONTEXT_VERSION=${CLAUDE_CONTEXT_VERSION:-0.1.15}"
-  echo "EMBEDDING_PROVIDER=$EMB_PROVIDER"
-  echo "EMBEDDING_MODEL=$MODEL"
-  echo "EMBEDDING_DIMENSION=$DIMENSION"
-  [ -n "$OPENAI_BASE_URL" ] && echo "OPENAI_BASE_URL=$OPENAI_BASE_URL"
-  [ "$PROVIDER" = lmstudio ] && echo "OPENAI_API_KEY=lm-studio"
-  [ "$PROVIDER" = ollama ] && echo "OLLAMA_HOST=$OLLAMA_HOST"
-  [ -n "$API_KEY_VAR" ] && echo "$API_KEY_VAR=$API_KEY_VAL"
-} > "$REPO_DIR/.env"
-chmod 600 "$REPO_DIR/.env"
-ok ".env written (chmod 600, gitignored)"
-
-# ─── start Milvus ────────────────────────────────────────────────────────────
-say "starting Milvus stack (etcd + minio + milvus)…"
-docker compose --env-file "$REPO_DIR/.env" up -d
-say "waiting for Milvus to become healthy (first run can take ~1–2 min)…"
-MILVUS_HEALTH_PORT="${MILVUS_HEALTH_PORT:-9091}"
-for i in $(seq 1 60); do
-  if curl -fsS --noproxy '*' "http://127.0.0.1:${MILVUS_HEALTH_PORT}/healthz" >/dev/null 2>&1; then ok "Milvus healthy"; break; fi
-  [ "$i" = 60 ] && die "Milvus did not become healthy. Check: docker compose logs milvus"
-  sleep 3
-done
-
-# ─── configure claude-context MCP (safe jq merge into ~/.claude.json) ────────
-bash "$REPO_DIR/scripts/configure-mcp.sh" --env-file "$REPO_DIR/.env"
-
-# ─── smoke test (catches the dim-mismatch class of bugs at install time) ─────
-if [ "$DO_SMOKE" = 1 ]; then
-  bash "$REPO_DIR/scripts/smoke-test.sh" --env-file "$REPO_DIR/.env" || warn "smoke test reported issues (see above)"
-fi
-
-cat <<EOF
-
-${G}${B}Done.${N}
-Next steps:
-  1) ${B}Restart your AI agent${N} (Claude Code / etc.) so it picks up the new MCP env.
-  2) Index a project — in the agent, call claude-context ${B}index_codebase${N} on its path,
-     or check status with ${B}get_indexing_status${N}.
-  3) Search semantically via ${B}search_code${N}; use ast-index for symbols, rg/grep for text.
-
-Verify end to end (needs Node.js): ${B}./scripts/e2e-test.sh${N} — indexes a sample project via claude-context, searches, cleans up.
-Rules for agents: see ${B}rules/${N} (3-tier search policy) — copy into your project's AGENTS.md / CLAUDE.md.
-Manage the stack: ${B}docker compose --env-file .env {ps,logs,down}${N} · uninstall: ${B}./uninstall.sh${N}
-EOF
+echo "Rules for agents: see ${B}$REPO_DIR/rules/${N}: copy the snippets into your project's AGENTS.md / CLAUDE.md."
+echo "Check the setup any time: ${B}$UALS_BIN doctor${N} · uninstall: ${B}$REPO_DIR/uninstall.sh${N}"
+exit "$rc"

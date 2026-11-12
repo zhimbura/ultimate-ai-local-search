@@ -40,6 +40,30 @@ jobs:
       - name: No private data in tracked files
         run: scripts/check-private.sh
 
+  install:
+    name: install (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the pinned toolchain (rust-toolchain.toml)
+        run: rustup toolchain install
+      - name: Install from source
+        run: ./install.sh --yes --semantic semble --from-source
+      - name: Install again (must change nothing)
+        run: ./install.sh --yes --semantic semble --from-source
+      - name: Doctor passes
+        run: ~/.local/bin/uals doctor
+      - name: Uninstall
+        run: ./uninstall.sh --yes
+      - name: The binary and the manifest are gone
+        run: |
+          test ! -e ~/.local/bin/uals
+          test ! -e ~/.local/share/uals/install-manifest
+
   shell:
     runs-on: ubuntu-latest
     steps:
