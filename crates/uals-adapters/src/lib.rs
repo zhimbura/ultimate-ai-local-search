@@ -12,4 +12,5 @@ pub mod ast_index;
 pub mod claude_context;
 pub mod lexical;
 pub mod mcp_child;
+mod path_filter;
 pub mod semble;
