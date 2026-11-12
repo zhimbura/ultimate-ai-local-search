@@ -375,7 +375,8 @@ pub async fn probe_tcp(address: &str, timeout: Duration) -> Result<(), String> {
     }
 }
 
-/// `MILVUS_ADDRESS` as `host:port`: removes a scheme, user info and path; adds the default port.
+/// `MILVUS_ADDRESS` as `host:port`: removes a scheme, user info and path; adds the default port
+/// and the brackets of a bare IPv6 address.
 fn normalize_address(raw: &str) -> String {
     let raw = raw.trim();
     let (secure, rest) = match raw.split_once("://") {
@@ -387,12 +388,15 @@ fn normalize_address(raw: &str) -> String {
     if host.is_empty() {
         return DEFAULT_MILVUS_ADDRESS.to_string();
     }
-    let has_port = if host.starts_with('[') { host.contains("]:") } else { host.matches(':').count() == 1 };
-    if has_port {
-        host.to_string()
-    } else {
-        let port = if secure { HTTPS_PORT } else { DEFAULT_MILVUS_PORT };
-        format!("{host}:{port}")
+    let port = if secure { HTTPS_PORT } else { DEFAULT_MILVUS_PORT };
+    if host.starts_with('[') {
+        return if host.contains("]:") { host.to_string() } else { format!("{host}:{port}") };
+    }
+    match host.matches(':').count() {
+        0 => format!("{host}:{port}"),
+        1 => host.to_string(),
+        // More than one colon: a bare IPv6 address, which needs brackets before the port.
+        _ => format!("[{host}]:{port}"),
     }
 }
 

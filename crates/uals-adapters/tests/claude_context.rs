@@ -521,6 +521,10 @@ fn milvus_address_comes_from_the_config_with_a_default() {
     assert_eq!(address(Some("http://milvus.local:19530/path")), "milvus.local:19530");
     assert_eq!(address(Some("https://cluster.example")), "cluster.example:443");
     assert_eq!(address(Some("[::1]:19530")), "[::1]:19530");
+    assert_eq!(address(Some("::1")), "[::1]:19530");
+    assert_eq!(address(Some("2001:db8::5")), "[2001:db8::5]:19530");
+    assert_eq!(address(Some("[::1]")), "[::1]:19530");
+    assert_eq!(address(Some("https://[::1]")), "[::1]:443");
 }
 
 // ---------------------------------------------------------------- index_state
