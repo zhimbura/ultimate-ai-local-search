@@ -1,0 +1,206 @@
+{
+  "name": "one_list_next_to_lists_per_repository",
+  "description": "semble searched both repositories in one call, so its ranks run over both and its list keeps them: android's hit stays between web's. ast-index searched each repository on its own, so its lists interleave by round, and web's explore hit with the higher raw score comes first in round 0.",
+  "query": "retry with exponential backoff",
+  "kind": "natural",
+  "spans": [],
+  "hits": [
+    {
+      "backend": "semble",
+      "repo": "web",
+      "path": "/ws/web/src/retry.ts",
+      "lines": {
+        "start": 1,
+        "end": 24
+      },
+      "rank": 0,
+      "score": 0.03
+    },
+    {
+      "backend": "semble",
+      "repo": "android",
+      "path": "/ws/android/core/Retry.kt",
+      "lines": {
+        "start": 1,
+        "end": 18
+      },
+      "rank": 1,
+      "score": 0.02
+    },
+    {
+      "backend": "semble",
+      "repo": "web",
+      "path": "/ws/web/src/http.ts",
+      "lines": {
+        "start": 1,
+        "end": 30
+      },
+      "rank": 2,
+      "score": 0.01
+    },
+    {
+      "backend": "ast-index",
+      "repo": "web",
+      "path": "/ws/web/src/backoff.ts",
+      "lines": {
+        "start": 3,
+        "end": 20
+      },
+      "rank": 0,
+      "score": 5.0,
+      "symbol": "Backoff",
+      "symbol_kind": "class",
+      "is_definition": true
+    },
+    {
+      "backend": "ast-index",
+      "repo": "android",
+      "path": "/ws/android/core/Backoff.kt",
+      "lines": {
+        "start": 5,
+        "end": 40
+      },
+      "rank": 0,
+      "score": 2.0,
+      "symbol": "ExponentialBackoff",
+      "symbol_kind": "class",
+      "is_definition": true
+    },
+    {
+      "backend": "ast-index",
+      "repo": "android",
+      "path": "/ws/android/core/Policy.kt",
+      "lines": {
+        "start": 1,
+        "end": 12
+      },
+      "rank": 1,
+      "score": 1.0,
+      "symbol": "RetryPolicy",
+      "symbol_kind": "class",
+      "is_definition": true
+    }
+  ],
+  "expected": [
+    {
+      "repo": "web",
+      "path": "/ws/web/src/retry.ts",
+      "lines": [
+        1,
+        24
+      ],
+      "symbol": null,
+      "symbol_kind": null,
+      "pinned": false,
+      "is_definition": false,
+      "focus_line": 1,
+      "score": 0.01639344262295082,
+      "sources": [
+        [
+          "semble",
+          0
+        ]
+      ]
+    },
+    {
+      "repo": "android",
+      "path": "/ws/android/core/Retry.kt",
+      "lines": [
+        1,
+        18
+      ],
+      "symbol": null,
+      "symbol_kind": null,
+      "pinned": false,
+      "is_definition": false,
+      "focus_line": 1,
+      "score": 0.016129032258064516,
+      "sources": [
+        [
+          "semble",
+          1
+        ]
+      ]
+    },
+    {
+      "repo": "web",
+      "path": "/ws/web/src/http.ts",
+      "lines": [
+        1,
+        30
+      ],
+      "symbol": null,
+      "symbol_kind": null,
+      "pinned": false,
+      "is_definition": false,
+      "focus_line": 1,
+      "score": 0.015873015873015872,
+      "sources": [
+        [
+          "semble",
+          2
+        ]
+      ]
+    },
+    {
+      "repo": "web",
+      "path": "/ws/web/src/backoff.ts",
+      "lines": [
+        3,
+        20
+      ],
+      "symbol": "Backoff",
+      "symbol_kind": "class",
+      "pinned": false,
+      "is_definition": true,
+      "focus_line": 3,
+      "score": 0.011475409836065573,
+      "sources": [
+        [
+          "ast-index",
+          0
+        ]
+      ]
+    },
+    {
+      "repo": "android",
+      "path": "/ws/android/core/Backoff.kt",
+      "lines": [
+        5,
+        40
+      ],
+      "symbol": "ExponentialBackoff",
+      "symbol_kind": "class",
+      "pinned": false,
+      "is_definition": true,
+      "focus_line": 5,
+      "score": 0.01129032258064516,
+      "sources": [
+        [
+          "ast-index",
+          1
+        ]
+      ]
+    },
+    {
+      "repo": "android",
+      "path": "/ws/android/core/Policy.kt",
+      "lines": [
+        1,
+        12
+      ],
+      "symbol": "RetryPolicy",
+      "symbol_kind": "class",
+      "pinned": false,
+      "is_definition": true,
+      "focus_line": 1,
+      "score": 0.01111111111111111,
+      "sources": [
+        [
+          "ast-index",
+          2
+        ]
+      ]
+    }
+  ]
+}

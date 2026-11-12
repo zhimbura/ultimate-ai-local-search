@@ -1,9 +1,10 @@
 //! `uals mcp` end to end: the real binary on stdin and stdout, on a copy of the public fixture
 //! workspace. ast-index is not installed for the server, so `search` runs on the lexical backend
 //! and a fake Semble: an MCP server in `sh` that finds `HostSelector.kt` lines 5-14 in
-//! `sample-android`, the regions listed in a file in `sample-web` and nothing elsewhere. With
-//! `FAKE_SEMBLE_MODE=hang` it never answers a search, with `die` it exits on one. It ignores
-//! SIGTERM, so only SIGKILL stops it, and it logs every tool call.
+//! `sample-android`, the regions listed in a file in `sample-web` and nothing elsewhere. Asked for
+//! several repositories at once, it answers as Semble does: one list, every path labelled with its
+//! repository. With `FAKE_SEMBLE_MODE=hang` it never answers a search, with `die` it exits on one.
+//! It ignores SIGTERM, so only SIGKILL stops it, and it logs every tool call.
 //!
 //! The tool tests talk to the server through `McpChild`, an rmcp client. The stop and roots tests
 //! drive the server's pipes by hand, so that the client can close stdin or keep it open, and answer
@@ -54,11 +55,12 @@ while IFS= read -r line; do
         die) exit 1 ;;
       esac
       case "$line" in
-        *sample-android*) results=$found ;;
-        *sample-web*) results=$(cat "$FAKE_SEMBLE_WEB" 2>/dev/null || printf '[]') ;;
-        *) results='[]' ;;
+        *'"repo":['*) answer=$(cat "$FAKE_SEMBLE_ALL") ;;
+        *sample-android*) answer="{\\\"results\\\":$found}" ;;
+        *sample-web*) answer="{\\\"results\\\":$(cat "$FAKE_SEMBLE_WEB" 2>/dev/null || printf '[]')}" ;;
+        *) answer='{\"results\":[]}' ;;
       esac
-      reply "$id" "{\"content\":[{\"type\":\"text\",\"text\":\"{\\\"results\\\":$results}\"}],\"isError\":false}" ;;
+      reply "$id" "{\"content\":[{\"type\":\"text\",\"text\":\"$answer\"}],\"isError\":false}" ;;
   esac
 done
 "#;
@@ -92,7 +94,7 @@ impl Fixture {
             r#"
 [semantic.semble]
 command = [{script:?}]
-env = {{ FAKE_SEMBLE_MODE = "{semble_mode}", FAKE_SEMBLE_PIDS = {pids:?}, FAKE_SEMBLE_CALLS = {calls:?}, FAKE_SEMBLE_WEB = {web:?} }}
+env = {{ FAKE_SEMBLE_MODE = "{semble_mode}", FAKE_SEMBLE_PIDS = {pids:?}, FAKE_SEMBLE_CALLS = {calls:?}, FAKE_SEMBLE_WEB = {web:?}, FAKE_SEMBLE_ALL = {all:?} }}
 
 [ast_index]
 binary = "/nonexistent/ast-index"
@@ -106,8 +108,10 @@ semantic_cold_ms = {semantic_cold_ms}
             pids = fixture.pids_file().display().to_string(),
             calls = fixture.calls_file().display().to_string(),
             web = fixture.web_results_file().display().to_string(),
+            all = fixture.all_repos_answer_file().display().to_string(),
         );
         std::fs::write(fixture.config(), config).unwrap();
+        fixture.write_all_repos_answer(&[]);
         fixture
     }
 
@@ -128,6 +132,27 @@ semantic_cold_ms = {semantic_cold_ms}
         self.dir.path().join("semble-web-results")
     }
 
+    /// The answer the fake Semble gives for all repositories at once, escaped for its `text` field.
+    fn all_repos_answer_file(&self) -> PathBuf {
+        self.dir.path().join("semble-all-answer")
+    }
+
+    /// Writes the answer of the fake Semble for all repositories at once: `HostSelector.kt` lines
+    /// 5-14, then the `sample-web` results `web`, every path labelled with its repository and the
+    /// labels mapped to the repositories, as Semble answers for several repositories.
+    fn write_all_repos_answer(&self, web: &[Value]) {
+        let mut results = vec![json!({"file_path": HOST_SELECTOR, "start_line": 5, "end_line": 14, "score": 0.9})];
+        for result in web {
+            let mut labelled = result.clone();
+            labelled["file_path"] = json!(format!("sample-web/{}", result["file_path"].as_str().unwrap()));
+            results.push(labelled);
+        }
+        let repos: serde_json::Map<String, Value> =
+            REPOS.iter().map(|repo| ((*repo).to_owned(), json!(self.workspace.join(repo)))).collect();
+        let answer = json!({"results": results, "repos": repos}).to_string();
+        std::fs::write(self.all_repos_answer_file(), answer.replace('"', "\\\"")).unwrap();
+    }
+
     /// Every tool call the fake Semble servers got so far, one JSON-RPC line each.
     fn semble_calls(&self) -> String {
         std::fs::read_to_string(self.calls_file()).unwrap_or_default()
@@ -145,6 +170,7 @@ semantic_cold_ms = {semantic_cold_ms}
             results
                 .push(json!({"file_path": format!("src/wide/w{n}.ts"), "start_line": 1, "end_line": 20, "score": 0.5}));
         }
+        self.write_all_repos_answer(&results);
         std::fs::write(self.web_results_file(), Value::Array(results).to_string().replace('"', "\\\"")).unwrap();
     }
 

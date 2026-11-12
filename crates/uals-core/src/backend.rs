@@ -1,9 +1,10 @@
 //! Traits that adapters implement. Frozen: only the coordinator changes this file.
 //!
-//! Every method works on ONE repository. The orchestrator runs repositories and backends in
-//! parallel, applies the deadlines from `config::Deadlines`, and turns errors and timeouts into
-//! `BackendStatus`. Implementations must be cancel-safe: the orchestrator drops the future on
-//! timeout, and any child process started for the call must die with it (`kill_on_drop`).
+//! Every method works on ONE repository, except `SearchBackend::search_all` and `warm`. The
+//! orchestrator runs repositories and backends in parallel, applies the deadlines from
+//! `config::Deadlines`, and turns errors and timeouts into `BackendStatus`. Implementations must be
+//! cancel-safe: the orchestrator drops the future on timeout, and any child process started for the
+//! call must die with it (`kill_on_drop`).
 
 use std::path::PathBuf;
 
@@ -33,6 +34,20 @@ pub trait SearchBackend: Send + Sync {
 
     /// Searches one repository. Hits must be ordered best first, with `rank` equal to the position.
     async fn search(&self, repo: &Repo, request: &SearchRequest) -> Result<BackendAnswer, BackendError>;
+
+    /// Whether `search_all` ranks the hits of several repositories against each other. When true,
+    /// the orchestrator makes one `search_all` call for all repositories instead of one `search`
+    /// call per repository.
+    fn searches_all_at_once(&self) -> bool {
+        false
+    }
+
+    /// Searches all `repos` in one call and returns one list over all of them, best first, with
+    /// `rank` equal to the position in that list; every hit names its repository. Only called when
+    /// `searches_all_at_once` is true.
+    async fn search_all(&self, _repos: &[Repo], _request: &SearchRequest) -> Result<BackendAnswer, BackendError> {
+        Err(BackendError::Failed(format!("{} searches one repository at a time", self.id())))
+    }
 
     /// Reports the state of this backend's index for one repository. Must be fast and must not
     /// change anything (no indexing, no stub cache folders).

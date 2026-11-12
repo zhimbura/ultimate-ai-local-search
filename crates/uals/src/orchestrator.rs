@@ -1,10 +1,11 @@
 //! Runs one query against every backend and every repository at once and fuses the answers.
 //!
-//! `search`: classify the query → ask every (repository, backend) pair in parallel, each call on
-//! its own task under its backend's deadline → fetch the symbol spans of the files the hits point
-//! to → fuse → cut one page → read the page's snippets from disk. A backend that fails, panics or
-//! misses its deadline loses only its own hits; `SearchResponse::backends` says what happened to
-//! every pair.
+//! `search`: classify the query → ask the backends in parallel, each call on its own task under its
+//! backend's deadline: one call per repository, or one call for all repositories when the backend
+//! searches them at once → fetch the symbol spans of the files the hits point to → fuse → cut one
+//! page → read the page's snippets from disk. A backend that fails, panics or misses its deadline
+//! loses only its own hits; `SearchResponse::backends` says what happened to every (repository,
+//! backend) pair.
 //!
 //! `usages`: per repository, the first usage source that answers (ast-index, then lexical).
 
@@ -187,19 +188,48 @@ impl Orchestrator {
     }
 
     /// Asks every backend that takes part in `request.kind` (it supports the kind and its fusion
-    /// weight is above 0) in every repository, in parallel, and returns one result per pair:
-    /// repositories in the given order, backends in `Backends::search` order. The raw material
-    /// of `search`, also used by the benchmark to score backends one by one.
+    /// weight is above 0), in parallel, and returns one result per (repository, backend) pair:
+    /// repositories in the given order, backends in `Backends::search` order. A backend that
+    /// searches all repositories at once gets one call, cold while any repository is cold, and its
+    /// answer is split by repository; every other backend gets one call per repository. The raw
+    /// material of `search`.
     pub async fn collect(&self, repos: &[Repo], request: &SearchRequest) -> Vec<BackendResult> {
         let request = Arc::new(request.clone());
         let mut batch = Batch::new();
-        for repo in repos {
-            for backend in self.backends.search.iter().filter(|backend| self.asks(backend.as_ref(), request.kind)) {
-                let deadline = self.deadline(backend.id(), self.is_cold(backend.id(), &repo.root));
-                batch.push((backend.id(), repo), search_call(backend, repo, &request, deadline));
+        for (order, backend) in self.backends.search.iter().enumerate() {
+            if !self.asks(backend.as_ref(), request.kind) {
+                continue;
+            }
+            let id = backend.id();
+            if backend.searches_all_at_once() {
+                if !repos.is_empty() {
+                    let cold = repos.iter().any(|repo| self.is_cold(id, &repo.root));
+                    batch.push(
+                        (order, id, Covers::All),
+                        search_all_call(backend, repos, &request, self.deadline(id, cold)),
+                    );
+                }
+                continue;
+            }
+            for (place, repo) in repos.iter().enumerate() {
+                let deadline = self.deadline(id, self.is_cold(id, &repo.root));
+                batch.push((order, id, Covers::One(place, repo)), search_call(backend, repo, &request, deadline));
             }
         }
-        batch.run().await.into_iter().map(|((backend, repo), timed)| self.record_search(backend, repo, timed)).collect()
+        let mut results = Vec::new();
+        for ((order, backend, covers), timed) in batch.run().await {
+            match covers {
+                Covers::One(place, repo) => results.push((place, order, self.record_search(backend, repo, timed))),
+                Covers::All => {
+                    let split = split_by_repo(backend, repos, timed);
+                    for ((place, repo), timed) in repos.iter().enumerate().zip(split) {
+                        results.push((place, order, self.record_search(backend, repo, timed)));
+                    }
+                }
+            }
+        }
+        results.sort_by_key(|&(place, order, _)| (place, order));
+        results.into_iter().map(|(_, _, result)| result).collect()
     }
 
     /// Lists every usage of `symbol` in `repos`, grouped by repository, sorted by path and line.
@@ -422,6 +452,13 @@ struct RepoAnswer {
     complete: bool,
 }
 
+/// The repositories one search call covers: one, with its place in the list of repositories, or
+/// all of them.
+enum Covers<'a> {
+    One(usize, &'a Repo),
+    All,
+}
+
 /// A search call of `backend` in `repo` under `deadline`.
 fn search_call(
     backend: &Arc<dyn SearchBackend>,
@@ -431,6 +468,44 @@ fn search_call(
 ) -> Call<BackendAnswer> {
     let (backend, repo, request) = (Arc::clone(backend), repo.clone(), Arc::clone(request));
     Call::new(deadline, async move { backend.search(&repo, &request).await })
+}
+
+/// One search call of `backend` over all `repos` under `deadline`.
+fn search_all_call(
+    backend: &Arc<dyn SearchBackend>,
+    repos: &[Repo],
+    request: &Arc<SearchRequest>,
+    deadline: Duration,
+) -> Call<BackendAnswer> {
+    let (backend, repos, request) = (Arc::clone(backend), repos.to_vec(), Arc::clone(request));
+    Call::new(deadline, async move { backend.search_all(&repos, &request).await })
+}
+
+/// Splits the outcome of one `search_all` call of `backend` into one outcome per repository of
+/// `repos`, in that order: each repository gets its own hits, with their ranks over all
+/// repositories, and the call's status and time. Hits of a repository not in `repos` are dropped.
+fn split_by_repo(backend: BackendId, repos: &[Repo], timed: Timed<BackendAnswer>) -> Vec<Timed<BackendAnswer>> {
+    let Timed { result, elapsed_ms } = timed;
+    let BackendAnswer { hits, stale, partial } = match result {
+        Ok(answer) => answer,
+        Err(status) => return repos.iter().map(|_| Timed { result: Err(status.clone()), elapsed_ms }).collect(),
+    };
+    let mut by_repo: BTreeMap<String, Vec<Hit>> = BTreeMap::new();
+    for hit in hits {
+        by_repo.entry(hit.repo.clone()).or_default().push(hit);
+    }
+    let split = repos
+        .iter()
+        .map(|repo| {
+            let hits = by_repo.remove(&repo.name).unwrap_or_default();
+            Timed { result: Ok(BackendAnswer { hits, stale: stale.clone(), partial: partial.clone() }), elapsed_ms }
+        })
+        .collect();
+    if !by_repo.is_empty() {
+        let unasked: Vec<&String> = by_repo.keys().collect();
+        warn!(backend = %backend, repos = ?unasked, "dropped hits of repositories that were not asked");
+    }
+    split
 }
 
 /// A usages call of `source` in `repo` under `deadline`.

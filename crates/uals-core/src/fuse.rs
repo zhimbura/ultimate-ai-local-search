@@ -4,15 +4,22 @@
 //! `fuse(query, kind, hits, spans, config)`:
 //! 1. Drop hits whose backend weight for `kind` is 0 (`FusionConfig::weight`), before grouping, so
 //!    they cannot widen a line window.
-//! 2. Group the rest with `merge::group(hits, spans, config.merge_gap_lines)`.
-//! 3. A hit contributes `weight(kind, backend) / (rrf_k + rank + 1)`. Ranks are per backend and per
-//!    repository, so every repository's list counts the same; raw backend scores are never used.
-//! 4. Group score: the sum over backends of each backend's largest contribution in the group (several
+//! 2. Give every backend one list over all repositories and replace each hit's `rank` with its
+//!    place in that list. The list is ordered by `rank`, then by the raw score, higher first (a hit
+//!    without a score after one with a score), then by repo, path and start line, ascending. So the
+//!    lists of a backend that searches one repository at a time interleave: the first hits of all
+//!    repositories, then the second hits, and the raw score only orders hits within such a round.
+//!    A backend that searched all repositories in one call (`SearchBackend::search_all`) gave
+//!    ranks over all of them, and its list keeps that order.
+//! 3. Group the rest with `merge::group(hits, spans, config.merge_gap_lines)`.
+//! 4. A hit contributes `weight(kind, backend) / (rrf_k + rank + 1)`, with the rank of rule 2. Raw
+//!    backend scores never add to the score.
+//! 5. Group score: the sum over backends of each backend's largest contribution in the group (several
 //!    hits of one backend in one group count once).
-//! 5. Pinning, identifier queries only: a group is a candidate when one of its hits has
+//! 6. Pinning, identifier queries only: a group is a candidate when one of its hits has
 //!    `is_definition` and `symbol == classify::bare_name(query)` (exact, case-sensitive). The first
-//!    `max_pinned` candidates in the order of rule 6 are pinned.
-//! 6. Order: pinned groups first; then score, higher first (scores within 1e-9 are equal); then
+//!    `max_pinned` candidates in the order of rule 7 are pinned.
+//! 7. Order: pinned groups first; then score, higher first (scores within 1e-9 are equal); then
 //!    the number of distinct backends, more first; then repo, path and start line, ascending.
 //!
 //! Fields of each `FusedHit`:
@@ -22,8 +29,8 @@
 //! - `is_definition`: any hit of the group is a definition.
 //! - `focus_line`: the start line of the best-contributing hit, clamped into `lines`. Ties between
 //!   hits: lower rank, then earlier start line, then backend order (`BackendId` order).
-//! - `sources`: one entry per backend with its best rank, ordered by contribution, larger first;
-//!   ties in backend order.
+//! - `sources`: one entry per backend with its best rank of rule 2, ordered by contribution, larger
+//!   first; ties in backend order.
 //! - `score`: the group score. `snippet`: `None` (the orchestrator fills it).
 
 use std::cmp::Ordering;
@@ -52,7 +59,8 @@ pub fn fuse(
     spans: &[SymbolSpan],
     config: &FusionConfig,
 ) -> Vec<FusedHit> {
-    let hits: Vec<Hit> = hits.into_iter().filter(|hit| config.weight(kind, hit.backend) > 0.0).collect();
+    let mut hits: Vec<Hit> = hits.into_iter().filter(|hit| config.weight(kind, hit.backend) > 0.0).collect();
+    rank_across_repositories(&mut hits);
     let target = (kind == QueryKind::Identifier).then(|| bare_name(query));
     let mut candidates: Vec<Candidate> =
         group(hits, spans, config.merge_gap_lines).into_iter().map(|g| fuse_group(g, kind, target, config)).collect();
@@ -63,6 +71,48 @@ pub fn fuse(
     // Stable: pinned groups keep their score order, and so do the rest.
     candidates.sort_by_key(|candidate| !candidate.fused.pinned);
     candidates.into_iter().map(|candidate| candidate.fused).collect()
+}
+
+/// Replaces each hit's `rank` with its place in its backend's list over all repositories (rule 2).
+/// The hits stay where they are; only the ranks change.
+fn rank_across_repositories(hits: &mut [Hit]) {
+    let mut order: Vec<usize> = (0..hits.len()).collect();
+    order.sort_by(|&a, &b| list_order(&hits[a], &hits[b]));
+    let mut places = vec![0u32; hits.len()];
+    let mut previous: Option<(BackendId, u32)> = None;
+    for index in order {
+        let backend = hits[index].backend;
+        let place = match previous {
+            Some((last, place)) if last == backend => place.saturating_add(1),
+            _ => 0,
+        };
+        places[index] = place;
+        previous = Some((backend, place));
+    }
+    for (hit, place) in hits.iter_mut().zip(places) {
+        hit.rank = place;
+    }
+}
+
+/// The order of rule 2. Hits of different backends never mix: backends come one after another.
+fn list_order(a: &Hit, b: &Hit) -> Ordering {
+    a.backend
+        .cmp(&b.backend)
+        .then(a.rank.cmp(&b.rank))
+        .then_with(|| higher_score_first(a.score, b.score))
+        .then_with(|| a.repo.cmp(&b.repo))
+        .then_with(|| a.path.cmp(&b.path))
+        .then(a.lines.start.cmp(&b.lines.start))
+}
+
+/// Higher scores first; a missing score after any score.
+fn higher_score_first(a: Option<f64>, b: Option<f64>) -> Ordering {
+    match (a, b) {
+        (Some(a), Some(b)) => b.total_cmp(&a),
+        (Some(_), None) => Ordering::Less,
+        (None, Some(_)) => Ordering::Greater,
+        (None, None) => Ordering::Equal,
+    }
 }
 
 /// Pins the first `max_pins` candidates (in their current order) that define the queried name.
@@ -249,7 +299,8 @@ mod tests {
         let config = FusionConfig::default();
         let (ast, lex, sem) = (BackendId::AstIndex, BackendId::Lexical, BackendId::Semble);
         // Identifier weights: ast-index 1.0, lexical 0.7, semantic 0.3. Repo "z" has two backends whose
-        // sum equals the single ast-index contribution of "a" and "b" (1.0 / 61 = 0.7 / 61 + 0.3 / 61).
+        // sum equals the ast-index contribution of "a", the first in ast-index's list
+        // (1.0 / 61 = 0.7 / 61 + 0.3 / 61); "b" is second in that list (1.0 / 62).
         let hits = vec![
             hit(ast, "b", "/ws/b/x.kt", 1, 1, 0),
             hit(ast, "a", "/ws/a/x.kt", 1, 1, 0),
@@ -259,6 +310,67 @@ mod tests {
         let fused = fuse("q", QueryKind::Identifier, hits, &[], &config);
         let repos: Vec<&str> = fused.iter().map(|f| f.repo.as_str()).collect();
         assert_eq!(repos, vec!["z", "a", "b"]);
+    }
+
+    fn scored(mut hit: Hit, score: Option<f64>) -> Hit {
+        hit.score = score;
+        hit
+    }
+
+    fn paths_and_ranks(fused: &[FusedHit]) -> Vec<(&str, u32)> {
+        fused.iter().map(|f| (f.path.to_str().unwrap(), f.sources[0].rank)).collect()
+    }
+
+    #[test]
+    fn lists_of_single_repositories_interleave_and_the_raw_score_orders_a_round() {
+        let semble = BackendId::Semble;
+        let hits = vec![
+            scored(hit(semble, "a", "/ws/a/second.kt", 1, 1, 1), Some(0.95)),
+            scored(hit(semble, "c", "/ws/c/first.kt", 1, 1, 0), None),
+            scored(hit(semble, "a", "/ws/a/first.kt", 1, 1, 0), Some(0.1)),
+            scored(hit(semble, "b", "/ws/b/first.kt", 1, 1, 0), Some(0.9)),
+        ];
+        let fused = run("where", QueryKind::Natural, hits);
+        // Round 0 by score, the hit without one last; a's second hit comes after the round
+        // although its score is the highest.
+        assert_eq!(
+            paths_and_ranks(&fused),
+            vec![("/ws/b/first.kt", 0), ("/ws/a/first.kt", 1), ("/ws/c/first.kt", 2), ("/ws/a/second.kt", 3)]
+        );
+    }
+
+    #[test]
+    fn a_list_over_all_repositories_keeps_its_order() {
+        // One `search_all` call: the ranks run over both repositories.
+        let semble = BackendId::Semble;
+        let hits = vec![
+            hit(semble, "b", "/ws/b/x.kt", 1, 1, 0),
+            hit(semble, "a", "/ws/a/x.kt", 1, 1, 1),
+            hit(semble, "b", "/ws/b/y.kt", 1, 1, 2),
+        ];
+        let fused = run("where", QueryKind::Natural, hits);
+        assert_eq!(paths_and_ranks(&fused), vec![("/ws/b/x.kt", 0), ("/ws/a/x.kt", 1), ("/ws/b/y.kt", 2)]);
+    }
+
+    #[test]
+    fn every_backend_gets_a_list_of_its_own() {
+        let hits = vec![
+            hit(BackendId::AstIndex, "b", "/ws/b/x.kt", 1, 1, 0),
+            hit(BackendId::Lexical, "b", "/ws/b/y.kt", 1, 1, 0),
+            hit(BackendId::AstIndex, "a", "/ws/a/x.kt", 1, 1, 0),
+        ];
+        let fused = run("Foo", QueryKind::Identifier, hits);
+        let mut places: Vec<(&str, BackendId, u32)> =
+            fused.iter().map(|f| (f.path.to_str().unwrap(), f.sources[0].backend, f.sources[0].rank)).collect();
+        places.sort();
+        assert_eq!(
+            places,
+            vec![
+                ("/ws/a/x.kt", BackendId::AstIndex, 0),
+                ("/ws/b/x.kt", BackendId::AstIndex, 1),
+                ("/ws/b/y.kt", BackendId::Lexical, 0)
+            ]
+        );
     }
 
     #[test]

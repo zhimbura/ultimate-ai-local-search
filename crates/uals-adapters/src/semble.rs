@@ -3,6 +3,11 @@
 //!
 //! Semble builds an index on the first `search` of a path and keeps it on disk, so there is no
 //! separate "index" step: [`SearchBackend::warm`] simply runs a cheap search per repository.
+//!
+//! Given a list of paths, Semble merges their indexes and ranks the chunks of all of them in one
+//! list: every `file_path` starts with a label of its repository, and `repos` maps the labels to the
+//! resolved repository paths. So the adapter searches all repositories in one call
+//! ([`SearchBackend::search_all`]).
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -31,7 +36,7 @@ const WARM_QUERY: &str = "main entry point";
 /// locations only.
 const NO_SNIPPET_LINES: u32 = 0;
 
-/// Semantic search over one repository at a time.
+/// Semantic search over all repositories in one call.
 pub struct SembleBackend {
     inner: Arc<Inner>,
     warm_timeout: Duration,
@@ -63,11 +68,16 @@ impl SembleBackend {
 }
 
 impl Inner {
-    /// Calls Semble's `search` for one repository and returns the parsed results.
-    async fn run_search(&self, repo: &Repo, query: &str, top_k: usize) -> Result<Vec<RawResult>, BackendError> {
+    /// Calls Semble's `search` over `roots`, passed as one path for one root and as a list for
+    /// several, and returns the parsed answer.
+    async fn run_search(&self, roots: &[&Path], query: &str, top_k: usize) -> Result<SearchOutput, BackendError> {
+        let repo = match roots {
+            [root] => json!(root.to_string_lossy()),
+            _ => json!(roots.iter().map(|root| root.to_string_lossy()).collect::<Vec<_>>()),
+        };
         let mut arguments = json!({
             "query": query,
-            "repo": repo.root.to_string_lossy(),
+            "repo": repo,
             "top_k": top_k.max(1),
             "max_snippet_lines": NO_SNIPPET_LINES,
         });
@@ -75,9 +85,11 @@ impl Inner {
             map.insert("content".to_owned(), Value::String(content_name(content).to_owned()));
         }
         let output = self.caller.call_tool("search", arguments).await?;
-        let results = parse_search_output(&output)?;
-        self.mark_indexed(&repo.root);
-        Ok(results)
+        let found = parse_search_output(&output)?;
+        for root in roots {
+            self.mark_indexed(root);
+        }
+        Ok(found)
     }
 
     /// Remembers the time of the first successful search of `root`.
@@ -110,29 +122,54 @@ impl SearchBackend for SembleBackend {
     }
 
     async fn search(&self, repo: &Repo, request: &SearchRequest) -> Result<BackendAnswer, BackendError> {
+        self.search_all(std::slice::from_ref(repo), request).await
+    }
+
+    fn searches_all_at_once(&self) -> bool {
+        true
+    }
+
+    async fn search_all(&self, repos: &[Repo], request: &SearchRequest) -> Result<BackendAnswer, BackendError> {
+        let Some(first) = repos.first() else {
+            return Ok(BackendAnswer::default());
+        };
         let filter = PathFilter::new(&request.paths)?;
         let top_k =
             if filter.is_active() { request.fetch_limit.saturating_mul(GLOB_OVERFETCH) } else { request.fetch_limit };
-        let results = self.inner.run_search(repo, &request.query, top_k).await?;
+        // Semble drops repeated paths too; it labels the paths of its answer only for several roots.
+        let mut roots: Vec<&Path> = Vec::with_capacity(repos.len());
+        for repo in repos {
+            if !roots.contains(&repo.root.as_path()) {
+                roots.push(&repo.root);
+            }
+        }
+        let found = self.inner.run_search(&roots, &request.query, top_k).await?;
+        let owners = if roots.len() == 1 { Owners::One(first) } else { Owners::by_label(repos, found.repos).await? };
 
-        let hits = results
-            .into_iter()
-            .filter(|result| filter.allows(&result.file_path))
-            .take(request.fetch_limit)
-            .enumerate()
-            .map(|(position, result)| Hit {
+        let mut hits = Vec::new();
+        for result in found.results {
+            if hits.len() == request.fetch_limit {
+                break;
+            }
+            let (repo, relative) = owners.locate(&result.file_path)?;
+            if !filter.allows(relative) {
+                continue;
+            }
+            let path = repo.root.join(relative);
+            let rank = u32::try_from(hits.len()).unwrap_or(u32::MAX);
+            hits.push(Hit {
                 backend: BackendId::Semble,
                 repo: repo.name.clone(),
-                path: repo.root.join(&result.file_path),
+                path,
                 lines: LineRange::new(result.start_line.max(1), result.end_line.max(1)),
                 symbol: None,
                 symbol_kind: None,
                 is_definition: false,
                 snippet: result.content.filter(|content| !content.is_empty()),
-                rank: u32::try_from(position).unwrap_or(u32::MAX),
+                rank,
                 score: result.score,
-            })
-            .collect();
+            });
+        }
         Ok(BackendAnswer { hits, stale: None, partial: None })
     }
 
@@ -170,7 +207,7 @@ impl SearchBackend for SembleBackend {
             let timeout = self.warm_timeout;
             tokio::spawn(async move {
                 let Ok(_permit) = permits.acquire().await else { return };
-                match tokio::time::timeout(timeout, inner.run_search(&repo, WARM_QUERY, 1)).await {
+                match tokio::time::timeout(timeout, inner.run_search(&[repo.root.as_path()], WARM_QUERY, 1)).await {
                     Ok(Ok(_)) => tracing::debug!(repo = %repo.name, "semble index is ready"),
                     Ok(Err(error)) => tracing::debug!(repo = %repo.name, %error, "semble warm-up failed"),
                     Err(_) => tracing::debug!(repo = %repo.name, ?timeout, "semble warm-up timed out"),
@@ -179,6 +216,68 @@ impl SearchBackend for SembleBackend {
         }
         Ok(())
     }
+}
+
+/// Which repository each `file_path` of one answer belongs to.
+enum Owners<'a> {
+    /// One root was searched: the paths are relative to its root.
+    One(&'a Repo),
+    /// Several roots were searched: every path starts with the label of its repository.
+    ByLabel(HashMap<String, &'a Repo>),
+}
+
+impl<'a> Owners<'a> {
+    /// Finds the repository of every label in `labels` (label → resolved repository path).
+    async fn by_label(repos: &'a [Repo], labels: HashMap<String, PathBuf>) -> Result<Self, BackendError> {
+        let mut owners = HashMap::with_capacity(labels.len());
+        for (label, source) in labels {
+            let Some(repo) = repo_at(repos, &source).await else {
+                return Err(BackendError::Failed(format!(
+                    "semble: answered for {}, which was not asked",
+                    source.display()
+                )));
+            };
+            owners.insert(label, repo);
+        }
+        Ok(Self::ByLabel(owners))
+    }
+
+    /// The repository of `file_path` and the path relative to its root.
+    fn locate<'p>(&self, file_path: &'p str) -> Result<(&'a Repo, &'p str), BackendError> {
+        match self {
+            Self::One(repo) => Ok((*repo, file_path)),
+            Self::ByLabel(owners) => file_path
+                .split_once('/')
+                .and_then(|(label, relative)| owners.get(label).map(|repo| (*repo, relative)))
+                .ok_or_else(|| {
+                    BackendError::Failed(format!("semble: {file_path} starts with no known repository label"))
+                }),
+        }
+    }
+}
+
+/// The repository whose root is `source`. Semble resolves the paths it gets, so a root that
+/// goes through a symbolic link matches by its canonical path.
+async fn repo_at<'a>(repos: &'a [Repo], source: &Path) -> Option<&'a Repo> {
+    if let Some(repo) = repos.iter().find(|repo| repo.root == source) {
+        return Some(repo);
+    }
+    for repo in repos {
+        if tokio::fs::canonicalize(&repo.root).await.is_ok_and(|root| root == source) {
+            return Some(repo);
+        }
+    }
+    None
+}
+
+/// Semble's answer to `search`.
+#[derive(Debug, Default, Deserialize)]
+struct SearchOutput {
+    results: Vec<RawResult>,
+    /// Only when several roots were searched: the label that starts every `file_path`, mapped to
+    /// the resolved path of its repository.
+    #[serde(default)]
+    repos: HashMap<String, PathBuf>,
 }
 
 /// One entry of Semble's `results` array.
@@ -193,8 +292,8 @@ struct RawResult {
     content: Option<String>,
 }
 
-/// Turns the tool output into results, mapping Semble's failure shapes to `BackendError`.
-fn parse_search_output(output: &ToolOutput) -> Result<Vec<RawResult>, BackendError> {
+/// Turns the tool output into an answer, mapping Semble's failure shapes to `BackendError`.
+fn parse_search_output(output: &ToolOutput) -> Result<SearchOutput, BackendError> {
     let text = result_text(output);
     if output.is_error {
         return Err(BackendError::Failed(format!("semble: {}", first_line(text.as_deref().unwrap_or("tool error")))));
@@ -207,13 +306,15 @@ fn parse_search_output(output: &ToolOutput) -> Result<Vec<RawResult>, BackendErr
         return Err(BackendError::Unavailable(format!("semble: {}", first_line(&text))));
     }
     let value = parse_inner_json(&text)?;
-    match value.get("results") {
-        Some(results) => serde_json::from_value(results.clone())
-            .map_err(|error| BackendError::Failed(format!("semble: unexpected result shape: {error}"))),
-        // `{"error": "No results found."}`
-        None if value.get("error").is_some() => Ok(Vec::new()),
-        None => Err(BackendError::Failed("semble: the answer has neither results nor error".to_owned())),
+    if value.get("results").is_some() {
+        return serde_json::from_value(value)
+            .map_err(|error| BackendError::Failed(format!("semble: unexpected result shape: {error}")));
     }
+    // `{"error": "No results found."}`
+    if value.get("error").is_some() {
+        return Ok(SearchOutput::default());
+    }
+    Err(BackendError::Failed("semble: the answer has neither results nor error".to_owned()))
 }
 
 /// `structuredContent.result` (a JSON string) if present, else the first text item.

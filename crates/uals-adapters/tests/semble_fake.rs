@@ -403,6 +403,120 @@ async fn path_negations_alone_drop_only_the_matching_hits() {
     assert_eq!(ranks, vec![0, 1, 2, 3]);
 }
 
+fn workspace_repos() -> Vec<Repo> {
+    ["sample-android", "sample-tools", "sample-web"].map(repo).into()
+}
+
+#[tokio::test]
+async fn search_all_asks_once_and_places_every_labelled_path_in_its_repository() {
+    let replay = Replay::fixture("search_retry_backoff_multi");
+    let backend = backend(&replay, None);
+    let repos = workspace_repos();
+
+    let answer = backend.search_all(&repos, &request("retry with exponential backoff", 5)).await.unwrap();
+
+    assert!(backend.searches_all_at_once());
+    let calls = replay.calls();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(
+        calls[0].1["repo"],
+        json!(["/work/space/sample-android", "/work/space/sample-tools", "/work/space/sample-web"])
+    );
+    let found: Vec<(&str, PathBuf, u32)> =
+        answer.hits.iter().map(|hit| (hit.repo.as_str(), hit.path.clone(), hit.rank)).collect();
+    let android = |file: &str| PathBuf::from("/work/space/sample-android").join(file);
+    let web = |file: &str| PathBuf::from("/work/space/sample-web").join(file);
+    assert_eq!(
+        found,
+        vec![
+            ("sample-android", android("core/src/main/kotlin/sample/core/RetryPolicy.kt"), 0),
+            ("sample-web", web("src/http/fetchWithRetry.ts"), 1),
+            ("sample-android", android("network/src/main/kotlin/sample/network/ConfigLoader.kt"), 2),
+            ("sample-web", web("src/index.ts"), 3),
+            ("sample-web", web("src/auth/session.ts"), 4),
+        ]
+    );
+    for repo in &repos {
+        assert!(backend.index_state(repo).await.indexed, "{}", repo.name);
+    }
+}
+
+#[tokio::test]
+async fn search_all_filters_by_the_path_inside_the_repository() {
+    let replay = Replay::fixture("search_retry_backoff_multi");
+    let mut request = request("retry with exponential backoff", 5);
+    request.paths = vec!["src/**".into()];
+
+    let answer = backend(&replay, None).search_all(&workspace_repos(), &request).await.unwrap();
+
+    assert_eq!(replay.calls()[0].1["top_k"], json!(20), "over-fetches when filtering");
+    let found: Vec<(&str, u32)> = answer.hits.iter().map(|hit| (hit.repo.as_str(), hit.rank)).collect();
+    assert_eq!(found, vec![("sample-web", 0), ("sample-web", 1), ("sample-web", 2)]);
+}
+
+#[tokio::test]
+async fn search_all_sends_a_repeated_root_once_as_one_path() {
+    let replay = Replay::fixture("search_retry_backoff_one_top2");
+    let android = repo("sample-android");
+
+    let answer = backend(&replay, None).search_all(&[android.clone(), android], &request("q", 2)).await.unwrap();
+
+    assert_eq!(replay.calls()[0].1["repo"], json!("/work/space/sample-android"));
+    let paths: Vec<&Path> = answer.hits.iter().map(|hit| hit.path.as_path()).collect();
+    assert_eq!(
+        paths,
+        [
+            Path::new("/work/space/sample-android/core/src/main/kotlin/sample/core/RetryPolicy.kt"),
+            Path::new("/work/space/sample-android/network/src/main/kotlin/sample/network/ConfigLoader.kt"),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn search_all_fails_on_a_path_it_cannot_place() {
+    let answer = |results: &str, repos: Option<&str>| {
+        let repos = repos.map(|repos| format!(r#", "repos": {repos}"#)).unwrap_or_default();
+        text_output(&format!(r#"{{"query": "q", "results": {results}{repos}}}"#), false)
+    };
+    let in_web = r#"[{"file_path": "sample-web/src/a.ts", "start_line": 1, "end_line": 2, "score": 0.5}]"#;
+    let without_label = r#"[{"file_path": "a.ts", "start_line": 1, "end_line": 2, "score": 0.5}]"#;
+    let asked = r#"{"sample-android": "/work/space/sample-android", "sample-web": "/work/space/sample-web"}"#;
+    for (output, case) in [
+        (answer(in_web, Some(r#"{"sample-android": "/work/space/sample-android"}"#)), "a label the map lacks"),
+        (answer(in_web, None), "no map"),
+        (answer(without_label, Some(asked)), "a path without a label"),
+        (answer(in_web, Some(r#"{"sample-web": "/elsewhere/sample-web"}"#)), "a repository that was not asked"),
+    ] {
+        let replay = Replay::new(Ok(output));
+        let error = backend(&replay, None).search_all(&workspace_repos(), &request("q", 5)).await.unwrap_err();
+        assert!(matches!(error, BackendError::Failed(_)), "{case}: {error:?}");
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn search_all_finds_a_repository_whose_root_is_a_symbolic_link() {
+    let folder = tempfile::tempdir().unwrap();
+    let (real, other) = (folder.path().join("real"), folder.path().join("other"));
+    std::fs::create_dir(&real).unwrap();
+    std::fs::create_dir(&other).unwrap();
+    std::os::unix::fs::symlink(&real, folder.path().join("link")).unwrap();
+    // Semble reports the resolved paths.
+    let (real, other) = (real.canonicalize().unwrap(), other.canonicalize().unwrap());
+    let linked = Repo { name: "linked".into(), root: folder.path().join("link") };
+    let plain = Repo { name: "other".into(), root: other.clone() };
+    let text = json!({
+        "query": "q",
+        "results": [{"file_path": "real/a.rs", "start_line": 1, "end_line": 2, "score": 0.5}],
+        "repos": {"other": other, "real": real},
+    });
+    let replay = Replay::new(Ok(text_output(&text.to_string(), false)));
+
+    let answer = backend(&replay, None).search_all(&[linked.clone(), plain], &request("q", 5)).await.unwrap();
+
+    assert_eq!((answer.hits[0].repo.as_str(), &answer.hits[0].path), ("linked", &linked.root.join("a.rs")));
+}
+
 /// Answers with a recorded fixture, except for repositories named `hung*`, which never answer.
 struct HangsOnSomeRepos {
     answer: ToolOutput,

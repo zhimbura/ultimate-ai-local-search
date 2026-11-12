@@ -3,7 +3,8 @@
 //! Conventions:
 //! - Paths in hits and spans are absolute (`Repo::root` joined with the backend's relative path).
 //! - Line numbers are 1-based and inclusive.
-//! - A backend's `rank` is the 0-based position in its own ranked list for ONE repository.
+//! - A backend's `rank` is the 0-based position in its own ranked list for ONE repository, or for
+//!   all repositories when the backend searched them in one call (`SearchBackend::search_all`).
 
 use std::fmt;
 use std::path::PathBuf;
@@ -161,7 +162,8 @@ pub struct Hit {
     /// Text the backend returned for the hit, if any. May be long; render trims it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub snippet: Option<String>,
-    /// 0-based position in this backend's ranked list for this repository.
+    /// 0-based position in this backend's ranked list for this repository; for all repositories
+    /// when the backend searched them in one call (`SearchBackend::search_all`).
     pub rank: u32,
     /// The backend's own score, if it has one. Not comparable across backends or repositories.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -174,8 +176,9 @@ pub struct SearchRequest {
     /// The query after `classify::normalize` (quotes and slashes removed).
     pub query: String,
     pub kind: QueryKind,
-    /// How many hits to return for this repository: `output.max_limit × fusion.fetch_factor`,
-    /// the same for every page of a query.
+    /// How many hits to return for this repository (for all of them together in
+    /// `SearchBackend::search_all`): `output.max_limit × fusion.fetch_factor`, the same for every
+    /// page of a query.
     pub fetch_limit: usize,
     /// Gitignore-style globs, matched against the path relative to the repository root. A glob
     /// that starts with `!` deselects. A glob matches a file when it matches the file or one of
@@ -186,7 +189,8 @@ pub struct SearchRequest {
     pub paths: Vec<String>,
 }
 
-/// A successful backend answer for one repository.
+/// A successful backend answer for one repository, or for all repositories of one
+/// `SearchBackend::search_all` call.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct BackendAnswer {
     /// Ordered best first; `Hit::rank` equals the position in this vector.
@@ -280,7 +284,8 @@ pub struct SymbolSpan {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SourceRef {
     pub backend: BackendId,
-    /// The best (lowest) rank this backend gave to any hit in the group.
+    /// The best (lowest) rank of this backend's hits in the group, counted in the backend's one
+    /// list over all repositories (`fuse`, rule 2).
     pub rank: u32,
 }
 

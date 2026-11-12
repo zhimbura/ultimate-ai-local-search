@@ -1,6 +1,6 @@
 {
   "name": "pin_cap_and_ties",
-  "description": "Four repositories define Config; only 3 are pinned. Among pinned hits the higher score comes first, equal scores go by repository name. Pinned hits stay above a higher-scored unpinned hit.",
+  "description": "Four repositories define Config. They tie in ast-index's per-repository lists, so they take places 0-3 of its one list by repository name. Only 3 are pinned, by score; pinned hits stay above a higher-scored unpinned hit.",
   "query": "Config",
   "kind": "identifier",
   "spans": [],
@@ -111,15 +111,15 @@
       "pinned": true,
       "is_definition": true,
       "focus_line": 1,
-      "score": 0.027868852459016394,
+      "score": 0.027163338453661034,
       "sources": [
         [
           "ast-index",
-          0
+          2
         ],
         [
           "lexical",
-          0
+          1
         ]
       ]
     },
@@ -155,11 +155,11 @@
       "pinned": true,
       "is_definition": true,
       "focus_line": 1,
-      "score": 0.01639344262295082,
+      "score": 0.016129032258064516,
       "sources": [
         [
           "ast-index",
-          0
+          1
         ]
       ]
     },
@@ -175,11 +175,11 @@
       "pinned": false,
       "is_definition": false,
       "focus_line": 5,
-      "score": 0.03252247488101534,
+      "score": 0.0317780580075662,
       "sources": [
         [
           "ast-index",
-          1
+          4
         ],
         [
           "lexical",
@@ -203,11 +203,11 @@
       "pinned": false,
       "is_definition": true,
       "focus_line": 1,
-      "score": 0.01639344262295082,
+      "score": 0.015625,
       "sources": [
         [
           "ast-index",
-          0
+          3
         ]
       ]
     }

@@ -100,20 +100,29 @@ fn fusion_cases() -> Vec<FusionCase> {
 fn golden_files_are_well_formed() {
     assert!(classify_cases().len() >= 20);
     let cases = fusion_cases();
-    assert!(cases.len() >= 7);
+    assert!(cases.len() >= 8);
     for case in &cases {
         assert!(!case.description.is_empty() && !case.expected.is_empty(), "{}", case.name);
-        // Hit::rank is the position in one backend's list for one repository: 0..n without gaps.
-        let mut ranks: BTreeMap<(BackendId, &str), Vec<u32>> = BTreeMap::new();
+        // Hit::rank is the position in one backend's list: 0..n without gaps in every repository,
+        // or over all repositories when the backend searched them in one call.
+        let mut per_repo: BTreeMap<(BackendId, &str), Vec<u32>> = BTreeMap::new();
+        let mut per_backend: BTreeMap<BackendId, Vec<u32>> = BTreeMap::new();
         for hit in &case.hits {
-            ranks.entry((hit.backend, hit.repo.as_str())).or_default().push(hit.rank);
+            per_repo.entry((hit.backend, hit.repo.as_str())).or_default().push(hit.rank);
+            per_backend.entry(hit.backend).or_default().push(hit.rank);
         }
-        for ((backend, repo), mut list) in ranks {
-            list.sort_unstable();
-            let expected: Vec<u32> = (0..list.len() as u32).collect();
-            assert_eq!(list, expected, "{}: ranks of {backend} in {repo}", case.name);
+        for (backend, ranks) in &per_backend {
+            let in_every_repo = per_repo.iter().filter(|((of, _), _)| of == backend).all(|(_, list)| are_places(list));
+            assert!(in_every_repo || are_places(ranks), "{}: ranks of {backend} have gaps", case.name);
         }
     }
+}
+
+/// Whether `ranks` are the places 0..n of one list, in any order.
+fn are_places(ranks: &[u32]) -> bool {
+    let mut sorted = ranks.to_vec();
+    sorted.sort_unstable();
+    sorted.into_iter().eq(0..ranks.len() as u32)
 }
 
 #[test]

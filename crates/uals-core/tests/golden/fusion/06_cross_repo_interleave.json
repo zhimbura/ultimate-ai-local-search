@@ -1,6 +1,6 @@
 {
   "name": "cross_repo_interleave",
-  "description": "Ranks are per repository and raw scores are ignored, so the two repositories interleave: both first hits, then both second hits; ties go by repository name.",
+  "description": "Each repository was searched on its own, so semble's lists interleave in its one list over both repositories: both first hits, then both second hits; the raw score orders the hits of a round.",
   "query": "retry with exponential backoff",
   "kind": "natural",
   "spans": [],
@@ -83,11 +83,11 @@
       "pinned": false,
       "is_definition": false,
       "focus_line": 1,
-      "score": 0.01639344262295082,
+      "score": 0.016129032258064516,
       "sources": [
         [
           "semble",
-          0
+          1
         ]
       ]
     },
@@ -103,11 +103,11 @@
       "pinned": false,
       "is_definition": false,
       "focus_line": 19,
-      "score": 0.016129032258064516,
+      "score": 0.015873015873015872,
       "sources": [
         [
           "semble",
-          1
+          2
         ]
       ]
     },
@@ -123,11 +123,11 @@
       "pinned": false,
       "is_definition": false,
       "focus_line": 1,
-      "score": 0.016129032258064516,
+      "score": 0.015625,
       "sources": [
         [
           "semble",
-          1
+          3
         ]
       ]
     }

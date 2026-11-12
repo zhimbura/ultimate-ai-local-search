@@ -1,6 +1,6 @@
-//! The orchestrator against fake backends: deadlines, cancellation, panics, statuses, fusion with
-//! symbol spans and snippets from disk, paging, the usages fallback, index status, refresh and
-//! the background index update.
+//! The orchestrator against fake backends: deadlines, cancellation, panics, statuses, one call for
+//! all repositories, fusion with symbol spans and snippets from disk, paging, the usages fallback,
+//! index status, refresh and the background index update.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -80,6 +80,72 @@ impl SearchBackend for FakeSearch {
         tokio::time::sleep(self.delay).await;
         probe.finished = true;
         (self.reply)(repo, request)
+    }
+
+    async fn index_state(&self, repo: &Repo) -> IndexState {
+        IndexState {
+            backend: self.id,
+            repo: repo.name.clone(),
+            indexed: true,
+            updated_at_ms: None,
+            stale: None,
+            detail: None,
+        }
+    }
+}
+
+type SearchAllReply = dyn Fn(&[Repo]) -> Result<BackendAnswer, BackendError> + Send + Sync;
+
+/// A search backend that searches all repositories in one call: it waits `delay`, then answers
+/// with `reply`. It records the repositories of every call.
+struct FakeSearchAll {
+    id: BackendId,
+    delay: Duration,
+    reply: Box<SearchAllReply>,
+    calls: Mutex<Vec<Vec<String>>>,
+}
+
+impl FakeSearchAll {
+    fn new(
+        id: BackendId,
+        reply: impl Fn(&[Repo]) -> Result<BackendAnswer, BackendError> + Send + Sync + 'static,
+    ) -> Self {
+        Self { id, delay: Duration::ZERO, reply: Box::new(reply), calls: Mutex::new(Vec::new()) }
+    }
+
+    fn slow(mut self, delay: Duration) -> Self {
+        self.delay = delay;
+        self
+    }
+
+    /// The repository names of every call so far.
+    fn calls(&self) -> Vec<Vec<String>> {
+        self.calls.lock().expect("call log").clone()
+    }
+}
+
+#[async_trait]
+impl SearchBackend for FakeSearchAll {
+    fn id(&self) -> BackendId {
+        self.id
+    }
+
+    fn supports(&self, _kind: QueryKind) -> bool {
+        true
+    }
+
+    async fn search(&self, _repo: &Repo, _request: &SearchRequest) -> Result<BackendAnswer, BackendError> {
+        Err(BackendError::Failed("asked for one repository".into()))
+    }
+
+    fn searches_all_at_once(&self) -> bool {
+        true
+    }
+
+    async fn search_all(&self, repos: &[Repo], _request: &SearchRequest) -> Result<BackendAnswer, BackendError> {
+        self.calls.lock().expect("call log").push(repos.iter().map(|repo| repo.name.clone()).collect());
+        tokio::time::sleep(self.delay).await;
+        (self.reply)(repos)
     }
 
     async fn index_state(&self, repo: &Repo) -> IndexState {
@@ -365,6 +431,120 @@ async fn semantic_gets_the_cold_deadline_until_it_has_answered_once() {
 
     assert_eq!(first[0].status, BackendStatus::Ok);
     assert_eq!(second[0].status, BackendStatus::Timeout);
+}
+
+#[tokio::test]
+async fn a_backend_that_searches_all_repositories_is_asked_once_and_its_answer_is_split_by_repository() {
+    let repos =
+        [repo("app", Path::new("/ws/app")), repo("web", Path::new("/ws/web")), repo("tools", Path::new("/ws/tools"))];
+    let lexical = Arc::new(FakeSearch::new(BackendId::Lexical, |repo, _| {
+        Ok(answer(vec![hit(BackendId::Lexical, repo, "A.kt", (3, 3), 0)]))
+    }));
+    let semble = Arc::new(FakeSearchAll::new(BackendId::Semble, |repos| {
+        let (app, web, ghost) = (&repos[0], &repos[1], repo("ghost", Path::new("/ws/ghost")));
+        Ok(answer(vec![
+            hit(BackendId::Semble, web, "retry.ts", (1, 9), 0),
+            hit(BackendId::Semble, app, "Retry.kt", (1, 9), 1),
+            hit(BackendId::Semble, &ghost, "Ghost.kt", (1, 9), 2),
+            hit(BackendId::Semble, web, "http.ts", (1, 9), 3),
+        ]))
+    }));
+    let orchestrator = search_only(vec![lexical.clone(), semble.clone()], Config::default());
+
+    let results = orchestrator.collect(&repos, &request("RetryPolicy", QueryKind::Identifier)).await;
+
+    assert_eq!(semble.calls(), vec![vec!["app", "web", "tools"]]);
+    assert_eq!(lexical.calls.load(Ordering::SeqCst), 3);
+    let ok = |backend, repo: &str| (backend, repo.to_owned(), BackendStatus::Ok);
+    assert_eq!(
+        statuses(&results),
+        vec![
+            ok(BackendId::Lexical, "app"),
+            ok(BackendId::Semble, "app"),
+            ok(BackendId::Lexical, "web"),
+            ok(BackendId::Semble, "web"),
+            ok(BackendId::Lexical, "tools"),
+            ok(BackendId::Semble, "tools"),
+        ]
+    );
+    let semble_hits: Vec<(String, Vec<(PathBuf, u32)>)> = results
+        .iter()
+        .filter(|result| result.backend == BackendId::Semble)
+        .map(|result| (result.repo.clone(), result.hits.iter().map(|hit| (hit.path.clone(), hit.rank)).collect()))
+        .collect();
+    assert_eq!(
+        semble_hits,
+        vec![
+            ("app".to_owned(), vec![(PathBuf::from("/ws/app/Retry.kt"), 1)]),
+            ("web".to_owned(), vec![(PathBuf::from("/ws/web/retry.ts"), 0), (PathBuf::from("/ws/web/http.ts"), 3)]),
+            ("tools".to_owned(), vec![]),
+        ],
+        "ranks stay those over all repositories; the hit of a repository that was not asked is dropped"
+    );
+}
+
+#[tokio::test]
+async fn a_failed_or_late_call_for_all_repositories_is_reported_for_every_repository() {
+    let repos = [repo("app", Path::new("/ws/app")), repo("web", Path::new("/ws/web"))];
+    let unavailable: Arc<dyn SearchBackend> =
+        Arc::new(FakeSearchAll::new(BackendId::Semble, |_| Err(BackendError::Unavailable("no index".into()))));
+    let late: Arc<dyn SearchBackend> =
+        Arc::new(FakeSearchAll::new(BackendId::Semble, |_| Ok(answer(Vec::new()))).slow(Duration::from_secs(10)));
+    let natural = request("where is the backend host chosen", QueryKind::Natural);
+
+    for (backend, status) in
+        [(unavailable, BackendStatus::Unavailable { reason: "no index".into() }), (late, BackendStatus::Timeout)]
+    {
+        let mut config = Config::default();
+        config.deadlines.semantic_cold_ms = 100;
+        let results = search_only(vec![backend], config).collect(&repos, &natural).await;
+
+        assert_eq!(
+            statuses(&results),
+            vec![(BackendId::Semble, "app".into(), status.clone()), (BackendId::Semble, "web".into(), status)]
+        );
+        assert!(results.iter().all(|result| result.hits.is_empty()));
+    }
+}
+
+#[tokio::test]
+async fn the_call_for_all_repositories_is_cold_while_any_of_them_is_cold() {
+    let (app, web) = (repo("app", Path::new("/ws/app")), repo("web", Path::new("/ws/web")));
+    let semble =
+        Arc::new(FakeSearchAll::new(BackendId::Semble, |_| Ok(answer(Vec::new()))).slow(Duration::from_millis(300)));
+    let mut config = Config::default();
+    config.deadlines.semantic_ms = 50;
+    config.deadlines.semantic_cold_ms = 3_000;
+    let orchestrator = search_only(vec![semble], config);
+    let natural = request("where is the backend host chosen", QueryKind::Natural);
+
+    let app_only = orchestrator.collect(std::slice::from_ref(&app), &natural).await;
+    let web_still_cold = orchestrator.collect(&[app.clone(), web.clone()], &natural).await;
+    let both_warm = orchestrator.collect(&[app, web], &natural).await;
+
+    assert_eq!(statuses(&app_only), vec![(BackendId::Semble, "app".into(), BackendStatus::Ok)]);
+    assert!(web_still_cold.iter().all(|result| result.status == BackendStatus::Ok), "{web_still_cold:?}");
+    assert!(both_warm.iter().all(|result| result.status == BackendStatus::Timeout), "{both_warm:?}");
+}
+
+#[tokio::test]
+async fn the_answer_keeps_the_order_of_a_list_over_all_repositories() {
+    let (app, web) = (repo("app", Path::new("/nonexistent/uals/app")), repo("web", Path::new("/nonexistent/uals/web")));
+    let semble = Arc::new(FakeSearchAll::new(BackendId::Semble, |repos| {
+        Ok(answer(vec![
+            hit(BackendId::Semble, &repos[1], "retry.ts", (1, 9), 0),
+            hit(BackendId::Semble, &repos[0], "Retry.kt", (1, 9), 1),
+        ]))
+    }));
+    let orchestrator = search_only(vec![semble], Config::default());
+
+    let response = orchestrator
+        .search(&[app, web], &SearchParams::new("where is a failed request retried"))
+        .await
+        .expect("search");
+
+    let repos: Vec<&str> = response.hits.iter().map(|hit| hit.repo.as_str()).collect();
+    assert_eq!(repos, ["web", "app"], "with ranks per repository both would be first, and app would win by name");
 }
 
 #[tokio::test]
