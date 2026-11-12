@@ -14,8 +14,5 @@ Thumbs.db
 .idea/
 .vscode/
 
-# Smoke-test scratch
-.smoke-test/
-
 # Rust build output
 /target/
