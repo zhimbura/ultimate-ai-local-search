@@ -29,6 +29,6 @@ env_load_file() {
     esac
     if [ "$mode" = defaults ] && [ -n "${!key:-}" ]; then continue; fi
     printf -v "$key" '%s' "$val"
-    export "$key"
+    export "${key?}"                                         # exports the variable NAMED by $key
   done < "$file"
 }

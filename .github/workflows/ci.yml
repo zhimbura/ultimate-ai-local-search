@@ -44,5 +44,5 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Shellcheck
-        run: shellcheck install.sh uninstall.sh scripts/*.sh .githooks/pre-commit
+      - name: Shellcheck (warnings and errors)
+        run: shellcheck -x -S warning install.sh uninstall.sh scripts/*.sh scripts/lib/*.sh .githooks/pre-commit

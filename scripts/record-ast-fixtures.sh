@@ -154,7 +154,9 @@ rec stale_after_update_metadata json sample-android query "SELECT key, value FRO
 rec stale_update_noop txt sample-android update
 export WS="$WS_SAVE"
 
-n_json=$(ls "$OUT"/*.json | grep -vc '\.meta\.json$' || true)
-n_txt=$(ls "$OUT"/*.txt | wc -l | tr -d ' ')
+n_json=0
+n_txt=0
+for f in "$OUT"/*.json; do [[ $f == *.meta.json ]] || n_json=$((n_json + 1)); done
+for f in "$OUT"/*.txt; do [[ -e $f ]] && n_txt=$((n_txt + 1)); done
 echo "✓ done: $n_json json + $n_txt txt fixtures (+ meta) in ${OUT#"$ROOT"/}"
 echo "! timestamps (metadata, files.mtime) and duration_ms differ between runs"
