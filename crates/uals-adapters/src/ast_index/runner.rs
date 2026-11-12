@@ -72,12 +72,19 @@ impl ProcessRunner {
     }
 }
 
+/// `Unavailable` when `root` is not a folder, for example after the repository moved.
+pub fn require_folder(root: &Path) -> Result<(), BackendError> {
+    if root.is_dir() {
+        Ok(())
+    } else {
+        Err(BackendError::Unavailable(format!("repository folder {} does not exist", root.display())))
+    }
+}
+
 #[async_trait]
 impl AstIndexRunner for ProcessRunner {
     async fn run(&self, root: &Path, args: &[String]) -> Result<CommandOutput, BackendError> {
-        if !root.is_dir() {
-            return Err(BackendError::Unavailable(format!("repository folder {} does not exist", root.display())));
-        }
+        require_folder(root)?;
         let program =
             which::which(&self.binary).map_err(|_| BackendError::Unavailable("ast-index is not installed".into()))?;
         let output = Command::new(program)

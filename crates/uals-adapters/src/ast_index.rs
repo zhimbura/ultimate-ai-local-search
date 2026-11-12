@@ -26,8 +26,9 @@ use uals_core::types::{
 use crate::path_filter::PathFilter;
 use parse::{
     Explore, ExploreSymbol, FileStampRow, QueryResult, STATE_SQL, SpanRow, StateRow, SymbolList, UsageItem, UsageList,
-    definition_extents_sql, file_stamps_sql, normalize_kind, parse_json, spans_sql,
+    definition_extents_sql, file_stamps_sql, missing_index, normalize_kind, parse_json, spans_sql,
 };
+use runner::require_folder;
 pub use runner::{AstIndexRunner, CommandOutput, ProcessRunner};
 
 /// Files per `IN (...)` list in one `spans` query.
@@ -54,6 +55,17 @@ impl AstIndexBackend {
     /// Builds the backend over another runner. Tests use it to feed recorded outputs.
     pub fn with_runner(runner: Arc<dyn AstIndexRunner>) -> Self {
         Self { runner }
+    }
+
+    /// `Unavailable` when `repo` has no index. Without one, ast-index answers some commands with an
+    /// empty list, as if the symbol were not used, and creates a stub cache folder for the
+    /// repository; so nothing is run. A missing folder is named as the cause.
+    fn require_index(&self, repo: &Repo) -> Result<(), BackendError> {
+        if self.runner.index_exists(&repo.root) {
+            return Ok(());
+        }
+        require_folder(&repo.root)?;
+        Err(missing_index())
     }
 
     async fn run_json<T: serde::de::DeserializeOwned>(
@@ -358,6 +370,7 @@ impl SearchBackend for AstIndexBackend {
     }
 
     async fn search(&self, repo: &Repo, request: &SearchRequest) -> Result<BackendAnswer, BackendError> {
+        self.require_index(repo)?;
         let hits = match request.kind {
             QueryKind::Identifier => self.identifier_hits(repo, request).await?,
             QueryKind::Natural => self.natural_hits(repo, request).await?,
@@ -416,6 +429,7 @@ impl UsageSource for AstIndexBackend {
     }
 
     async fn usages(&self, repo: &Repo, symbol: &str, limit: usize) -> Result<UsageAnswer, BackendError> {
+        self.require_index(repo)?;
         let name = bare_name(symbol);
         if name.is_empty() {
             return Ok(UsageAnswer { usages: Vec::new(), complete: true, stale: None });
@@ -444,6 +458,7 @@ impl UsageSource for AstIndexBackend {
 #[async_trait]
 impl SpanProvider for AstIndexBackend {
     async fn spans(&self, repo: &Repo, files: &[PathBuf]) -> Result<Vec<SymbolSpan>, BackendError> {
+        self.require_index(repo)?;
         let mut relative: Vec<String> = files.iter().filter_map(|file| relative_path(&repo.root, file)).collect();
         relative.sort();
         relative.dedup();

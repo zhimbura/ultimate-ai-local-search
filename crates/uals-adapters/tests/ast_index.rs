@@ -436,11 +436,39 @@ async fn unparsable_output_is_a_failure() {
 }
 
 #[tokio::test]
+async fn a_repository_without_an_index_is_unavailable_and_ast_index_is_not_run() {
+    // ast-index answers `usages` with an empty list for a repository it has not indexed, and any
+    // command creates a stub cache folder for it.
+    let temp = tempfile::tempdir().unwrap();
+    let repo = Repo { name: "sample-tools".into(), root: temp.path().to_path_buf() };
+    let runner = Arc::new(FakeRunner::new().without_index().on("usages", recorded("usages_hostselector.json")));
+    let backend = backend(&runner);
+    let files = vec![temp.path().join("A.kt")];
+
+    let results = [
+        backend.search(&repo, &identifier("HostSelector", 5)).await.map(|_| ()),
+        backend.usages(&repo, "HostSelector", 5).await.map(|_| ()),
+        backend.spans(&repo, &files).await.map(|_| ()),
+    ];
+
+    for result in results {
+        match result {
+            Err(BackendError::Unavailable(reason)) => assert!(reason.contains("ast-index rebuild"), "{reason}"),
+            other => panic!("expected Unavailable, got {other:?}"),
+        }
+    }
+    assert_eq!(runner.calls(), Vec::new());
+}
+
+#[tokio::test]
 async fn missing_binary_is_unavailable() {
     let temp = tempfile::tempdir().unwrap();
     let repo = Repo { name: "sample-android".into(), root: temp.path().to_path_buf() };
-    let backend =
-        AstIndexBackend::new(AstIndexConfig { binary: "uals-no-such-ast-index-binary".into(), update_on_start: false });
+    // An index exists, so the search gets as far as running the binary.
+    let database = temp.path().join("index.db");
+    std::fs::write(&database, "").unwrap();
+    let runner = ProcessRunner::new("uals-no-such-ast-index-binary").with_env("AST_INDEX_DB_PATH", &database);
+    let backend = AstIndexBackend::with_runner(Arc::new(runner));
     let error = backend.search(&repo, &identifier("HostSelector", 5)).await.unwrap_err();
     assert_eq!(error, BackendError::Unavailable("ast-index is not installed".into()));
     let error = backend.refresh(&repo, false).await.unwrap_err();
