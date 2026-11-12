@@ -1,0 +1,843 @@
+{
+ "repos": [
+  {
+   "name": "sample-android",
+   "root": "/ws/sample-android"
+  },
+  {
+   "name": "sample-web",
+   "root": "/ws/sample-web"
+  },
+  {
+   "name": "sample-tools",
+   "root": "/ws/sample-tools"
+  }
+ ],
+ "search": {
+  "HostSelector": {
+   "query": "HostSelector",
+   "kind": "identifier",
+   "total": 1,
+   "offset": 0,
+   "hits": [
+    {
+     "repo": "sample-android",
+     "path": "/ws/sample-android/network/src/main/kotlin/sample/network/HostSelector.kt",
+     "lines": {
+      "start": 10,
+      "end": 33
+     },
+     "is_definition": false,
+     "pinned": false,
+     "focus_line": 10,
+     "score": 1.0,
+     "sources": [
+      {
+       "backend": "lexical",
+       "rank": 0
+      }
+     ]
+    }
+   ],
+   "backends": [
+    {
+     "backend": "lexical",
+     "repo": "sample-android",
+     "status": {
+      "state": "ok"
+     },
+     "elapsed_ms": 1
+    },
+    {
+     "backend": "lexical",
+     "repo": "sample-web",
+     "status": {
+      "state": "ok"
+     },
+     "elapsed_ms": 1
+    },
+    {
+     "backend": "lexical",
+     "repo": "sample-tools",
+     "status": {
+      "state": "ok"
+     },
+     "elapsed_ms": 1
+    }
+   ]
+  },
+  "RetryPolicy": {
+   "query": "RetryPolicy",
+   "kind": "identifier",
+   "total": 1,
+   "offset": 0,
+   "hits": [
+    {
+     "repo": "sample-android",
+     "path": "/ws/sample-android/core/src/main/kotlin/sample/core/RetryPolicy.kt",
+     "lines": {
+      "start": 7,
+      "end": 18
+     },
+     "is_definition": false,
+     "pinned": false,
+     "focus_line": 7,
+     "score": 1.0,
+     "sources": [
+      {
+       "backend": "lexical",
+       "rank": 0
+      }
+     ]
+    }
+   ],
+   "backends": [
+    {
+     "backend": "lexical",
+     "repo": "sample-android",
+     "status": {
+      "state": "ok"
+     },
+     "elapsed_ms": 1
+    },
+    {
+     "backend": "lexical",
+     "repo": "sample-web",
+     "status": {
+      "state": "ok"
+     },
+     "elapsed_ms": 1
+    },
+    {
+     "backend": "lexical",
+     "repo": "sample-tools",
+     "status": {
+      "state": "ok"
+     },
+     "elapsed_ms": 1
+    }
+   ]
+  },
+  "fetchWithRetry": {
+   "query": "fetchWithRetry",
+   "kind": "identifier",
+   "total": 1,
+   "offset": 0,
+   "hits": [
+    {
+     "repo": "sample-web",
+     "path": "/ws/sample-web/src/http/fetchWithRetry.ts",
+     "lines": {
+      "start": 5,
+      "end": 24
+     },
+     "is_definition": false,
+     "pinned": false,
+     "focus_line": 5,
+     "score": 1.0,
+     "sources": [
+      {
+       "backend": "lexical",
+       "rank": 0
+      }
+     ]
+    }
+   ],
+   "backends": [
+    {
+     "backend": "lexical",
+     "repo": "sample-android",
+     "status": {
+      "state": "ok"
+     },
+     "elapsed_ms": 1
+    },
+    {
+     "backend": "lexical",
+     "repo": "sample-web",
+     "status": {
+      "state": "ok"
+     },
+     "elapsed_ms": 1
+    },
+    {
+     "backend": "lexical",
+     "repo": "sample-tools",
+     "status": {
+      "state": "ok"
+     },
+     "elapsed_ms": 1
+    }
+   ]
+  },
+  "slugify": {
+   "query": "slugify",
+   "kind": "identifier",
+   "total": 1,
+   "offset": 0,
+   "hits": [
+    {
+     "repo": "sample-tools",
+     "path": "/ws/sample-tools/sample_tools/text.py",
+     "lines": {
+      "start": 6,
+      "end": 8
+     },
+     "is_definition": false,
+     "pinned": false,
+     "focus_line": 6,
+     "score": 1.0,
+     "sources": [
+      {
+       "backend": "lexical",
+       "rank": 0
+      }
+     ]
+    }
+   ],
+   "backends": [
+    {
+     "backend": "lexical",
+     "repo": "sample-android",
+     "status": {
+      "state": "ok"
+     },
+     "elapsed_ms": 1
+    },
+    {
+     "backend": "lexical",
+     "repo": "sample-web",
+     "status": {
+      "state": "ok"
+     },
+     "elapsed_ms": 1
+    },
+    {
+     "backend": "lexical",
+     "repo": "sample-tools",
+     "status": {
+      "state": "ok"
+     },
+     "elapsed_ms": 1
+    }
+   ]
+  },
+  "where is the backend host chosen": {
+   "query": "where is the backend host chosen",
+   "kind": "natural",
+   "total": 2,
+   "offset": 0,
+   "hits": [
+    {
+     "repo": "sample-android",
+     "path": "/ws/sample-android/network/src/main/kotlin/sample/network/ConfigLoader.kt",
+     "lines": {
+      "start": 20,
+      "end": 35
+     },
+     "is_definition": false,
+     "pinned": false,
+     "focus_line": 20,
+     "score": 1.0,
+     "sources": [
+      {
+       "backend": "lexical",
+       "rank": 0
+      }
+     ]
+    },
+    {
+     "repo": "sample-android",
+     "path": "/ws/sample-android/network/src/main/kotlin/sample/network/HostSelector.kt",
+     "lines": {
+      "start": 17,
+      "end": 23
+     },
+     "is_definition": false,
+     "pinned": false,
+     "focus_line": 17,
+     "score": 0.95,
+     "sources": [
+      {
+       "backend": "lexical",
+       "rank": 1
+      }
+     ]
+    }
+   ],
+   "backends": [
+    {
+     "backend": "lexical",
+     "repo": "sample-android",
+     "status": {
+      "state": "ok"
+     },
+     "elapsed_ms": 1
+    },
+    {
+     "backend": "lexical",
+     "repo": "sample-web",
+     "status": {
+      "state": "ok"
+     },
+     "elapsed_ms": 1
+    },
+    {
+     "backend": "lexical",
+     "repo": "sample-tools",
+     "status": {
+      "state": "ok"
+     },
+     "elapsed_ms": 1
+    }
+   ]
+  },
+  "how does the retry delay grow": {
+   "query": "how does the retry delay grow",
+   "kind": "natural",
+   "total": 1,
+   "offset": 0,
+   "hits": [
+    {
+     "repo": "sample-android",
+     "path": "/ws/sample-android/core/src/main/kotlin/sample/core/RetryPolicy.kt",
+     "lines": {
+      "start": 14,
+      "end": 17
+     },
+     "is_definition": false,
+     "pinned": false,
+     "focus_line": 14,
+     "score": 1.0,
+     "sources": [
+      {
+       "backend": "lexical",
+       "rank": 0
+      }
+     ]
+    }
+   ],
+   "backends": [
+    {
+     "backend": "lexical",
+     "repo": "sample-android",
+     "status": {
+      "state": "ok"
+     },
+     "elapsed_ms": 1
+    },
+    {
+     "backend": "lexical",
+     "repo": "sample-web",
+     "status": {
+      "state": "ok"
+     },
+     "elapsed_ms": 1
+    },
+    {
+     "backend": "lexical",
+     "repo": "sample-tools",
+     "status": {
+      "state": "ok"
+     },
+     "elapsed_ms": 1
+    }
+   ]
+  },
+  "evict the oldest cache entry when full": {
+   "query": "evict the oldest cache entry when full",
+   "kind": "natural",
+   "total": 1,
+   "offset": 0,
+   "hits": [
+    {
+     "repo": "sample-tools",
+     "path": "/ws/sample-tools/sample_tools/cache.py",
+     "lines": {
+      "start": 17,
+      "end": 21
+     },
+     "is_definition": false,
+     "pinned": false,
+     "focus_line": 17,
+     "score": 1.0,
+     "sources": [
+      {
+       "backend": "lexical",
+       "rank": 0
+      }
+     ]
+    }
+   ],
+   "backends": [
+    {
+     "backend": "lexical",
+     "repo": "sample-android",
+     "status": {
+      "state": "ok"
+     },
+     "elapsed_ms": 1
+    },
+    {
+     "backend": "lexical",
+     "repo": "sample-web",
+     "status": {
+      "state": "ok"
+     },
+     "elapsed_ms": 1
+    },
+    {
+     "backend": "lexical",
+     "repo": "sample-tools",
+     "status": {
+      "state": "ok"
+     },
+     "elapsed_ms": 1
+    }
+   ]
+  },
+  "retry with exponential backoff": {
+   "query": "retry with exponential backoff",
+   "kind": "natural",
+   "total": 2,
+   "offset": 0,
+   "hits": [
+    {
+     "repo": "sample-android",
+     "path": "/ws/sample-android/core/src/main/kotlin/sample/core/RetryPolicy.kt",
+     "lines": {
+      "start": 14,
+      "end": 17
+     },
+     "is_definition": false,
+     "pinned": false,
+     "focus_line": 14,
+     "score": 1.0,
+     "sources": [
+      {
+       "backend": "lexical",
+       "rank": 0
+      }
+     ]
+    },
+    {
+     "repo": "sample-web",
+     "path": "/ws/sample-web/src/http/fetchWithRetry.ts",
+     "lines": {
+      "start": 5,
+      "end": 24
+     },
+     "is_definition": false,
+     "pinned": false,
+     "focus_line": 5,
+     "score": 0.95,
+     "sources": [
+      {
+       "backend": "lexical",
+       "rank": 1
+      }
+     ]
+    }
+   ],
+   "backends": [
+    {
+     "backend": "lexical",
+     "repo": "sample-android",
+     "status": {
+      "state": "ok"
+     },
+     "elapsed_ms": 1
+    },
+    {
+     "backend": "lexical",
+     "repo": "sample-web",
+     "status": {
+      "state": "ok"
+     },
+     "elapsed_ms": 1
+    },
+    {
+     "backend": "lexical",
+     "repo": "sample-tools",
+     "status": {
+      "state": "ok"
+     },
+     "elapsed_ms": 1
+    }
+   ]
+  },
+  "refresh the token when the session expires": {
+   "query": "refresh the token when the session expires",
+   "kind": "natural",
+   "total": 1,
+   "offset": 0,
+   "hits": [
+    {
+     "repo": "sample-web",
+     "path": "/ws/sample-web/src/auth/session.ts",
+     "lines": {
+      "start": 10,
+      "end": 21
+     },
+     "is_definition": false,
+     "pinned": false,
+     "focus_line": 10,
+     "score": 1.0,
+     "sources": [
+      {
+       "backend": "lexical",
+       "rank": 0
+      }
+     ]
+    }
+   ],
+   "backends": [
+    {
+     "backend": "lexical",
+     "repo": "sample-android",
+     "status": {
+      "state": "ok"
+     },
+     "elapsed_ms": 1
+    },
+    {
+     "backend": "lexical",
+     "repo": "sample-web",
+     "status": {
+      "state": "ok"
+     },
+     "elapsed_ms": 1
+    },
+    {
+     "backend": "lexical",
+     "repo": "sample-tools",
+     "status": {
+      "state": "ok"
+     },
+     "elapsed_ms": 1
+    }
+   ]
+  },
+  "which gradle modules are included in the build": {
+   "query": "which gradle modules are included in the build",
+   "kind": "natural",
+   "total": 1,
+   "offset": 0,
+   "hits": [
+    {
+     "repo": "sample-android",
+     "path": "/ws/sample-android/settings.gradle.kts",
+     "lines": {
+      "start": 1,
+      "end": 3
+     },
+     "is_definition": false,
+     "pinned": false,
+     "focus_line": 1,
+     "score": 1.0,
+     "sources": [
+      {
+       "backend": "lexical",
+       "rank": 0
+      }
+     ]
+    }
+   ],
+   "backends": [
+    {
+     "backend": "lexical",
+     "repo": "sample-android",
+     "status": {
+      "state": "ok"
+     },
+     "elapsed_ms": 1
+    },
+    {
+     "backend": "lexical",
+     "repo": "sample-web",
+     "status": {
+      "state": "ok"
+     },
+     "elapsed_ms": 1
+    },
+    {
+     "backend": "lexical",
+     "repo": "sample-tools",
+     "status": {
+      "state": "ok"
+     },
+     "elapsed_ms": 1
+    }
+   ]
+  },
+  "python version required by the tools package": {
+   "query": "python version required by the tools package",
+   "kind": "natural",
+   "total": 1,
+   "offset": 0,
+   "hits": [
+    {
+     "repo": "sample-tools",
+     "path": "/ws/sample-tools/pyproject.toml",
+     "lines": {
+      "start": 1,
+      "end": 4
+     },
+     "is_definition": false,
+     "pinned": false,
+     "focus_line": 1,
+     "score": 1.0,
+     "sources": [
+      {
+       "backend": "lexical",
+       "rank": 0
+      }
+     ]
+    }
+   ],
+   "backends": [
+    {
+     "backend": "lexical",
+     "repo": "sample-android",
+     "status": {
+      "state": "ok"
+     },
+     "elapsed_ms": 1
+    },
+    {
+     "backend": "lexical",
+     "repo": "sample-web",
+     "status": {
+      "state": "ok"
+     },
+     "elapsed_ms": 1
+    },
+    {
+     "backend": "lexical",
+     "repo": "sample-tools",
+     "status": {
+      "state": "ok"
+     },
+     "elapsed_ms": 1
+    }
+   ]
+  },
+  "which module does the app depend on": {
+   "query": "which module does the app depend on",
+   "kind": "natural",
+   "total": 1,
+   "offset": 0,
+   "hits": [
+    {
+     "repo": "sample-android",
+     "path": "/ws/sample-android/app/build.gradle.kts",
+     "lines": {
+      "start": 1,
+      "end": 8
+     },
+     "is_definition": false,
+     "pinned": false,
+     "focus_line": 1,
+     "score": 1.0,
+     "sources": [
+      {
+       "backend": "lexical",
+       "rank": 0
+      }
+     ]
+    }
+   ],
+   "backends": [
+    {
+     "backend": "lexical",
+     "repo": "sample-android",
+     "status": {
+      "state": "ok"
+     },
+     "elapsed_ms": 1
+    },
+    {
+     "backend": "lexical",
+     "repo": "sample-web",
+     "status": {
+      "state": "ok"
+     },
+     "elapsed_ms": 1
+    },
+    {
+     "backend": "lexical",
+     "repo": "sample-tools",
+     "status": {
+      "state": "ok"
+     },
+     "elapsed_ms": 1
+    }
+   ]
+  }
+ },
+ "usages": {
+  "RetryPolicy": {
+   "symbol": "RetryPolicy",
+   "total": 7,
+   "offset": 0,
+   "repos": [
+    {
+     "repo": "sample-android",
+     "source": "ast-index",
+     "status": {
+      "state": "ok"
+     },
+     "usages": [
+      {
+       "repo": "sample-android",
+       "path": "/ws/sample-android/core/src/main/kotlin/sample/core/RetryPolicy.kt",
+       "line": 7
+      },
+      {
+       "repo": "sample-android",
+       "path": "/ws/sample-android/network/src/main/kotlin/sample/network/ConfigLoader.kt",
+       "line": 3
+      },
+      {
+       "repo": "sample-android",
+       "path": "/ws/sample-android/network/src/main/kotlin/sample/network/ConfigLoader.kt",
+       "line": 13
+      },
+      {
+       "repo": "sample-android",
+       "path": "/ws/sample-android/network/src/main/kotlin/sample/network/ConfigLoader.kt",
+       "line": 17
+      },
+      {
+       "repo": "sample-android",
+       "path": "/ws/sample-android/app/src/main/kotlin/sample/app/App.kt",
+       "line": 4
+      },
+      {
+       "repo": "sample-android",
+       "path": "/ws/sample-android/app/src/main/kotlin/sample/app/App.kt",
+       "line": 16
+      },
+      {
+       "repo": "sample-android",
+       "path": "/ws/sample-android/core/src/test/kotlin/sample/core/RetryPolicyTest.kt",
+       "line": 9
+      }
+     ]
+    }
+   ],
+   "complete": true
+  },
+  "HostSelector": {
+   "symbol": "HostSelector",
+   "total": 5,
+   "offset": 0,
+   "repos": [
+    {
+     "repo": "sample-android",
+     "source": "ast-index",
+     "status": {
+      "state": "ok"
+     },
+     "usages": [
+      {
+       "repo": "sample-android",
+       "path": "/ws/sample-android/network/src/main/kotlin/sample/network/HostSelector.kt",
+       "line": 10
+      },
+      {
+       "repo": "sample-android",
+       "path": "/ws/sample-android/network/src/main/kotlin/sample/network/ConfigLoader.kt",
+       "line": 13
+      },
+      {
+       "repo": "sample-android",
+       "path": "/ws/sample-android/network/src/main/kotlin/sample/network/ConfigLoader.kt",
+       "line": 16
+      },
+      {
+       "repo": "sample-android",
+       "path": "/ws/sample-android/app/src/main/kotlin/sample/app/App.kt",
+       "line": 6
+      },
+      {
+       "repo": "sample-android",
+       "path": "/ws/sample-android/app/src/main/kotlin/sample/app/App.kt",
+       "line": 11
+      }
+     ]
+    }
+   ],
+   "complete": true
+  },
+  "fetchWithRetry": {
+   "symbol": "fetchWithRetry",
+   "total": 4,
+   "offset": 0,
+   "repos": [
+    {
+     "repo": "sample-web",
+     "source": "ast-index",
+     "status": {
+      "state": "ok"
+     },
+     "usages": [
+      {
+       "repo": "sample-web",
+       "path": "/ws/sample-web/src/http/fetchWithRetry.ts",
+       "line": 5
+      },
+      {
+       "repo": "sample-web",
+       "path": "/ws/sample-web/src/auth/session.ts",
+       "line": 1
+      },
+      {
+       "repo": "sample-web",
+       "path": "/ws/sample-web/src/auth/session.ts",
+       "line": 14
+      },
+      {
+       "repo": "sample-web",
+       "path": "/ws/sample-web/src/index.ts",
+       "line": 3
+      }
+     ]
+    }
+   ],
+   "complete": true
+  },
+  "slugify": {
+   "symbol": "slugify",
+   "total": 3,
+   "offset": 0,
+   "repos": [
+    {
+     "repo": "sample-tools",
+     "source": "ast-index",
+     "status": {
+      "state": "ok"
+     },
+     "usages": [
+      {
+       "repo": "sample-tools",
+       "path": "/ws/sample-tools/sample_tools/text.py",
+       "line": 6
+      },
+      {
+       "repo": "sample-tools",
+       "path": "/ws/sample-tools/sample_tools/__init__.py",
+       "line": 2
+      },
+      {
+       "repo": "sample-tools",
+       "path": "/ws/sample-tools/sample_tools/__init__.py",
+       "line": 4
+      }
+     ]
+    }
+   ],
+   "complete": true
+  }
+ }
+}

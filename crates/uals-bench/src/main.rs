@@ -1,7 +1,6 @@
-//! `uals-bench`: Hit@k, MRR, latency and output size of uals search against a gold query set
-//! (track T8). The repository holds only the public fixture gold set; private gold sets stay
-//! outside it.
+//! Command line of `uals-bench`; see `uals_bench::cli`.
 
-fn main() -> anyhow::Result<()> {
-    anyhow::bail!("uals-bench is not implemented yet (track T8)")
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    uals_bench::cli::main().await
 }
