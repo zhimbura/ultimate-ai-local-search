@@ -421,11 +421,13 @@ async fn unparsable_output_is_a_failure() {
 
 #[tokio::test]
 async fn missing_binary_is_unavailable() {
+    let temp = tempfile::tempdir().unwrap();
+    let repo = Repo { name: "sample-android".into(), root: temp.path().to_path_buf() };
     let backend =
         AstIndexBackend::new(AstIndexConfig { binary: "uals-no-such-ast-index-binary".into(), update_on_start: false });
-    let error = backend.search(&repo(), &identifier("HostSelector", 5)).await.unwrap_err();
+    let error = backend.search(&repo, &identifier("HostSelector", 5)).await.unwrap_err();
     assert_eq!(error, BackendError::Unavailable("ast-index is not installed".into()));
-    let error = backend.refresh(&repo(), false).await.unwrap_err();
+    let error = backend.refresh(&repo, false).await.unwrap_err();
     assert_eq!(error, BackendError::Unavailable("ast-index is not installed".into()));
 }
 
@@ -469,13 +471,155 @@ async fn refresh_runs_update_or_rebuild_in_the_root() {
     ));
 }
 
-/// Live run on a temp copy of the public fixture. Skipped when `ast-index` is not on PATH.
 #[tokio::test]
-async fn live_run_on_a_copy_of_the_android_fixture() {
-    if which::which("ast-index").is_err() || which::which("git").is_err() {
-        eprintln!("skipped: ast-index or git is not on PATH");
-        return;
+async fn refresh_failure_reports_the_last_stderr_line_or_stdout() {
+    let noisy = CommandOutput {
+        stdout: String::new(),
+        stderr: "Loaded 7 files from index\nFound 2 new/changed files, 0 deleted files\nError: database is locked\n\n"
+            .into(),
+        exit_code: Some(1),
+    };
+    let quiet = CommandOutput { stdout: "Index is corrupted\n".into(), stderr: "\n".into(), exit_code: Some(2) };
+    for (output, expected) in [(noisy, "database is locked"), (quiet, "Index is corrupted")] {
+        let runner = Arc::new(FakeRunner::new().on("update", output));
+        match backend(&runner).refresh(&repo(), false).await {
+            Err(BackendError::Failed(reason)) => assert!(reason.ends_with(expected), "{reason}"),
+            other => panic!("expected Failed, got {other:?}"),
+        }
     }
+}
+
+#[tokio::test]
+async fn missing_repository_root_is_unavailable() {
+    let temp = tempfile::tempdir().unwrap();
+    let gone = Repo { name: "gone".into(), root: temp.path().join("moved-away") };
+    let backend = AstIndexBackend::with_runner(Arc::new(ProcessRunner::new("ast-index")));
+    for error in [
+        backend.search(&gone, &identifier("HostSelector", 5)).await.unwrap_err(),
+        backend.usages(&gone, "HostSelector", 5).await.unwrap_err(),
+        backend.refresh(&gone, false).await.unwrap_err(),
+    ] {
+        match error {
+            BackendError::Unavailable(reason) => assert!(reason.contains("does not exist"), "{reason}"),
+            other => panic!("expected Unavailable, got {other:?}"),
+        }
+    }
+}
+
+/// The value after `--limit` of every `query` run whose SQL contains `needle`.
+fn query_limits(runner: &FakeRunner, needle: &str) -> Vec<usize> {
+    runner
+        .calls()
+        .iter()
+        .filter(|(_, args)| args[0] == "query" && args[1].contains(needle))
+        .filter_map(|(_, args)| args.iter().position(|arg| arg == "--limit").map(|at| args[at + 1].parse().unwrap()))
+        .collect()
+}
+
+#[tokio::test]
+async fn definition_extents_are_requested_for_exactly_the_found_definitions() {
+    let runner = Arc::new(
+        FakeRunner::new()
+            .on("symbol", recorded("symbol_hostselector.json"))
+            .on_query("FROM symbols", recorded("query_symbol_ranges.json"))
+            .on("usages", recorded("usages_hostselector.json")),
+    );
+    let answer = backend(&runner).search(&repo(), &identifier("HostSelector", 10)).await.unwrap();
+    let definitions = answer.hits.iter().filter(|hit| hit.is_definition).count();
+    assert_eq!(definitions, 1);
+    assert_eq!(query_limits(&runner, "FROM symbols"), vec![definitions]);
+    assert_eq!((answer.hits[0].lines.start, answer.hits[0].lines.end), (10, 33));
+}
+
+/// A repository folder holding the files `usages_hostselector.json` points at.
+fn working_copy() -> (tempfile::TempDir, Repo) {
+    let temp = tempfile::tempdir().unwrap();
+    for relative in ["app/src/main/kotlin/sample/app/App.kt", "network/src/main/kotlin/sample/network/ConfigLoader.kt"]
+    {
+        let path = temp.path().join(relative);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, "val selector = HostSelector(\n").unwrap();
+    }
+    let repo = Repo { name: "sample-android".into(), root: temp.path().to_path_buf() };
+    (temp, repo)
+}
+
+/// What `SELECT path, mtime, size FROM files` prints when the index was built from the files as they are now.
+fn files_as_indexed(root: &Path, relatives: &[&str]) -> CommandOutput {
+    let rows: Vec<String> = relatives
+        .iter()
+        .map(|relative| {
+            let meta = std::fs::metadata(root.join(relative)).unwrap();
+            let mtime = meta.modified().unwrap().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+            format!("{{\"path\":\"{relative}\",\"mtime\":{mtime},\"size\":{}}}", meta.len())
+        })
+        .collect();
+    ok(format!("{{\"columns\":[\"path\",\"mtime\",\"size\"],\"count\":{},\"rows\":[{}]}}", rows.len(), rows.join(",")))
+}
+
+const APP: &str = "app/src/main/kotlin/sample/app/App.kt";
+const LOADER: &str = "network/src/main/kotlin/sample/network/ConfigLoader.kt";
+
+#[tokio::test]
+async fn usages_of_files_edited_after_indexing_are_stale() {
+    let (temp, repo) = working_copy();
+    let runner = Arc::new(
+        FakeRunner::new()
+            .on("usages", recorded("usages_hostselector.json"))
+            .on_query("FROM files", files_as_indexed(temp.path(), &[APP, LOADER])),
+    );
+    let fresh = backend(&runner).usages(&repo, "HostSelector", 50).await.unwrap();
+    assert_eq!(fresh.stale, None);
+
+    std::fs::write(temp.path().join(APP), "// a new line shifts everything down\nval selector = HostSelector(\n")
+        .unwrap();
+    std::fs::remove_file(temp.path().join(LOADER)).unwrap();
+    let stale = backend(&runner).usages(&repo, "HostSelector", 50).await.unwrap();
+    assert_eq!(stale.stale.as_deref(), Some("2 files changed since the index was built"));
+    assert_eq!(stale.usages.len(), 2);
+}
+
+#[tokio::test]
+async fn search_hits_in_an_edited_file_are_stale() {
+    let (temp, repo) = working_copy();
+    let runner = Arc::new(
+        FakeRunner::new()
+            .on("symbol", recorded("symbol_hostselector.json"))
+            .on_query("FROM symbols", recorded("query_symbol_ranges.json"))
+            .on("usages", recorded("usages_hostselector.json"))
+            .on_query("FROM files", files_as_indexed(temp.path(), &[APP, LOADER])),
+    );
+    // The definition file is not on disk; the index query knows nothing about it, so only the
+    // two usage files are compared.
+    assert_eq!(backend(&runner).search(&repo, &identifier("HostSelector", 10)).await.unwrap().stale, None);
+
+    std::fs::write(temp.path().join(APP), "// edited\nval selector = HostSelector(\n").unwrap();
+    let answer = backend(&runner).search(&repo, &identifier("HostSelector", 10)).await.unwrap();
+    assert_eq!(answer.stale.as_deref(), Some("1 file changed since the index was built"));
+    assert_eq!(answer.hits.len(), 3);
+}
+
+#[tokio::test]
+async fn a_failing_freshness_query_does_not_fail_the_search() {
+    let (_temp, repo) = working_copy();
+    let runner = Arc::new(FakeRunner::new().on("usages", recorded("usages_hostselector.json")));
+    let answer = backend(&runner).usages(&repo, "HostSelector", 50).await.unwrap();
+    assert_eq!((answer.usages.len(), answer.stale), (2, None));
+}
+
+/// A temp copy of the public android fixture as a git repository, with a cache folder of its own.
+struct LiveFixture {
+    _temp: tempfile::TempDir,
+    root: PathBuf,
+    cache: PathBuf,
+    repo: Repo,
+    backend: AstIndexBackend,
+}
+
+/// Panics when `ast-index` or `git` is not on PATH: a live test must not pass without running.
+fn live_fixture() -> LiveFixture {
+    assert!(which::which("ast-index").is_ok(), "live tests need the `ast-index` binary on PATH");
+    assert!(which::which("git").is_ok(), "live tests need `git` on PATH");
     let temp = tempfile::tempdir().unwrap();
     let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/workspace/sample-android");
     let root = temp.path().join("sample-android");
@@ -487,6 +631,27 @@ async fn live_run_on_a_copy_of_the_android_fixture() {
     let cache = temp.path().join("cache");
     let runner = ProcessRunner::new("ast-index").with_env("AST_INDEX_CACHE_DIR", cache.as_os_str());
     let backend = AstIndexBackend::with_runner(Arc::new(runner));
+    LiveFixture { _temp: temp, root, cache, repo, backend }
+}
+
+/// Catches a change of the cache layout or schema ast-index uses: the adapter finds the database
+/// by its own path computation and reads its tables.
+#[tokio::test]
+#[ignore = "live: needs ast-index"]
+async fn live_index_state_finds_the_index_the_real_binary_built() {
+    let LiveFixture { _temp, repo, backend, .. } = live_fixture();
+    backend.refresh(&repo, true).await.unwrap();
+    let state = backend.index_state(&repo).await;
+    assert!(state.indexed, "{state:?}");
+    assert!(state.updated_at_ms.is_some(), "{state:?}");
+    assert!(state.detail.is_some_and(|detail| detail.starts_with("7 files")));
+}
+
+/// Live run on a temp copy of the public fixture.
+#[tokio::test]
+#[ignore = "live: needs ast-index"]
+async fn live_run_on_a_copy_of_the_android_fixture() {
+    let LiveFixture { _temp, root, cache, repo, backend } = live_fixture();
 
     // Before indexing: not indexed, and asking did not create a cache folder.
     assert!(!backend.index_state(&repo).await.indexed);
@@ -507,6 +672,7 @@ async fn live_run_on_a_copy_of_the_android_fixture() {
     assert!(first.lines.end > first.lines.start);
     assert!(answer.hits.iter().skip(1).all(|hit| !hit.is_definition));
     assert!(answer.hits.len() >= 3, "{answer:?}");
+    assert_eq!(answer.stale, None);
 
     let usages = backend.usages(&repo, "HostSelector", 50).await.unwrap();
     assert!(usages.complete);
@@ -523,6 +689,15 @@ async fn live_run_on_a_copy_of_the_android_fixture() {
     };
     let answer = backend.search(&repo, &natural).await.unwrap();
     assert_eq!(answer.hits[0].symbol.as_deref(), Some("RetryPolicy"));
+
+    // An edit after indexing shows up as staleness, and an update clears it.
+    std::fs::write(&first.path, "// shifts every line\n".to_owned() + &std::fs::read_to_string(&first.path).unwrap())
+        .unwrap();
+    let edited = backend.search(&repo, &identifier("sample.network.HostSelector", 10)).await.unwrap();
+    assert_eq!(edited.stale.as_deref(), Some("1 file changed since the index was built"));
+    backend.refresh(&repo, false).await.unwrap();
+    let updated = backend.search(&repo, &identifier("sample.network.HostSelector", 10)).await.unwrap();
+    assert_eq!(updated.stale, None);
 }
 
 fn copy_dir(from: &Path, to: &Path) {
