@@ -17,18 +17,18 @@ die()  { printf '%s\n' "${R}✗ $*${N}" >&2; exit 1; }
 have() { command -v "$1" >/dev/null 2>&1; }
 
 ASSUME_YES=0; PURGE=0
-for a in "$@"; do case "$a" in
+for arg in "$@"; do case "$arg" in
   --yes|-y) ASSUME_YES=1;;
   --purge) PURGE=1;;
   -h|--help) sed -n '2,8p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0;;
-  *) die "unknown flag: $a";;
+  *) die "unknown flag: $arg";;
 esac; done
 
 DATA_DIR="$HOME/.local/share/uals"
 MANIFEST="$DATA_DIR/install-manifest"
 CLAUDE_CONFIG="${CLAUDE_CONFIG:-$HOME/.claude.json}"
 
-# Refuse paths that would be dangerous to delete.
+# Only an absolute path other than / and the home folder may be deleted or moved.
 safe_path() { case "$1" in ''|/|"$HOME"|"$HOME"/) return 1;; /*) return 0;; *) return 1;; esac; }
 
 if [ ! -f "$MANIFEST" ]; then
@@ -43,16 +43,16 @@ if [ ! -f "$MANIFEST" ]; then
   exit 0
 fi
 
-LINES=()
+MANIFEST_LINES=()
 while IFS= read -r line || [ -n "$line" ]; do
-  [ -z "$line" ] || LINES+=("$line")
+  [ -z "$line" ] || MANIFEST_LINES+=("$line")
 done < "$MANIFEST"
 
-if [ "${#LINES[@]}" = 0 ]; then rm -f -- "$MANIFEST"; ok "the manifest was empty: removed it"; exit 0; fi
+if [ "${#MANIFEST_LINES[@]}" = 0 ]; then rm -f -- "$MANIFEST"; ok "the manifest was empty: removed it"; exit 0; fi
 
 echo "uninstall.sh will undo, newest first:"
-for ((i = ${#LINES[@]} - 1; i >= 0; i--)); do echo "  ${LINES[$i]}"; done
-case "$PURGE:$(printf '%s\n' "${LINES[@]}" | grep -c '^docker-stack ' || true)" in
+for ((i = ${#MANIFEST_LINES[@]} - 1; i >= 0; i--)); do echo "  ${MANIFEST_LINES[$i]}"; done
+case "$PURGE:$(printf '%s\n' "${MANIFEST_LINES[@]}" | grep -c '^docker-stack ' || true)" in
   1:0) warn "--purge: the installer did not start the Milvus stack, so no volume is deleted";;
   1:*) warn "--purge: the Milvus volume (indexed vectors) will be deleted";;
 esac
@@ -61,14 +61,20 @@ if [ "$ASSUME_YES" = 0 ]; then
   case "$answer" in y|Y|yes) ;; *) echo "Nothing changed."; exit 0;; esac
 fi
 
+# find_uv: the uv the installer put in place, else the one on PATH
 find_uv() {
-  local l
-  for l in "${LINES[@]}"; do case "$l" in 'uv-installed '*) [ ! -x "${l#uv-installed }" ] || { printf '%s' "${l#uv-installed }"; return; };; esac; done
+  local line uv_path
+  for line in "${MANIFEST_LINES[@]}"; do
+    case "$line" in 'uv-installed '*)
+      uv_path="${line#uv-installed }"
+      [ ! -x "$uv_path" ] || { printf '%s' "$uv_path"; return; };;
+    esac
+  done
   command -v uv || true
 }
 
-for ((i = ${#LINES[@]} - 1; i >= 0; i--)); do
-  kind="${LINES[$i]%% *}"; value="${LINES[$i]#* }"
+for ((i = ${#MANIFEST_LINES[@]} - 1; i >= 0; i--)); do
+  kind="${MANIFEST_LINES[$i]%% *}"; value="${MANIFEST_LINES[$i]#* }"
   case "$kind" in
     file|config-file)
       safe_path "$value" || { warn "skipping unsafe path: $value"; continue; }
@@ -122,7 +128,7 @@ for ((i = ${#LINES[@]} - 1; i >= 0; i--)); do
         (cd "$value" && docker compose ${env_args[@]+"${env_args[@]}"} down) || warn "docker compose down failed"
       fi
       ;;
-    *) warn "unknown manifest line: ${LINES[$i]}";;
+    *) warn "unknown manifest line: ${MANIFEST_LINES[$i]}";;
   esac
 done
 
