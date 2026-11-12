@@ -4,6 +4,7 @@
 //!
 //! - [`gold`]: gold set files and their parsing errors.
 //! - [`engine`]: the `Engine` seam and the `MockEngine` that replays canned responses.
+//! - [`real`]: the `RealEngine` that runs the uals orchestrator in process.
 //! - [`metrics`]: hit correctness, ranks, Hit@k, MRR, usage recall and precision, percentiles.
 //! - [`runner`] and [`report`]: running a gold set and the report it produces.
 //! - [`stats`] and [`compare`]: paired bootstrap comparison of two runs.
@@ -16,6 +17,7 @@ pub mod engine;
 pub mod gold;
 pub mod markdown;
 pub mod metrics;
+pub mod real;
 pub mod report;
 pub mod runner;
 pub mod stats;

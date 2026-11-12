@@ -4,11 +4,13 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
+use uals_core::config::SemanticChoice;
 
 use crate::compare::{Metric, compare};
 use crate::engine::AnyEngine;
 use crate::gold::{GoldQuery, GoldUsages, Half, QueryType, parse_jsonl};
 use crate::markdown;
+use crate::real::RealOptions;
 use crate::report::Report;
 use crate::runner::{RunOptions, run};
 
@@ -32,6 +34,27 @@ pub enum HalfFilter {
     All,
 }
 
+/// The `--semantic` choice: the values of `semantic.default`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum SemanticFlag {
+    #[value(name = "semble")]
+    Semble,
+    #[value(name = "claude-context")]
+    ClaudeContext,
+    #[value(name = "none")]
+    None,
+}
+
+impl From<SemanticFlag> for SemanticChoice {
+    fn from(flag: SemanticFlag) -> Self {
+        match flag {
+            SemanticFlag::Semble => SemanticChoice::Semble,
+            SemanticFlag::ClaudeContext => SemanticChoice::ClaudeContext,
+            SemanticFlag::None => SemanticChoice::None,
+        }
+    }
+}
+
 /// The subcommands of `uals-bench`.
 #[derive(Debug, Subcommand)]
 pub enum Command {
@@ -43,9 +66,15 @@ pub enum Command {
         /// Usages file (JSONL); omit to skip the usages measurement.
         #[arg(long)]
         usages: Option<PathBuf>,
-        /// `mock:<responses.json>`.
+        /// `mock:<responses.json>` or `real:<workspace folder>`.
         #[arg(long)]
         engine: String,
+        /// Config file of the real engine; default: `$UALS_CONFIG`, then `~/.config/uals/config.toml`.
+        #[arg(long)]
+        config: Option<PathBuf>,
+        /// Overrides `semantic.default` of the config, to measure one config with each backend.
+        #[arg(long, value_enum)]
+        semantic: Option<SemanticFlag>,
         /// Name of the run, shown in reports.
         #[arg(long)]
         name: String,
@@ -104,10 +133,25 @@ where
 /// Runs the subcommand of `cli`.
 pub async fn execute(cli: Cli) -> Result<()> {
     match cli.command {
-        Command::Run { gold, usages, engine, name, out, half, types, warm_repeats, limit, usages_limit } => {
+        Command::Run {
+            gold,
+            usages,
+            engine,
+            config,
+            semantic,
+            name,
+            out,
+            half,
+            types,
+            warm_repeats,
+            limit,
+            usages_limit,
+        } => {
             let queries: Vec<GoldQuery> = read_gold(&gold)?;
             let usage_gold: Vec<GoldUsages> = usages.as_deref().map(read_gold).transpose()?.unwrap_or_default();
-            let backend = AnyEngine::from_spec(&engine)?;
+            let real = RealOptions { config, semantic: semantic.map(SemanticChoice::from) };
+            let backend = AnyEngine::from_spec(&engine, &real)?;
+            let engine = backend.label().unwrap_or(engine);
             let options = RunOptions { name, engine, half: half.into(), types, warm_repeats, limit, usages_limit };
             let report = run(&backend, &queries, &usage_gold, &options).await?;
             eprintln!("{}", overall_line(&report));

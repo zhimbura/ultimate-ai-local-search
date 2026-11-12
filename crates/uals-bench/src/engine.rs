@@ -1,16 +1,18 @@
 //! The seam between the harness and the search engine.
 //!
-//! The real orchestrator is wired in a later phase. Until then `MockEngine` replays canned
-//! responses from a JSON file, so the whole harness runs without any backend.
+//! `RealEngine` runs the real search; `MockEngine` replays canned responses from a JSON file, so
+//! the whole harness also runs without any backend.
 
 use std::collections::HashMap;
 use std::future::Future;
 use std::path::Path;
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow, bail, ensure};
 use serde::{Deserialize, Serialize};
 use uals_core::config::OutputConfig;
 use uals_core::types::{QueryKind, Repo, SearchResponse, UsagesResponse};
+
+use crate::real::{RealEngine, RealOptions, semantic_name};
 
 /// What the harness needs from a search engine.
 pub trait Engine {
@@ -105,18 +107,38 @@ impl Engine for MockEngine {
 }
 
 /// An engine picked on the command line.
-#[derive(Debug, Clone)]
 pub enum AnyEngine {
     /// Replays canned responses.
     Mock(MockEngine),
+    /// Runs the real search.
+    Real(Box<RealEngine>),
 }
 
 impl AnyEngine {
-    /// `mock:<responses.json>`. The real engine is added when the orchestrator is wired.
-    pub fn from_spec(spec: &str) -> Result<Self> {
+    /// `mock:<responses.json>` or `real:<workspace folder>`. `options` only apply to `real`;
+    /// they are an error for `mock`.
+    pub fn from_spec(spec: &str, options: &RealOptions) -> Result<Self> {
         match spec.split_once(':') {
-            Some(("mock", path)) if !path.is_empty() => Ok(AnyEngine::Mock(MockEngine::from_file(Path::new(path))?)),
-            _ => bail!("unknown engine \"{spec}\": expected mock:<responses.json>"),
+            Some(("mock", path)) if !path.is_empty() => {
+                ensure!(
+                    options.config.is_none() && options.semantic.is_none(),
+                    "--config and --semantic apply to the real engine only"
+                );
+                Ok(AnyEngine::Mock(MockEngine::from_file(Path::new(path))?))
+            }
+            Some(("real", folder)) if !folder.is_empty() => {
+                Ok(AnyEngine::Real(Box::new(RealEngine::open(Path::new(folder), options)?)))
+            }
+            _ => bail!("unknown engine \"{spec}\": expected mock:<responses.json> or real:<workspace folder>"),
+        }
+    }
+
+    /// The label of the engine for the report when the spec cannot serve: a spec holds a folder
+    /// path and a report holds no paths. `None` for the mock, whose spec is the label.
+    pub fn label(&self) -> Option<String> {
+        match self {
+            AnyEngine::Mock(_) => None,
+            AnyEngine::Real(engine) => Some(format!("real:{}", semantic_name(engine.semantic()))),
         }
     }
 }
@@ -125,24 +147,28 @@ impl Engine for AnyEngine {
     fn repos(&self) -> &[Repo] {
         match self {
             AnyEngine::Mock(engine) => engine.repos(),
+            AnyEngine::Real(engine) => engine.repos(),
         }
     }
 
     fn output(&self) -> &OutputConfig {
         match self {
             AnyEngine::Mock(engine) => engine.output(),
+            AnyEngine::Real(engine) => engine.output(),
         }
     }
 
     async fn search(&self, query: &str, kind: Option<QueryKind>, limit: usize) -> Result<SearchResponse> {
         match self {
             AnyEngine::Mock(engine) => engine.search(query, kind, limit).await,
+            AnyEngine::Real(engine) => engine.search(query, kind, limit).await,
         }
     }
 
     async fn usages(&self, symbol: &str, limit: usize, offset: usize) -> Result<UsagesResponse> {
         match self {
             AnyEngine::Mock(engine) => engine.usages(symbol, limit, offset).await,
+            AnyEngine::Real(engine) => engine.usages(symbol, limit, offset).await,
         }
     }
 }
@@ -173,8 +199,11 @@ mod tests {
 
     #[test]
     fn spec_parsing() {
-        assert!(AnyEngine::from_spec("real").unwrap_err().to_string().contains("expected mock:"));
-        assert!(AnyEngine::from_spec("mock:").is_err());
-        assert!(AnyEngine::from_spec("mock:/does/not/exist.json").unwrap_err().to_string().contains("cannot read"));
+        let none = RealOptions::default();
+        let error = |spec: &str, options: &RealOptions| AnyEngine::from_spec(spec, options).err().unwrap().to_string();
+        assert!(error("semble", &none).contains("expected mock:"));
+        assert!(error("mock:", &none).contains("expected mock:"));
+        assert!(error("real:", &none).contains("expected mock:"));
+        assert!(error("mock:/does/not/exist.json", &none).contains("cannot read"));
     }
 }
