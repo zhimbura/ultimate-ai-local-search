@@ -11,7 +11,8 @@
 //!   `pass_env`, else `127.0.0.1:19530`; 300 ms). Without Milvus the server process crashes about
 //!   150 ms after start and every call dies with `TransportClosed`, so a failed probe answers
 //!   `Unavailable` and no tool is called.
-//! - A closed transport (`TransportClosed`) is `Unavailable`, whichever way the caller reports it.
+//! - A closed transport (`TransportClosed`) reaches the adapter as `Unavailable` from the caller; the
+//!   adapter adds that the server exits when Milvus is down.
 //!
 //! # Tools used
 //!
@@ -145,7 +146,7 @@ impl ClaudeContextBackend {
 
     /// Calls a server tool; a dead server is reported as `Unavailable`.
     async fn call(&self, tool: &str, arguments: serde_json::Value) -> Result<ToolOutput, BackendError> {
-        self.caller.call_tool(tool, arguments).await.map_err(closed_transport_is_unavailable)
+        self.caller.call_tool(tool, arguments).await.map_err(add_milvus_hint_to_unavailable)
     }
 
     /// The indexing status of the repository.
@@ -410,20 +411,15 @@ fn joined_text(output: &ToolOutput) -> Result<String, BackendError> {
     Ok(output.texts.join("\n"))
 }
 
-/// rmcp reports a dead server as `TransportClosed`; that is an expected state, not a bug.
-fn closed_transport_is_unavailable(error: BackendError) -> BackendError {
+/// The caller reports a dead server as `Unavailable`; the message says why it matters here.
+fn add_milvus_hint_to_unavailable(error: BackendError) -> BackendError {
     match error {
-        BackendError::Failed(message) if is_closed_transport(&message) => BackendError::Unavailable(format!(
+        BackendError::Unavailable(message) => BackendError::Unavailable(format!(
             "the claude-context server is not running ({}); it exits when Milvus is down",
             abbreviate(&message)
         )),
         other => other,
     }
-}
-
-fn is_closed_transport(message: &str) -> bool {
-    let lower = message.to_ascii_lowercase();
-    lower.contains("transport closed") || lower.contains("transportclosed") || lower.contains("connection closed")
 }
 
 /// The user's home directory (`HOME`, or `USERPROFILE` on Windows).

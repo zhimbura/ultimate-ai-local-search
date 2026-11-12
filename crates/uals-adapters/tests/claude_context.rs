@@ -85,14 +85,15 @@ fn fixture_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/claude_context")
 }
 
-/// A recorded `CallToolResult`, or a recorded failure (`{"debug", "service_error"}`), as a naive
-/// caller would report it.
+/// A recorded `CallToolResult`, or a recorded failure (`{"debug", "service_error"}`), as the
+/// caller reports it.
 fn load_fixture(name: &str) -> Result<ToolOutput, BackendError> {
     let path = fixture_dir().join(format!("{name}.json"));
     let raw = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     let json: Value = serde_json::from_str(&raw).unwrap();
     if let Some(error) = json.get("service_error").and_then(Value::as_str) {
-        return Err(BackendError::Failed(error.to_string()));
+        // The caller reports a closed transport as `Unavailable`.
+        return Err(BackendError::Unavailable(error.to_string()));
     }
     let texts = json["content"]
         .as_array()
@@ -461,14 +462,19 @@ async fn recorded_milvus_crashes_are_unavailable() {
 }
 
 #[tokio::test]
-async fn errors_from_the_caller_pass_through() {
+async fn errors_from_the_caller_keep_their_kind_and_text() {
     let milvus = FakeMilvus::start();
     let caller = FakeCaller::new();
     caller.reply_with("search_code", Err(BackendError::Unavailable("server gone".into())));
     caller.reply_with("search_code", Err(BackendError::Failed("protocol error".into())));
+    // Only the kind says a transport is closed; the words do not.
+    caller.reply_with("search_code", Err(BackendError::Failed("Transport closed".into())));
     let backend = backend(&caller, &milvus);
-    assert_eq!(unavailable(backend.search(&repo(), &request(10)).await.unwrap_err()), "server gone");
+
+    let gone = unavailable(backend.search(&repo(), &request(10)).await.unwrap_err());
+    assert!(gone.contains("server gone") && gone.contains("Milvus"), "{gone}");
     assert_eq!(failed(backend.search(&repo(), &request(10)).await.unwrap_err()), "protocol error");
+    assert_eq!(failed(backend.search(&repo(), &request(10)).await.unwrap_err()), "Transport closed");
 }
 
 // ---------------------------------------------------------------- Milvus probe
