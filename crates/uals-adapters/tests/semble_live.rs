@@ -1,6 +1,6 @@
 //! `SembleBackend` over a real `McpChild` running the real `semble` on a temp copy of the public
-//! fixture workspace. Skipped at runtime (with a message) when `semble` is not on PATH. Semble's
-//! cache is redirected to the temp folder with `SEMBLE_CACHE_LOCATION`.
+//! fixture workspace. Ignored by default (`cargo test -- --ignored` runs them); a missing `semble`
+//! on PATH fails them. Semble's cache is redirected to the temp folder with `SEMBLE_CACHE_LOCATION`.
 #![cfg(unix)]
 
 use std::collections::BTreeMap;
@@ -22,11 +22,8 @@ struct Live {
     spec: ChildSpec,
 }
 
-fn live() -> Option<Live> {
-    let Ok(semble) = which::which("semble") else {
-        eprintln!("SKIPPED: `semble` is not on PATH");
-        return None;
-    };
+fn live() -> Live {
+    let semble = which::which("semble").expect("live test needs `semble` on PATH (install Semble 0.7.x)");
     let dir = TempDir::new().unwrap();
     let workspace = dir.path().join("workspace");
     copy_dir(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/workspace"), &workspace);
@@ -44,7 +41,7 @@ fn live() -> Option<Live> {
         pass_env: ["HF_HOME", "HF_ENDPOINT", "HF_HUB_OFFLINE", "XDG_CACHE_HOME"].map(String::from).to_vec(),
         cwd: None,
     };
-    Some(Live { _dir: dir, workspace, spec })
+    Live { _dir: dir, workspace, spec }
 }
 
 fn copy_dir(from: &Path, to: &Path) {
@@ -77,8 +74,9 @@ fn request(query: &str, kind: QueryKind, fetch_limit: usize) -> SearchRequest {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "live: needs `semble` on PATH"]
 async fn natural_and_identifier_queries_find_the_right_files() {
-    let Some(live) = live() else { return };
+    let live = live();
     let backend = live.backend(None).await;
     let repo = live.repo("sample-android");
 
@@ -103,8 +101,9 @@ async fn natural_and_identifier_queries_find_the_right_files() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "live: needs `semble` on PATH"]
 async fn path_globs_and_content_selection_work() {
-    let Some(live) = live() else { return };
+    let live = live();
     let repo = live.repo("sample-android");
 
     let backend = live.backend(None).await;
@@ -123,8 +122,9 @@ async fn path_globs_and_content_selection_work() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "live: needs `semble` on PATH"]
 async fn a_missing_repository_is_unavailable_and_the_backend_recovers() {
-    let Some(live) = live() else { return };
+    let live = live();
     let backend = live.backend(None).await;
     let missing = Repo { name: "ghost".into(), root: live.workspace.join("ghost") };
     let error = backend.search(&missing, &request("anything", QueryKind::Natural, 5)).await.unwrap_err();
@@ -137,8 +137,9 @@ async fn a_missing_repository_is_unavailable_and_the_backend_recovers() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "live: needs `semble` on PATH"]
 async fn warm_builds_indexes_in_the_background() {
-    let Some(live) = live() else { return };
+    let live = live();
     let backend = live.backend(None).await;
     let repos = [live.repo("sample-android"), live.repo("sample-tools"), live.repo("sample-web")];
     for repo in &repos {
