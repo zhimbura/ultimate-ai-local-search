@@ -25,7 +25,7 @@ impl CommandOutput {
         self.exit_code == Some(0)
     }
 
-    /// How the process ended, for a message: `exit code 1`, or `a signal` when it was killed.
+    /// How the process ended, as text: `exit code 1`, or `killed by a signal`.
     pub fn exit_text(&self) -> String {
         match self.exit_code {
             Some(code) => format!("exit code {code}"),
