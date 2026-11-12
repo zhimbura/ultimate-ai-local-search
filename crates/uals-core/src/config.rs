@@ -101,7 +101,7 @@ impl Config {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum SemanticChoice {
-    /// The default until the benchmark gate decides otherwise.
+    /// The default: on the benchmark gate claude-context was not better (`docs/semantic-gate.md`).
     #[default]
     Semble,
     ClaudeContext,
