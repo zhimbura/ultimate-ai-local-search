@@ -39,6 +39,10 @@ done
 sleep 30
 "#;
 
+/// The system programs the fake executables call. They reach PATH as symlinks in a folder of their
+/// own, so that nothing else installed on the machine (a real `node`, `semble`, `ast-index`) is found.
+const SYSTEM_TOOLS: [&str; 2] = ["sed", "sleep"];
+
 /// The boundaries of one test: a home folder, a PATH folder with the fake executables, the
 /// Claude Code config and the config of uals.
 pub struct Sandbox {
@@ -83,6 +87,13 @@ impl Sandbox {
         let dir = TempDir::new().unwrap();
         std::fs::create_dir(dir.path().join("bin")).unwrap();
         std::fs::create_dir(dir.path().join("home")).unwrap();
+        std::fs::create_dir(dir.path().join("system")).unwrap();
+        for tool in SYSTEM_TOOLS {
+            let found =
+                ["/usr/bin", "/bin"].map(|folder| Path::new(folder).join(tool)).into_iter().find(|path| path.exists());
+            let found = found.unwrap_or_else(|| panic!("the system has no {tool} in /usr/bin or /bin"));
+            std::os::unix::fs::symlink(found, dir.path().join("system").join(tool)).unwrap();
+        }
         Self { dir }
     }
 
@@ -136,20 +147,25 @@ impl Sandbox {
     /// `uals doctor` with `args`. Without `config` no config file exists. The environment holds
     /// only the sandbox variables and `env`: nothing of the real environment reaches uals.
     pub fn doctor(&self, config: Option<&Path>, args: &[&str]) -> Run {
-        self.doctor_with(config, args, &[])
+        self.doctor_with::<&str>(config, args, &[])
     }
 
-    pub fn doctor_with(&self, config: Option<&Path>, args: &[&str], env: &[(&str, &Path)]) -> Run {
+    pub fn doctor_with<V: AsRef<std::ffi::OsStr>>(
+        &self,
+        config: Option<&Path>,
+        args: &[&str],
+        env: &[(&str, V)],
+    ) -> Run {
         let mut command = Command::new(env!("CARGO_BIN_EXE_uals"));
         command.env_clear();
         command
             .env("HOME", self.path("home"))
-            .env("PATH", format!("{}:/usr/bin:/bin", self.path("bin").display()))
+            .env("PATH", format!("{}:{}", self.path("bin").display(), self.path("system").display()))
             .env("CLAUDE_CONFIG", self.path("claude.json"))
             .env("UALS_CONFIG", self.path("no-such-config.toml"))
             .env("TMPDIR", self.dir.path());
         for (name, value) in env {
-            command.env(name, value);
+            command.env(name, value.as_ref());
         }
         if let Some(config) = config {
             command.arg("--config").arg(config);
@@ -191,7 +207,7 @@ pub struct Request {
 }
 
 /// An HTTP server on 127.0.0.1 that answers with what `handler` returns (status, JSON text) and
-/// records every request.
+/// records every request. For a 3xx status the text is the `Location` to redirect to.
 pub struct FakeHttp {
     port: u16,
     requests: Arc<Mutex<Vec<Request>>>,
@@ -292,9 +308,14 @@ fn serve(
     let request = Request { path, authorization, body: serde_json::from_slice(&body).unwrap_or(Value::Null) };
     requests.lock().unwrap().push(request.clone());
     let (status, text) = handler(&request);
+    let (location, text) = if (300..400).contains(&status) {
+        (format!("Location: {text}\r\n"), String::new())
+    } else {
+        (String::new(), text)
+    };
     let _ = write!(
         stream,
-        "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{text}",
+        "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\n{location}Content-Length: {}\r\nConnection: close\r\n\r\n{text}",
         text.len()
     );
 }

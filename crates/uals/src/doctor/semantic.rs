@@ -1,5 +1,6 @@
 //! The checks of the semantic backend `semantic.default` names.
 
+use std::io::Write;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -89,7 +90,13 @@ fn untested_semble_version(version: Option<&Result<String, String>>) -> Option<V
 async fn search_one_file(config: &SembleConfig) -> Result<(), String> {
     let folder = ScratchFolder::new().map_err(|error| format!("cannot make a temporary folder: {error}"))?;
     let source = folder.path.join("repo/greeting.rs");
-    std::fs::write(&source, TEST_SOURCE).map_err(|error| format!("cannot write {}: {error}", source.display()))?;
+    // `create_new` does not follow a link that someone planted at the path.
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&source)
+        .and_then(|mut file| file.write_all(TEST_SOURCE.as_bytes()))
+        .map_err(|error| format!("cannot write {}: {error}", source.display()))?;
     // The test index goes next to the test folder, not into the user's Semble cache.
     let mut semble = config.clone();
     semble.env.insert("SEMBLE_CACHE_LOCATION".to_owned(), folder.path.join("cache").display().to_string());
@@ -111,24 +118,19 @@ async fn search_one_file(config: &SembleConfig) -> Result<(), String> {
     Ok(())
 }
 
-/// A folder under the system temporary folder with a `repo` folder inside, removed on drop.
+/// A new folder with an unpredictable name under the system temporary folder, with a `repo` folder
+/// inside, removed on drop.
 struct ScratchFolder {
     path: std::path::PathBuf,
+    _dir: tempfile::TempDir,
 }
 
 impl ScratchFolder {
     fn new() -> std::io::Result<Self> {
-        let path = std::env::temp_dir().join(format!("uals-doctor-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&path);
-        std::fs::create_dir_all(path.join("repo"))?;
+        let dir = tempfile::Builder::new().prefix("uals-doctor-").tempdir()?;
+        std::fs::create_dir(dir.path().join("repo"))?;
         // Semble gets the canonical path, as for a real repository.
-        Ok(Self { path: path.canonicalize()? })
-    }
-}
-
-impl Drop for ScratchFolder {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.path);
+        Ok(Self { path: dir.path().canonicalize()?, _dir: dir })
     }
 }
 

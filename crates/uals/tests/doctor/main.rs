@@ -50,7 +50,11 @@ fn without_a_config_file_the_defaults_are_checked() {
     assert!(lines[1].starts_with("✓ ast-index: 3.56.0 at "), "{}", lines[1]);
     assert!(lines[2].starts_with("✓ semble: 0.7.3 at "), "{}", lines[2]);
     assert!(lines[3].starts_with("! mcp: "), "{}", lines[3]);
-    assert!(lines[4].starts_with("    hint: scripts/configure-mcp.sh --uals-bin "), "{}", lines[4]);
+    assert!(
+        lines[4].starts_with("    hint: in the uals checkout: scripts/configure-mcp.sh --uals-bin "),
+        "{}",
+        lines[4]
+    );
     assert_eq!(lines[5], "3 ok, 1 warn, 0 fail, 0 skip");
     assert_eq!(lines.len(), 6);
 }
@@ -350,6 +354,54 @@ fn the_key_goes_to_the_embedder_and_never_into_the_output() {
     assert_eq!(embedding.body, json!({"model": "test-model", "input": "test"}));
 }
 
+/// `config` with `names` listed in `pass_env` of claude-context, as the installer writes a key.
+fn with_pass_env(config: &str, names: &[&str]) -> String {
+    let list: Vec<String> = names.iter().map(|name| format!("{name:?}")).collect();
+    config.replace("\nenv = {", &format!("\npass_env = [{}]\nenv = {{", list.join(", ")))
+}
+
+#[test]
+fn a_key_named_in_pass_env_goes_from_the_environment_to_the_embedder() {
+    let http = FakeHttp::healthy(768);
+    let (sandbox, config) = claude_context(&http, &[]);
+    let config = sandbox.config(&with_pass_env(&std::fs::read_to_string(&config).unwrap(), &["OPENAI_API_KEY"]));
+
+    let run = sandbox.doctor_with(Some(&config), &[], &[("OPENAI_API_KEY", "sk-from-environment")]);
+
+    assert_eq!(run.code(), Some(0), "{}", run.stdout());
+    assert!(!run.stdout().contains("sk-from-environment") && !run.stderr().contains("sk-from-environment"));
+    let embedding = http.requests().into_iter().find(|request| request.path == "/v1/embeddings").unwrap();
+    assert_eq!(embedding.authorization.as_deref(), Some("Bearer sk-from-environment"));
+}
+
+#[test]
+fn a_key_in_the_environment_that_pass_env_does_not_name_is_not_sent() {
+    let http = FakeHttp::healthy(768);
+    let (sandbox, config) = claude_context(&http, &[]);
+
+    let run = sandbox.doctor_with(Some(&config), &[], &[("OPENAI_API_KEY", "sk-from-environment")]);
+
+    assert_eq!(run.code(), Some(0), "{}", run.stdout());
+    let embedding = http.requests().into_iter().find(|request| request.path == "/v1/embeddings").unwrap();
+    assert_eq!(embedding.authorization, None);
+}
+
+#[test]
+fn an_embedder_that_redirects_is_not_followed() {
+    let elsewhere = FakeHttp::healthy(768);
+    let target = format!("http://{}/v1/embeddings", elsewhere.address());
+    let embedder = FakeHttp::start(move |_| (302, target.clone()));
+    let milvus = FakeHttp::healthy(768);
+    let (sandbox, config) = claude_context(&embedder, &[("MILVUS_ADDRESS", &milvus.address())]);
+
+    let run = sandbox.doctor(Some(&config), &[]);
+
+    assert_eq!(run.code(), Some(1), "{}", run.stdout());
+    assert!(run.check("claude-context embedder").starts_with("✗ claude-context embedder: "), "{}", run.stdout());
+    assert_eq!(embedder.paths(), ["/v1/embeddings"]);
+    assert_eq!(elsewhere.paths(), Vec::<String>::new(), "the redirect was followed");
+}
+
 #[test]
 fn an_ollama_embedder_is_asked_the_ollama_way() {
     let http = FakeHttp::start(|request| {
@@ -558,7 +610,7 @@ fn uals_that_is_not_registered_is_a_warning_with_the_command_that_registers_it()
     assert_eq!(run.code(), Some(0));
     let line = run.check("mcp");
     assert!(line.starts_with("! mcp: uals is not registered in "), "{line}");
-    assert!(line.contains("\n    hint: scripts/configure-mcp.sh --uals-bin "), "{line}");
+    assert!(line.contains("\n    hint: in the uals checkout: scripts/configure-mcp.sh --uals-bin "), "{line}");
     assert!(line.ends_with("/uals"), "the hint names the binary that runs: {line}");
 }
 
@@ -590,7 +642,8 @@ fn a_direct_claude_context_entry_next_to_uals_is_a_warning_when_claude_context_i
     let line = run.check("mcp");
     assert!(line.starts_with("! mcp: uals is registered in "), "{line}");
     assert!(line.contains("two claude-context servers race on ~/.context"), "{line}");
-    assert!(line.ends_with("hint: scripts/configure-mcp.sh --remove-claude-context"), "{line}");
+    assert!(line.contains("hint: in the uals checkout: scripts/configure-mcp.sh --uals-bin /"), "{line}");
+    assert!(line.ends_with("/uals --remove-claude-context"), "{line}");
     assert!(!run.stdout().contains("sk-in-claude-json"), "values are never printed");
 }
 
