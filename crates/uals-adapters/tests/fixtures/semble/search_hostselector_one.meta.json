@@ -1,0 +1,10 @@
+{
+  "arguments": {
+    "query": "HostSelector",
+    "repo": "$WORKSPACE/sample-android"
+  },
+  "duration_ms": 2,
+  "notes": "warm. single repo path, defaults (top_k 5, max_snippet_lines 10).",
+  "server": "semble 0.7.3",
+  "tool": "search"
+}

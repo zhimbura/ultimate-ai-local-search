@@ -1,0 +1,11 @@
+{
+  "arguments": {
+    "file_path": "core/src/main/kotlin/sample/core/RetryPolicy.kt",
+    "line": 1,
+    "repo": "$WORKSPACE/sample-android"
+  },
+  "duration_ms": 26,
+  "notes": "find_related using relative file_path as returned by search",
+  "server": "semble 0.7.3",
+  "tool": "find_related"
+}

@@ -1,0 +1,10 @@
+{
+  "arguments": {
+    "query": "retry",
+    "repo": "$WORKSPACE-empty"
+  },
+  "duration_ms": 1,
+  "notes": "ERROR CASE: existing empty directory",
+  "server": "semble 0.7.3",
+  "tool": "search"
+}

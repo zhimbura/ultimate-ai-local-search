@@ -1,0 +1,7 @@
+{
+  "arguments": {},
+  "duration_ms": 864,
+  "notes": "rmcp RunningService::peer_info() (server InitializeResult as seen by the client); duration = spawn to initialize done.",
+  "server": "claude-context 0.1.15",
+  "tool": "initialize"
+}

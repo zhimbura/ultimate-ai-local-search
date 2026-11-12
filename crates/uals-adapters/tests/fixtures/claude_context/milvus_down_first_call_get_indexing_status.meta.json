@@ -1,0 +1,9 @@
+{
+  "arguments": {
+    "path": "$WORKSPACE/sample-android"
+  },
+  "duration_ms": 149,
+  "notes": "Milvus DOWN (19530 refused). Call sent right after initialize; server process crashes (uncaught gRPC UNAVAILABLE rejection, node exit) ~150 ms after start, call gets no response: rmcp returns ServiceError::TransportClosed.",
+  "server": "claude-context 0.1.15",
+  "tool": "get_indexing_status"
+}

@@ -1,0 +1,12 @@
+{
+  "content": [
+    {
+      "text": "{\"query\": \"retry with exponential backoff\", \"results\": [{\"file_path\": \"core/src/main/kotlin/sample/core/RetryPolicy.kt\", \"start_line\": 1, \"end_line\": 18, \"score\": 0.02447155744546866, \"content\": \"package sample.core\\n\\n/**\\n * Decides how long to wait before the next attempt of a failed operation.\\n * The delay doubles on each attempt and never exceeds [maxDelayMs].\\n */\\nclass RetryPolicy(\\n    val maxAttempts: Int = 3,\\n    private val baseDelayMs: Long = 200,\\n    private val maxDelayMs: Long = 5_000,\"}, {\"file_path\": \"network/src/main/kotlin/sample/network/ConfigLoader.kt\", \"start_line\": 19, \"end_line\": 43, \"score\": 0.019155704653622423, \"content\": \"{\\n    fun load(): RemoteConfig {\\n        var attempt = 0\\n        while (true) {\\n            val host = selector.pick()\\n            try {\\n                return parse(http.get(\\\"$host/config\\\"))\\n            } catch (error: Exception) {\\n                selector.markFailed(host)\\n                if (!retry.shouldRetry(attempt)) {\"}]}",
+      "type": "text"
+    }
+  ],
+  "isError": false,
+  "structuredContent": {
+    "result": "{\"query\": \"retry with exponential backoff\", \"results\": [{\"file_path\": \"core/src/main/kotlin/sample/core/RetryPolicy.kt\", \"start_line\": 1, \"end_line\": 18, \"score\": 0.02447155744546866, \"content\": \"package sample.core\\n\\n/**\\n * Decides how long to wait before the next attempt of a failed operation.\\n * The delay doubles on each attempt and never exceeds [maxDelayMs].\\n */\\nclass RetryPolicy(\\n    val maxAttempts: Int = 3,\\n    private val baseDelayMs: Long = 200,\\n    private val maxDelayMs: Long = 5_000,\"}, {\"file_path\": \"network/src/main/kotlin/sample/network/ConfigLoader.kt\", \"start_line\": 19, \"end_line\": 43, \"score\": 0.019155704653622423, \"content\": \"{\\n    fun load(): RemoteConfig {\\n        var attempt = 0\\n        while (true) {\\n            val host = selector.pick()\\n            try {\\n                return parse(http.get(\\\"$host/config\\\"))\\n            } catch (error: Exception) {\\n                selector.markFailed(host)\\n                if (!retry.shouldRetry(attempt)) {\"}]}"
+  }
+}

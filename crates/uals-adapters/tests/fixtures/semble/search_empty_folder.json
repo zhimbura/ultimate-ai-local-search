@@ -1,0 +1,12 @@
+{
+  "content": [
+    {
+      "text": "Failed to index '$WORKSPACE-empty': No supported files found under $WORKSPACE-empty.",
+      "type": "text"
+    }
+  ],
+  "isError": false,
+  "structuredContent": {
+    "result": "Failed to index '$WORKSPACE-empty': No supported files found under $WORKSPACE-empty."
+  }
+}

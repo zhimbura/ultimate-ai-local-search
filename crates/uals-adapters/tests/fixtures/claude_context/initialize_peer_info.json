@@ -1,0 +1,10 @@
+{
+  "capabilities": {
+    "tools": {}
+  },
+  "protocolVersion": "2025-11-25",
+  "serverInfo": {
+    "name": "Context MCP Server",
+    "version": "1.0.0"
+  }
+}

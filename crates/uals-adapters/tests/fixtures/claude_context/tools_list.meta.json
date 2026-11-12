@@ -1,0 +1,7 @@
+{
+  "arguments": {},
+  "duration_ms": 2,
+  "notes": "list_all_tools(); rmcp follows pagination.",
+  "server": "claude-context 0.1.15",
+  "tool": "tools/list"
+}

@@ -1,0 +1,7 @@
+{
+  "arguments": {},
+  "duration_ms": 0,
+  "notes": "protocol-level error for unknown tool",
+  "server": "semble 0.7.3",
+  "tool": "no_such_tool"
+}

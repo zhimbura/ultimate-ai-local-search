@@ -1,0 +1,10 @@
+{
+  "arguments": {
+    "query": "retry",
+    "repo": "nope-rel"
+  },
+  "duration_ms": 0,
+  "notes": "ERROR CASE: relative path that does not exist; message shows the cwd-resolved absolute path",
+  "server": "semble 0.7.3",
+  "tool": "search"
+}

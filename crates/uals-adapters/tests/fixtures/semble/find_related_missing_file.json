@@ -1,0 +1,12 @@
+{
+  "content": [
+    {
+      "text": "No chunk found at nope/Missing.kt:1. Make sure the file is indexed and the line number is within a known chunk.",
+      "type": "text"
+    }
+  ],
+  "isError": false,
+  "structuredContent": {
+    "result": "No chunk found at nope/Missing.kt:1. Make sure the file is indexed and the line number is within a known chunk."
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "arguments": {
+    "path": "$WORKSPACE/sample-android",
+    "query": "retry with exponential backoff"
+  },
+  "duration_ms": 0,
+  "notes": "Milvus DOWN; call issued 1 s after initialize, i.e. after the server already crashed. Immediate ServiceError::TransportClosed.",
+  "server": "claude-context 0.1.15",
+  "tool": "search_code"
+}

@@ -1,0 +1,12 @@
+{
+  "content": [
+    {
+      "text": "Failed to index '$WORKSPACE/sample-android/core/build.gradle.kts': Path is not a directory: $WORKSPACE/sample-android/core/build.gradle.kts",
+      "type": "text"
+    }
+  ],
+  "isError": false,
+  "structuredContent": {
+    "result": "Failed to index '$WORKSPACE/sample-android/core/build.gradle.kts': Path is not a directory: $WORKSPACE/sample-android/core/build.gradle.kts"
+  }
+}

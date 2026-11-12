@@ -1,0 +1,117 @@
+{
+  "tools": [
+    {
+      "description": "\nIndex a codebase directory to enable semantic search using a configurable code splitter.\n\n⚠️ **IMPORTANT**:\n- You MUST provide an absolute path to the target codebase.\n\n✨ **Usage Guidance**:\n- This tool is typically used when search fails due to an unindexed codebase.\n- If indexing is attempted on an already indexed path, and a conflict is detected, you MUST prompt the user to confirm whether to proceed with a force index (i.e., re-indexing and overwriting the previous index).\n",
+      "inputSchema": {
+        "properties": {
+          "customExtensions": {
+            "default": [],
+            "description": "Optional: Additional file extensions to include beyond defaults (e.g., ['.vue', '.svelte', '.astro']). Extensions should include the dot prefix or will be automatically added",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "force": {
+            "default": false,
+            "description": "Force re-indexing even if already indexed",
+            "type": "boolean"
+          },
+          "ignorePatterns": {
+            "default": [],
+            "description": "Optional: Additional ignore patterns to exclude specific files/directories beyond defaults. Only include this parameter if the user explicitly requests custom ignore patterns (e.g., ['static/**', '*.tmp', 'private/**'])",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "path": {
+            "description": "ABSOLUTE path to the codebase directory to index.",
+            "type": "string"
+          },
+          "splitter": {
+            "default": "ast",
+            "description": "Code splitter to use: 'ast' for syntax-aware splitting with automatic fallback, 'langchain' for character-based splitting",
+            "enum": [
+              "ast",
+              "langchain"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "name": "index_codebase"
+    },
+    {
+      "description": "\nSearch the indexed codebase using natural language queries within a specified absolute path.\n\n⚠️ **IMPORTANT**:\n- You MUST provide an absolute path.\n\n🎯 **When to Use**:\nThis tool is versatile and can be used before completing various tasks to retrieve relevant context:\n- **Code search**: Find specific functions, classes, or implementations\n- **Context-aware assistance**: Gather relevant code context before making changes\n- **Issue identification**: Locate problematic code sections or bugs\n- **Code review**: Understand existing implementations and patterns\n- **Refactoring**: Find all related code pieces that need to be updated\n- **Feature development**: Understand existing architecture and similar implementations\n- **Duplicate detection**: Identify redundant or duplicated code patterns across the codebase\n\n✨ **Usage Guidance**:\n- If the codebase is not indexed, this tool will return a clear error message indicating that indexing is required first.\n- You can then use the index_codebase tool to index the codebase before searching again.\n",
+      "inputSchema": {
+        "properties": {
+          "extensionFilter": {
+            "default": [],
+            "description": "Optional: List of file extensions to filter results. (e.g., ['.ts','.py']).",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "limit": {
+            "default": 10,
+            "description": "Maximum number of results to return",
+            "maximum": 50,
+            "type": "number"
+          },
+          "path": {
+            "description": "ABSOLUTE path to the codebase directory to search in.",
+            "type": "string"
+          },
+          "query": {
+            "description": "Natural language query to search for in the codebase",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "query"
+        ],
+        "type": "object"
+      },
+      "name": "search_code"
+    },
+    {
+      "description": "Clear the search index. IMPORTANT: You MUST provide an absolute path.",
+      "inputSchema": {
+        "properties": {
+          "path": {
+            "description": "ABSOLUTE path to the codebase directory to clear.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "name": "clear_index"
+    },
+    {
+      "description": "Get the current indexing status of a codebase. Shows progress percentage for actively indexing codebases and completion status for indexed codebases.",
+      "inputSchema": {
+        "properties": {
+          "path": {
+            "description": "ABSOLUTE path to the codebase directory to check status for.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "name": "get_indexing_status"
+    }
+  ]
+}

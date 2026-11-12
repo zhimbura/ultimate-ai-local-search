@@ -1,0 +1,11 @@
+{
+  "arguments": {
+    "content": "all",
+    "query": "retry with exponential backoff",
+    "repo": "$WORKSPACE/sample-android"
+  },
+  "duration_ms": 8,
+  "notes": "content=all (code+docs+config)",
+  "server": "semble 0.7.3",
+  "tool": "search"
+}

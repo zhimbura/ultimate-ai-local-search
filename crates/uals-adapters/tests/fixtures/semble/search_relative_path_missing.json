@@ -1,0 +1,12 @@
+{
+  "content": [
+    {
+      "text": "Failed to index 'nope-rel': Path does not exist: $WORKSPACE/nope-rel",
+      "type": "text"
+    }
+  ],
+  "isError": false,
+  "structuredContent": {
+    "result": "Failed to index 'nope-rel': Path does not exist: $WORKSPACE/nope-rel"
+  }
+}

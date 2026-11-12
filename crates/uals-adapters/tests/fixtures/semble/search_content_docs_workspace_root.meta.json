@@ -1,0 +1,11 @@
+{
+  "arguments": {
+    "content": "docs",
+    "query": "fixture workspace",
+    "repo": "$WORKSPACE"
+  },
+  "duration_ms": 10,
+  "notes": "content=docs on the workspace root (README.md only)",
+  "server": "semble 0.7.3",
+  "tool": "search"
+}

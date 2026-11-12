@@ -1,0 +1,12 @@
+{
+  "content": [
+    {
+      "text": "{\"query\": \"fixture workspace\", \"results\": [{\"file_path\": \"README.md\", \"start_line\": 1, \"end_line\": 13, \"score\": 0.01639344262295082, \"content\": \"# Test workspace\\n\\nA public multi-repo fixture for `uals` tests. It is a parent folder with three independent projects:\\n\\n| Folder | Stack | What it has |\\n|---|---|---|\\n| `sample-android` | Kotlin, Gradle (`:core`, `:network`, `:app`) | retry with backoff, backend host selection, config loading, analytics |\\n| `sample-web` | TypeScript | fetch with retry, session token refresh |\\n| `sample-tools` | Python | LRU cache, slugify |\\n\"}]}",
+      "type": "text"
+    }
+  ],
+  "isError": false,
+  "structuredContent": {
+    "result": "{\"query\": \"fixture workspace\", \"results\": [{\"file_path\": \"README.md\", \"start_line\": 1, \"end_line\": 13, \"score\": 0.01639344262295082, \"content\": \"# Test workspace\\n\\nA public multi-repo fixture for `uals` tests. It is a parent folder with three independent projects:\\n\\n| Folder | Stack | What it has |\\n|---|---|---|\\n| `sample-android` | Kotlin, Gradle (`:core`, `:network`, `:app`) | retry with backoff, backend host selection, config loading, analytics |\\n| `sample-web` | TypeScript | fetch with retry, session token refresh |\\n| `sample-tools` | Python | LRU cache, slugify |\\n\"}]}"
+  }
+}

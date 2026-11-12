@@ -1,0 +1,10 @@
+{
+  "arguments": {
+    "query": "retry",
+    "repo": "sample-android"
+  },
+  "duration_ms": 4,
+  "notes": "relative repo path resolves against the SERVER cwd (spike ran with cwd=$WORKSPACE)",
+  "server": "semble 0.7.3",
+  "tool": "search"
+}
