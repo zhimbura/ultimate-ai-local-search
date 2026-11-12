@@ -131,7 +131,8 @@ TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
 # ─── manifest: one line per thing THIS installer created or started ──────────
-#   <kind> <value>   kinds: file, uv-installed, uv-tool, dir, emptydir, docker-stack, config-file, mcp-entry, saved-mcp
+#   <kind> <value>   kinds: file, moved-aside, uv-installed, uv-tool, dir, emptydir, docker-stack,
+#                    config-file, mcp-entry, saved-mcp
 manifest_add() {
   local line="$1 $2"
   mkdir -p "$DATA_DIR"
@@ -150,15 +151,18 @@ ver_ge() { [ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -n1)" = "$2" ]; }  
 toml_str() { printf '"%s"' "$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g')"; }
 
 # install_bin <src> <dst> [manifest-kind]: put an executable in place, atomically.
-# Unchanged: nothing happens. A file that is not ours is moved aside first.
+# Unchanged: returns 1 and changes nothing. A file that is not ours is moved aside first, and
+# uninstall.sh puts it back (manifest kind moved-aside).
 install_bin() {
   local src="$1" dst="$2" kind="${3:-file}"
   if [ -e "$dst" ] && cmp -s "$src" "$dst"; then return 1; fi
   if [ -e "$dst" ] && ! in_manifest "$kind" "$dst" && ! in_manifest file "$dst" && ! in_manifest uv-installed "$dst"; then
     local bak; bak="$dst.bak.$(date +%Y%m%d-%H%M%S)"
-    mv -f "$dst" "$bak"; warn "$dst was not installed by uals: moved to $bak"
+    mv -f "$dst" "$bak" || die "cannot move $dst aside"
+    manifest_add moved-aside "$bak"
+    warn "$dst was not installed by uals: moved to $bak (uninstall.sh puts it back)"
   fi
-  install -m755 "$src" "$dst.new.$$" && mv -f "$dst.new.$$" "$dst"
+  { install -m755 "$src" "$dst.new.$$" && mv -f "$dst.new.$$" "$dst"; } || die "cannot install $dst"
   manifest_add "$kind" "$dst"
 }
 

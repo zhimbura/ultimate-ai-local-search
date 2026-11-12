@@ -82,6 +82,12 @@ for ((i = ${#LINES[@]} - 1; i >= 0; i--)); do
     emptydir)
       rmdir "$value" 2>/dev/null || true
       ;;
+    moved-aside)
+      # A file that was in place before the install: put it back where it was.
+      original="${value%.bak.*}"
+      safe_path "$original" || { warn "skipping unsafe path: $value"; continue; }
+      if [ -e "$value" ] && [ ! -e "$original" ]; then mv -f -- "$value" "$original"; ok "restored $original"; fi
+      ;;
     mcp-entry)
       bash "$REPO_DIR/scripts/configure-mcp.sh" --remove --config "$value"
       ;;
