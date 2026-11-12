@@ -1,0 +1,59 @@
+[workspace]
+resolver = "3"
+members = [
+  "crates/uals-core",
+  "crates/uals-adapters",
+  "crates/uals",
+  "crates/uals-bench",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT"
+repository = "https://github.com/zhimbura/ultimate-ai-local-search"
+
+# All third-party dependencies live here. Tracks do not add new ones:
+# ask the coordinator, who owns this file and Cargo.lock.
+[workspace.dependencies]
+uals-core = { path = "crates/uals-core" }
+uals-adapters = { path = "crates/uals-adapters" }
+
+anyhow = "1.0.104"
+async-trait = "0.1.92"
+clap = { version = "4.6.7", features = ["derive", "env"] }
+dirs = "7.0.0"
+futures = "0.3.34"
+grep-matcher = "0.1.9"
+grep-regex = "0.1.14"
+grep-searcher = "0.1.17"
+ignore = "0.4.34"
+nix = { version = "0.31.3", features = ["signal", "process"] }
+pretty_assertions = "1.4.1"
+# The version rmcp's `transport-child-process` uses, so `CommandWrap` is the type rmcp accepts.
+process-wrap = { version = "10.0", features = ["tokio1"] }
+rand = "0.10.3"
+regex = "1.13.1"
+rmcp = { version = "3.9.0", default-features = false }
+schemars = "1.2.3"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+tempfile = "3.27.0"
+thiserror = "2.0.21"
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "process", "time", "sync", "io-util", "io-std", "fs"] }
+toml = "1.2.1"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
+which = "8.0.6"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

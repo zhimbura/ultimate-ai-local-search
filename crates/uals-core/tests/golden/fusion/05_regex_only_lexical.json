@@ -1,0 +1,115 @@
+{
+  "name": "regex_only_lexical",
+  "description": "Regex queries use only the lexical backend: ast-index and semble hits have weight 0 and are dropped, so nothing is pinned and the scores are pure lexical ranks.",
+  "query": "class \\w+Store",
+  "kind": "regex",
+  "spans": [
+    {
+      "repo": "sample-android",
+      "path": "/ws/sample-android/network/src/main/kotlin/sample/network/HostStore.kt",
+      "name": "HostStore",
+      "kind": "interface",
+      "lines": {
+        "start": 3,
+        "end": 6
+      }
+    },
+    {
+      "repo": "sample-android",
+      "path": "/ws/sample-android/network/src/main/kotlin/sample/network/HostStore.kt",
+      "name": "InMemoryHostStore",
+      "kind": "class",
+      "lines": {
+        "start": 8,
+        "end": 17
+      }
+    }
+  ],
+  "hits": [
+    {
+      "backend": "lexical",
+      "repo": "sample-android",
+      "path": "/ws/sample-android/network/src/main/kotlin/sample/network/HostStore.kt",
+      "lines": {
+        "start": 3,
+        "end": 3
+      },
+      "rank": 0
+    },
+    {
+      "backend": "lexical",
+      "repo": "sample-android",
+      "path": "/ws/sample-android/network/src/main/kotlin/sample/network/HostStore.kt",
+      "lines": {
+        "start": 8,
+        "end": 8
+      },
+      "rank": 1
+    },
+    {
+      "backend": "semble",
+      "repo": "sample-android",
+      "path": "/ws/sample-android/network/src/main/kotlin/sample/network/HostStore.kt",
+      "lines": {
+        "start": 1,
+        "end": 17
+      },
+      "rank": 0
+    },
+    {
+      "backend": "ast-index",
+      "repo": "sample-android",
+      "path": "/ws/sample-android/network/src/main/kotlin/sample/network/HostStore.kt",
+      "lines": {
+        "start": 3,
+        "end": 6
+      },
+      "rank": 0,
+      "symbol": "HostStore",
+      "symbol_kind": "interface",
+      "is_definition": true
+    }
+  ],
+  "expected": [
+    {
+      "repo": "sample-android",
+      "path": "/ws/sample-android/network/src/main/kotlin/sample/network/HostStore.kt",
+      "lines": [
+        3,
+        6
+      ],
+      "symbol": "HostStore",
+      "symbol_kind": "interface",
+      "pinned": false,
+      "is_definition": false,
+      "focus_line": 3,
+      "score": 0.01639344262295082,
+      "sources": [
+        [
+          "lexical",
+          0
+        ]
+      ]
+    },
+    {
+      "repo": "sample-android",
+      "path": "/ws/sample-android/network/src/main/kotlin/sample/network/HostStore.kt",
+      "lines": [
+        8,
+        17
+      ],
+      "symbol": "InMemoryHostStore",
+      "symbol_kind": "class",
+      "pinned": false,
+      "is_definition": false,
+      "focus_line": 8,
+      "score": 0.016129032258064516,
+      "sources": [
+        [
+          "lexical",
+          1
+        ]
+      ]
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+[package]
+name = "uals-adapters"
+description = "Search backends for uals: ast-index, in-process lexical search, Semble and claude-context over MCP"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+uals-core.workspace = true
+async-trait.workspace = true
+grep-matcher.workspace = true
+grep-regex.workspace = true
+grep-searcher.workspace = true
+ignore.workspace = true
+process-wrap.workspace = true
+regex.workspace = true
+rmcp = { workspace = true, features = ["client", "transport-child-process"] }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+which.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+nix.workspace = true
+
+[dev-dependencies]
+pretty_assertions.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

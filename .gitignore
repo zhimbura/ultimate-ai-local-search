@@ -16,3 +16,6 @@ Thumbs.db
 
 # Smoke-test scratch
 .smoke-test/
+
+# Rust build output
+/target/

@@ -1,0 +1,227 @@
+{
+  "name": "per_backend_max_not_sum",
+  "description": "Three lexical hits inside ConfigLoader.load count once, with the best rank. A qualified query pins by its last segment; RetryPolicyTest is a definition but not of the query, so it is not pinned.",
+  "query": "sample.core.RetryPolicy",
+  "kind": "identifier",
+  "spans": [
+    {
+      "repo": "sample-android",
+      "path": "/ws/sample-android/core/src/main/kotlin/sample/core/RetryPolicy.kt",
+      "name": "RetryPolicy",
+      "kind": "class",
+      "lines": {
+        "start": 3,
+        "end": 18
+      }
+    },
+    {
+      "repo": "sample-android",
+      "path": "/ws/sample-android/core/src/main/kotlin/sample/core/RetryPolicy.kt",
+      "name": "shouldRetry",
+      "kind": "function",
+      "lines": {
+        "start": 5,
+        "end": 8
+      }
+    },
+    {
+      "repo": "sample-android",
+      "path": "/ws/sample-android/core/src/main/kotlin/sample/core/RetryPolicy.kt",
+      "name": "delayFor",
+      "kind": "function",
+      "lines": {
+        "start": 10,
+        "end": 17
+      }
+    },
+    {
+      "repo": "sample-android",
+      "path": "/ws/sample-android/network/src/main/kotlin/sample/network/ConfigLoader.kt",
+      "name": "load",
+      "kind": "function",
+      "lines": {
+        "start": 19,
+        "end": 43
+      }
+    }
+  ],
+  "hits": [
+    {
+      "backend": "lexical",
+      "repo": "sample-android",
+      "path": "/ws/sample-android/core/src/main/kotlin/sample/core/RetryPolicy.kt",
+      "lines": {
+        "start": 3,
+        "end": 3
+      },
+      "rank": 0
+    },
+    {
+      "backend": "lexical",
+      "repo": "sample-android",
+      "path": "/ws/sample-android/network/src/main/kotlin/sample/network/ConfigLoader.kt",
+      "lines": {
+        "start": 21,
+        "end": 21
+      },
+      "rank": 1
+    },
+    {
+      "backend": "lexical",
+      "repo": "sample-android",
+      "path": "/ws/sample-android/network/src/main/kotlin/sample/network/ConfigLoader.kt",
+      "lines": {
+        "start": 25,
+        "end": 25
+      },
+      "rank": 2
+    },
+    {
+      "backend": "lexical",
+      "repo": "sample-android",
+      "path": "/ws/sample-android/network/src/main/kotlin/sample/network/ConfigLoader.kt",
+      "lines": {
+        "start": 30,
+        "end": 30
+      },
+      "rank": 3
+    },
+    {
+      "backend": "lexical",
+      "repo": "sample-android",
+      "path": "/ws/sample-android/core/src/main/kotlin/sample/core/RetryPolicy.kt",
+      "lines": {
+        "start": 12,
+        "end": 12
+      },
+      "rank": 4
+    },
+    {
+      "backend": "ast-index",
+      "repo": "sample-android",
+      "path": "/ws/sample-android/core/src/main/kotlin/sample/core/RetryPolicy.kt",
+      "lines": {
+        "start": 3,
+        "end": 18
+      },
+      "rank": 0,
+      "symbol": "RetryPolicy",
+      "symbol_kind": "class",
+      "is_definition": true
+    },
+    {
+      "backend": "ast-index",
+      "repo": "sample-android",
+      "path": "/ws/sample-android/network/src/main/kotlin/sample/network/ConfigLoader.kt",
+      "lines": {
+        "start": 21,
+        "end": 21
+      },
+      "rank": 1,
+      "symbol": "RetryPolicy"
+    },
+    {
+      "backend": "ast-index",
+      "repo": "sample-android",
+      "path": "/ws/sample-android/core/src/test/kotlin/sample/core/RetryPolicyTest.kt",
+      "lines": {
+        "start": 5,
+        "end": 30
+      },
+      "rank": 2,
+      "symbol": "RetryPolicyTest",
+      "symbol_kind": "class",
+      "is_definition": true
+    }
+  ],
+  "expected": [
+    {
+      "repo": "sample-android",
+      "path": "/ws/sample-android/core/src/main/kotlin/sample/core/RetryPolicy.kt",
+      "lines": [
+        3,
+        18
+      ],
+      "symbol": "RetryPolicy",
+      "symbol_kind": "class",
+      "pinned": true,
+      "is_definition": true,
+      "focus_line": 3,
+      "score": 0.027868852459016394,
+      "sources": [
+        [
+          "ast-index",
+          0
+        ],
+        [
+          "lexical",
+          0
+        ]
+      ]
+    },
+    {
+      "repo": "sample-android",
+      "path": "/ws/sample-android/network/src/main/kotlin/sample/network/ConfigLoader.kt",
+      "lines": [
+        19,
+        43
+      ],
+      "symbol": "load",
+      "symbol_kind": "function",
+      "pinned": false,
+      "is_definition": false,
+      "focus_line": 21,
+      "score": 0.027419354838709678,
+      "sources": [
+        [
+          "ast-index",
+          1
+        ],
+        [
+          "lexical",
+          1
+        ]
+      ]
+    },
+    {
+      "repo": "sample-android",
+      "path": "/ws/sample-android/core/src/test/kotlin/sample/core/RetryPolicyTest.kt",
+      "lines": [
+        5,
+        30
+      ],
+      "symbol": "RetryPolicyTest",
+      "symbol_kind": "class",
+      "pinned": false,
+      "is_definition": true,
+      "focus_line": 5,
+      "score": 0.015873015873015872,
+      "sources": [
+        [
+          "ast-index",
+          2
+        ]
+      ]
+    },
+    {
+      "repo": "sample-android",
+      "path": "/ws/sample-android/core/src/main/kotlin/sample/core/RetryPolicy.kt",
+      "lines": [
+        10,
+        17
+      ],
+      "symbol": "delayFor",
+      "symbol_kind": "function",
+      "pinned": false,
+      "is_definition": false,
+      "focus_line": 12,
+      "score": 0.010769230769230769,
+      "sources": [
+        [
+          "lexical",
+          4
+        ]
+      ]
+    }
+  ]
+}

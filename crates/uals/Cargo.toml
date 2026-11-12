@@ -1,0 +1,34 @@
+[package]
+name = "uals"
+description = "One code search for AI agents: symbols, text and meaning across every repository in a folder, fused into one ranked answer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "uals"
+path = "src/main.rs"
+
+[dependencies]
+uals-core.workspace = true
+uals-adapters.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+futures.workspace = true
+rmcp = { workspace = true, features = ["server", "macros", "transport-io", "schemars"] }
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+pretty_assertions.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

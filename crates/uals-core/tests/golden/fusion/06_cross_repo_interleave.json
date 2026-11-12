@@ -1,0 +1,135 @@
+{
+  "name": "cross_repo_interleave",
+  "description": "Ranks are per repository and raw scores are ignored, so the two repositories interleave: both first hits, then both second hits; ties go by repository name.",
+  "query": "retry with exponential backoff",
+  "kind": "natural",
+  "spans": [],
+  "hits": [
+    {
+      "backend": "semble",
+      "repo": "sample-android",
+      "path": "/ws/sample-android/core/src/main/kotlin/sample/core/RetryPolicy.kt",
+      "lines": {
+        "start": 1,
+        "end": 18
+      },
+      "rank": 0,
+      "score": 0.9
+    },
+    {
+      "backend": "semble",
+      "repo": "sample-android",
+      "path": "/ws/sample-android/network/src/main/kotlin/sample/network/ConfigLoader.kt",
+      "lines": {
+        "start": 19,
+        "end": 43
+      },
+      "rank": 1,
+      "score": 0.8
+    },
+    {
+      "backend": "semble",
+      "repo": "sample-web",
+      "path": "/ws/sample-web/src/http/fetchWithRetry.ts",
+      "lines": {
+        "start": 1,
+        "end": 24
+      },
+      "rank": 0,
+      "score": 0.02
+    },
+    {
+      "backend": "semble",
+      "repo": "sample-web",
+      "path": "/ws/sample-web/src/auth/session.ts",
+      "lines": {
+        "start": 1,
+        "end": 21
+      },
+      "rank": 1,
+      "score": 0.01
+    }
+  ],
+  "expected": [
+    {
+      "repo": "sample-android",
+      "path": "/ws/sample-android/core/src/main/kotlin/sample/core/RetryPolicy.kt",
+      "lines": [
+        1,
+        18
+      ],
+      "symbol": null,
+      "symbol_kind": null,
+      "pinned": false,
+      "is_definition": false,
+      "focus_line": 1,
+      "score": 0.01639344262295082,
+      "sources": [
+        [
+          "semble",
+          0
+        ]
+      ]
+    },
+    {
+      "repo": "sample-web",
+      "path": "/ws/sample-web/src/http/fetchWithRetry.ts",
+      "lines": [
+        1,
+        24
+      ],
+      "symbol": null,
+      "symbol_kind": null,
+      "pinned": false,
+      "is_definition": false,
+      "focus_line": 1,
+      "score": 0.01639344262295082,
+      "sources": [
+        [
+          "semble",
+          0
+        ]
+      ]
+    },
+    {
+      "repo": "sample-android",
+      "path": "/ws/sample-android/network/src/main/kotlin/sample/network/ConfigLoader.kt",
+      "lines": [
+        19,
+        43
+      ],
+      "symbol": null,
+      "symbol_kind": null,
+      "pinned": false,
+      "is_definition": false,
+      "focus_line": 19,
+      "score": 0.016129032258064516,
+      "sources": [
+        [
+          "semble",
+          1
+        ]
+      ]
+    },
+    {
+      "repo": "sample-web",
+      "path": "/ws/sample-web/src/auth/session.ts",
+      "lines": [
+        1,
+        21
+      ],
+      "symbol": null,
+      "symbol_kind": null,
+      "pinned": false,
+      "is_definition": false,
+      "focus_line": 1,
+      "score": 0.016129032258064516,
+      "sources": [
+        [
+          "semble",
+          1
+        ]
+      ]
+    }
+  ]
+}

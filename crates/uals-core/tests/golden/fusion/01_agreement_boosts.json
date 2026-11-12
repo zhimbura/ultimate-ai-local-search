@@ -1,0 +1,270 @@
+{
+  "name": "agreement_boosts",
+  "description": "Three backends agreeing on App.main lift it above ConfigLoader.load, which only ast-index ranks well. The exact definition of the query is pinned first.",
+  "query": "HostSelector",
+  "kind": "identifier",
+  "spans": [
+    {
+      "repo": "sample-android",
+      "path": "/ws/sample-android/network/src/main/kotlin/sample/network/HostSelector.kt",
+      "name": "HostSelector",
+      "kind": "class",
+      "lines": {
+        "start": 3,
+        "end": 30
+      }
+    },
+    {
+      "repo": "sample-android",
+      "path": "/ws/sample-android/network/src/main/kotlin/sample/network/HostSelector.kt",
+      "name": "pick",
+      "kind": "function",
+      "lines": {
+        "start": 8,
+        "end": 14
+      }
+    },
+    {
+      "repo": "sample-android",
+      "path": "/ws/sample-android/network/src/main/kotlin/sample/network/HostSelector.kt",
+      "name": "markFailed",
+      "kind": "function",
+      "lines": {
+        "start": 16,
+        "end": 22
+      }
+    },
+    {
+      "repo": "sample-android",
+      "path": "/ws/sample-android/network/src/main/kotlin/sample/network/ConfigLoader.kt",
+      "name": "ConfigLoader",
+      "kind": "class",
+      "lines": {
+        "start": 10,
+        "end": 45
+      }
+    },
+    {
+      "repo": "sample-android",
+      "path": "/ws/sample-android/network/src/main/kotlin/sample/network/ConfigLoader.kt",
+      "name": "load",
+      "kind": "function",
+      "lines": {
+        "start": 19,
+        "end": 43
+      }
+    },
+    {
+      "repo": "sample-android",
+      "path": "/ws/sample-android/app/src/main/kotlin/sample/app/App.kt",
+      "name": "main",
+      "kind": "function",
+      "lines": {
+        "start": 5,
+        "end": 18
+      }
+    }
+  ],
+  "hits": [
+    {
+      "backend": "ast-index",
+      "repo": "sample-android",
+      "path": "/ws/sample-android/network/src/main/kotlin/sample/network/HostSelector.kt",
+      "lines": {
+        "start": 3,
+        "end": 30
+      },
+      "rank": 0,
+      "symbol": "HostSelector",
+      "symbol_kind": "class",
+      "is_definition": true
+    },
+    {
+      "backend": "ast-index",
+      "repo": "sample-android",
+      "path": "/ws/sample-android/app/src/main/kotlin/sample/app/App.kt",
+      "lines": {
+        "start": 9,
+        "end": 9
+      },
+      "rank": 1,
+      "symbol": "HostSelector"
+    },
+    {
+      "backend": "ast-index",
+      "repo": "sample-android",
+      "path": "/ws/sample-android/network/src/main/kotlin/sample/network/ConfigLoader.kt",
+      "lines": {
+        "start": 25,
+        "end": 25
+      },
+      "rank": 2,
+      "symbol": "HostSelector"
+    },
+    {
+      "backend": "lexical",
+      "repo": "sample-android",
+      "path": "/ws/sample-android/network/src/main/kotlin/sample/network/HostSelector.kt",
+      "lines": {
+        "start": 3,
+        "end": 3
+      },
+      "rank": 0
+    },
+    {
+      "backend": "lexical",
+      "repo": "sample-android",
+      "path": "/ws/sample-android/app/src/main/kotlin/sample/app/App.kt",
+      "lines": {
+        "start": 9,
+        "end": 9
+      },
+      "rank": 1
+    },
+    {
+      "backend": "lexical",
+      "repo": "sample-android",
+      "path": "/ws/sample-android/network/src/main/kotlin/sample/network/ConfigLoader.kt",
+      "lines": {
+        "start": 12,
+        "end": 12
+      },
+      "rank": 2
+    },
+    {
+      "backend": "semble",
+      "repo": "sample-android",
+      "path": "/ws/sample-android/network/src/main/kotlin/sample/network/ConfigLoader.kt",
+      "lines": {
+        "start": 19,
+        "end": 43
+      },
+      "rank": 0,
+      "score": 0.0242
+    },
+    {
+      "backend": "semble",
+      "repo": "sample-android",
+      "path": "/ws/sample-android/network/src/main/kotlin/sample/network/HostSelector.kt",
+      "lines": {
+        "start": 1,
+        "end": 7
+      },
+      "rank": 1,
+      "score": 0.0197
+    },
+    {
+      "backend": "semble",
+      "repo": "sample-android",
+      "path": "/ws/sample-android/app/src/main/kotlin/sample/app/App.kt",
+      "lines": {
+        "start": 1,
+        "end": 18
+      },
+      "rank": 2,
+      "score": 0.0173
+    }
+  ],
+  "expected": [
+    {
+      "repo": "sample-android",
+      "path": "/ws/sample-android/network/src/main/kotlin/sample/network/HostSelector.kt",
+      "lines": [
+        3,
+        30
+      ],
+      "symbol": "HostSelector",
+      "symbol_kind": "class",
+      "pinned": true,
+      "is_definition": true,
+      "focus_line": 3,
+      "score": 0.03270756213643575,
+      "sources": [
+        [
+          "ast-index",
+          0
+        ],
+        [
+          "lexical",
+          0
+        ],
+        [
+          "semble",
+          1
+        ]
+      ]
+    },
+    {
+      "repo": "sample-android",
+      "path": "/ws/sample-android/app/src/main/kotlin/sample/app/App.kt",
+      "lines": [
+        5,
+        18
+      ],
+      "symbol": "main",
+      "symbol_kind": "function",
+      "pinned": false,
+      "is_definition": false,
+      "focus_line": 9,
+      "score": 0.03218125960061444,
+      "sources": [
+        [
+          "ast-index",
+          1
+        ],
+        [
+          "lexical",
+          1
+        ],
+        [
+          "semble",
+          2
+        ]
+      ]
+    },
+    {
+      "repo": "sample-android",
+      "path": "/ws/sample-android/network/src/main/kotlin/sample/network/ConfigLoader.kt",
+      "lines": [
+        19,
+        43
+      ],
+      "symbol": "load",
+      "symbol_kind": "function",
+      "pinned": false,
+      "is_definition": false,
+      "focus_line": 25,
+      "score": 0.02079104865990112,
+      "sources": [
+        [
+          "ast-index",
+          2
+        ],
+        [
+          "semble",
+          0
+        ]
+      ]
+    },
+    {
+      "repo": "sample-android",
+      "path": "/ws/sample-android/network/src/main/kotlin/sample/network/ConfigLoader.kt",
+      "lines": [
+        10,
+        45
+      ],
+      "symbol": "ConfigLoader",
+      "symbol_kind": "class",
+      "pinned": false,
+      "is_definition": false,
+      "focus_line": 12,
+      "score": 0.01111111111111111,
+      "sources": [
+        [
+          "lexical",
+          2
+        ]
+      ]
+    }
+  ]
+}

@@ -1,0 +1,163 @@
+[
+  {
+    "query": "HostSelector",
+    "kind": "identifier",
+    "text": "HostSelector"
+  },
+  {
+    "query": "markFailed",
+    "kind": "identifier",
+    "text": "markFailed"
+  },
+  {
+    "query": "mark_failed",
+    "kind": "identifier",
+    "text": "mark_failed"
+  },
+  {
+    "query": "MAX_RETRIES",
+    "kind": "identifier",
+    "text": "MAX_RETRIES"
+  },
+  {
+    "query": "Analytics",
+    "kind": "identifier",
+    "text": "Analytics"
+  },
+  {
+    "query": "sample.core.Analytics",
+    "kind": "identifier",
+    "text": "sample.core.Analytics"
+  },
+  {
+    "query": "Foo::bar",
+    "kind": "identifier",
+    "text": "Foo::bar"
+  },
+  {
+    "query": "HostSelector#pick",
+    "kind": "identifier",
+    "text": "HostSelector#pick"
+  },
+  {
+    "query": "retry()",
+    "kind": "identifier",
+    "text": "retry()"
+  },
+  {
+    "query": "R.string.app_name",
+    "kind": "identifier",
+    "text": "R.string.app_name"
+  },
+  {
+    "query": "$state",
+    "kind": "identifier",
+    "text": "$state"
+  },
+  {
+    "query": "  HostSelector \n",
+    "kind": "identifier",
+    "text": "HostSelector"
+  },
+  {
+    "query": "retry",
+    "kind": "natural",
+    "text": "retry"
+  },
+  {
+    "query": "where is the backend host chosen",
+    "kind": "natural",
+    "text": "where is the backend host chosen"
+  },
+  {
+    "query": "HostSelector pick",
+    "kind": "natural",
+    "text": "HostSelector pick"
+  },
+  {
+    "query": "how does markFailed work",
+    "kind": "natural",
+    "text": "how does markFailed work"
+  },
+  {
+    "query": "host-switched",
+    "kind": "natural",
+    "text": "host-switched"
+  },
+  {
+    "query": "9lives",
+    "kind": "natural",
+    "text": "9lives"
+  },
+  {
+    "query": "где выбирается хост бэкенда",
+    "kind": "natural",
+    "text": "где выбирается хост бэкенда"
+  },
+  {
+    "query": "/class \\w+Store/",
+    "kind": "regex",
+    "text": "class \\w+Store"
+  },
+  {
+    "query": "/x/",
+    "kind": "regex",
+    "text": "x"
+  },
+  {
+    "query": "\"host_switched\"",
+    "kind": "literal",
+    "text": "host_switched"
+  },
+  {
+    "query": "'host_switched'",
+    "kind": "literal",
+    "text": "host_switched"
+  },
+  {
+    "query": "`host switched`",
+    "kind": "literal",
+    "text": "host switched"
+  },
+  {
+    "query": "\"unbalanced'",
+    "kind": "natural",
+    "text": "\"unbalanced'"
+  },
+  {
+    "query": "retry",
+    "forced": "identifier",
+    "kind": "identifier",
+    "text": "retry"
+  },
+  {
+    "query": "HostSelector",
+    "forced": "natural",
+    "kind": "natural",
+    "text": "HostSelector"
+  },
+  {
+    "query": "class \\w+Store",
+    "forced": "regex",
+    "kind": "regex",
+    "text": "class \\w+Store"
+  },
+  {
+    "query": "/x+/",
+    "forced": "regex",
+    "kind": "regex",
+    "text": "x+"
+  },
+  {
+    "query": "\"a b\"",
+    "forced": "literal",
+    "kind": "literal",
+    "text": "a b"
+  },
+  {
+    "query": "a b",
+    "forced": "literal",
+    "kind": "literal",
+    "text": "a b"
+  }
+]

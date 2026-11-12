@@ -1,0 +1,215 @@
+{
+  "name": "pin_cap_and_ties",
+  "description": "Four repositories define Config; only 3 are pinned. Among pinned hits the higher score comes first, equal scores go by repository name. Pinned hits stay above a higher-scored unpinned hit.",
+  "query": "Config",
+  "kind": "identifier",
+  "spans": [],
+  "hits": [
+    {
+      "backend": "ast-index",
+      "repo": "a",
+      "path": "/ws/a/src/Config.kt",
+      "lines": {
+        "start": 1,
+        "end": 20
+      },
+      "rank": 0,
+      "symbol": "Config",
+      "symbol_kind": "class",
+      "is_definition": true
+    },
+    {
+      "backend": "ast-index",
+      "repo": "a",
+      "path": "/ws/a/src/Main.kt",
+      "lines": {
+        "start": 5,
+        "end": 5
+      },
+      "rank": 1
+    },
+    {
+      "backend": "lexical",
+      "repo": "a",
+      "path": "/ws/a/src/Main.kt",
+      "lines": {
+        "start": 5,
+        "end": 5
+      },
+      "rank": 0
+    },
+    {
+      "backend": "semble",
+      "repo": "a",
+      "path": "/ws/a/src/Main.kt",
+      "lines": {
+        "start": 1,
+        "end": 10
+      },
+      "rank": 0
+    },
+    {
+      "backend": "ast-index",
+      "repo": "b",
+      "path": "/ws/b/src/Config.kt",
+      "lines": {
+        "start": 1,
+        "end": 20
+      },
+      "rank": 0,
+      "symbol": "Config",
+      "symbol_kind": "class",
+      "is_definition": true
+    },
+    {
+      "backend": "ast-index",
+      "repo": "c",
+      "path": "/ws/c/src/Config.kt",
+      "lines": {
+        "start": 1,
+        "end": 20
+      },
+      "rank": 0,
+      "symbol": "Config",
+      "symbol_kind": "class",
+      "is_definition": true
+    },
+    {
+      "backend": "lexical",
+      "repo": "c",
+      "path": "/ws/c/src/Config.kt",
+      "lines": {
+        "start": 1,
+        "end": 1
+      },
+      "rank": 0
+    },
+    {
+      "backend": "ast-index",
+      "repo": "d",
+      "path": "/ws/d/src/Config.kt",
+      "lines": {
+        "start": 1,
+        "end": 20
+      },
+      "rank": 0,
+      "symbol": "Config",
+      "symbol_kind": "class",
+      "is_definition": true
+    }
+  ],
+  "expected": [
+    {
+      "repo": "c",
+      "path": "/ws/c/src/Config.kt",
+      "lines": [
+        1,
+        20
+      ],
+      "symbol": "Config",
+      "symbol_kind": "class",
+      "pinned": true,
+      "is_definition": true,
+      "focus_line": 1,
+      "score": 0.027868852459016394,
+      "sources": [
+        [
+          "ast-index",
+          0
+        ],
+        [
+          "lexical",
+          0
+        ]
+      ]
+    },
+    {
+      "repo": "a",
+      "path": "/ws/a/src/Config.kt",
+      "lines": [
+        1,
+        20
+      ],
+      "symbol": "Config",
+      "symbol_kind": "class",
+      "pinned": true,
+      "is_definition": true,
+      "focus_line": 1,
+      "score": 0.01639344262295082,
+      "sources": [
+        [
+          "ast-index",
+          0
+        ]
+      ]
+    },
+    {
+      "repo": "b",
+      "path": "/ws/b/src/Config.kt",
+      "lines": [
+        1,
+        20
+      ],
+      "symbol": "Config",
+      "symbol_kind": "class",
+      "pinned": true,
+      "is_definition": true,
+      "focus_line": 1,
+      "score": 0.01639344262295082,
+      "sources": [
+        [
+          "ast-index",
+          0
+        ]
+      ]
+    },
+    {
+      "repo": "a",
+      "path": "/ws/a/src/Main.kt",
+      "lines": [
+        1,
+        10
+      ],
+      "symbol": null,
+      "symbol_kind": null,
+      "pinned": false,
+      "is_definition": false,
+      "focus_line": 5,
+      "score": 0.03252247488101534,
+      "sources": [
+        [
+          "ast-index",
+          1
+        ],
+        [
+          "lexical",
+          0
+        ],
+        [
+          "semble",
+          0
+        ]
+      ]
+    },
+    {
+      "repo": "d",
+      "path": "/ws/d/src/Config.kt",
+      "lines": [
+        1,
+        20
+      ],
+      "symbol": "Config",
+      "symbol_kind": "class",
+      "pinned": false,
+      "is_definition": true,
+      "focus_line": 1,
+      "score": 0.01639344262295082,
+      "sources": [
+        [
+          "ast-index",
+          0
+        ]
+      ]
+    }
+  ]
+}

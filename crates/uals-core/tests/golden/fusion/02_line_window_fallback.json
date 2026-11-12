@@ -1,0 +1,171 @@
+{
+  "name": "line_window_fallback",
+  "description": "Without spans, hits of one file merge when they overlap or are at most 3 lines apart. The lexical hit has weight 0 for natural queries and is dropped before grouping, so it cannot bridge the two ConfigLoader windows.",
+  "query": "choose which backend url to use",
+  "kind": "natural",
+  "spans": [],
+  "hits": [
+    {
+      "backend": "semble",
+      "repo": "sample-android",
+      "path": "/ws/sample-android/network/src/main/kotlin/sample/network/HostSelector.kt",
+      "lines": {
+        "start": 10,
+        "end": 30
+      },
+      "rank": 0
+    },
+    {
+      "backend": "semble",
+      "repo": "sample-android",
+      "path": "/ws/sample-android/network/src/main/kotlin/sample/network/ConfigLoader.kt",
+      "lines": {
+        "start": 100,
+        "end": 130
+      },
+      "rank": 1
+    },
+    {
+      "backend": "semble",
+      "repo": "sample-android",
+      "path": "/ws/sample-android/network/src/main/kotlin/sample/network/HostSelector.kt",
+      "lines": {
+        "start": 33,
+        "end": 42
+      },
+      "rank": 2
+    },
+    {
+      "backend": "semble",
+      "repo": "sample-android",
+      "path": "/ws/sample-android/network/src/main/kotlin/sample/network/ConfigLoader.kt",
+      "lines": {
+        "start": 5,
+        "end": 9
+      },
+      "rank": 3
+    },
+    {
+      "backend": "ast-index",
+      "repo": "sample-android",
+      "path": "/ws/sample-android/network/src/main/kotlin/sample/network/HostSelector.kt",
+      "lines": {
+        "start": 12,
+        "end": 12
+      },
+      "rank": 0,
+      "symbol": "pick",
+      "symbol_kind": "function",
+      "is_definition": true
+    },
+    {
+      "backend": "ast-index",
+      "repo": "sample-android",
+      "path": "/ws/sample-android/app/src/main/kotlin/sample/app/App.kt",
+      "lines": {
+        "start": 1,
+        "end": 1
+      },
+      "rank": 1,
+      "symbol": "main",
+      "symbol_kind": "function",
+      "is_definition": true
+    },
+    {
+      "backend": "lexical",
+      "repo": "sample-android",
+      "path": "/ws/sample-android/network/src/main/kotlin/sample/network/ConfigLoader.kt",
+      "lines": {
+        "start": 11,
+        "end": 98
+      },
+      "rank": 0
+    }
+  ],
+  "expected": [
+    {
+      "repo": "sample-android",
+      "path": "/ws/sample-android/network/src/main/kotlin/sample/network/HostSelector.kt",
+      "lines": [
+        10,
+        42
+      ],
+      "symbol": "pick",
+      "symbol_kind": "function",
+      "pinned": false,
+      "is_definition": true,
+      "focus_line": 10,
+      "score": 0.027868852459016394,
+      "sources": [
+        [
+          "semble",
+          0
+        ],
+        [
+          "ast-index",
+          0
+        ]
+      ]
+    },
+    {
+      "repo": "sample-android",
+      "path": "/ws/sample-android/network/src/main/kotlin/sample/network/ConfigLoader.kt",
+      "lines": [
+        100,
+        130
+      ],
+      "symbol": null,
+      "symbol_kind": null,
+      "pinned": false,
+      "is_definition": false,
+      "focus_line": 100,
+      "score": 0.016129032258064516,
+      "sources": [
+        [
+          "semble",
+          1
+        ]
+      ]
+    },
+    {
+      "repo": "sample-android",
+      "path": "/ws/sample-android/network/src/main/kotlin/sample/network/ConfigLoader.kt",
+      "lines": [
+        5,
+        9
+      ],
+      "symbol": null,
+      "symbol_kind": null,
+      "pinned": false,
+      "is_definition": false,
+      "focus_line": 5,
+      "score": 0.015625,
+      "sources": [
+        [
+          "semble",
+          3
+        ]
+      ]
+    },
+    {
+      "repo": "sample-android",
+      "path": "/ws/sample-android/app/src/main/kotlin/sample/app/App.kt",
+      "lines": [
+        1,
+        1
+      ],
+      "symbol": "main",
+      "symbol_kind": "function",
+      "pinned": false,
+      "is_definition": true,
+      "focus_line": 1,
+      "score": 0.01129032258064516,
+      "sources": [
+        [
+          "ast-index",
+          1
+        ]
+      ]
+    }
+  ]
+}
