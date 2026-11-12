@@ -7,7 +7,7 @@ name: uals
 services:
   milvus:
     container_name: uals-milvus
-    image: milvusdb/milvus:${MILVUS_VERSION:-v2.5.6}
+    image: milvusdb/milvus:${MILVUS_VERSION:-v2.6.27}
     restart: unless-stopped
     command: ["milvus", "run", "standalone"]
     security_opt:
@@ -17,6 +17,7 @@ services:
       ETCD_DATA_DIR: /var/lib/milvus/etcd
       ETCD_CONFIG_PATH: /milvus/configs/embedEtcd.yaml
       COMMON_STORAGETYPE: local
+      DEPLOY_MODE: STANDALONE   # Milvus 2.6+: without it the embedded etcd refuses to start
     configs:
       - source: embed_etcd
         target: /milvus/configs/embedEtcd.yaml

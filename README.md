@@ -92,7 +92,7 @@ Environment: `UALS_DOWNLOAD_BASE` (release download base URL, for tests), `CLAUD
 
 - Docker with one Milvus container (`docker-compose.yml`), bound to `127.0.0.1` only.
 - An embedder: Ollama or LM Studio on your machine, or a cloud provider with your key.
-- Node 22.12.0 or newer, and `@zilliz/claude-context-mcp` 0.1.15 installed with npm into `~/.local/share/uals/claude-context`. uals never runs `npx` at run time.
+- Node 22.12.0 or newer, and `@zilliz/claude-context-mcp` 0.1.16 installed with npm into `~/.local/share/uals/claude-context`. uals never runs `npx` at run time.
 - `.env` in the checkout (mode 600, gitignored): the Milvus and embedder settings and the API key. A cloud API key goes into the `env` of the uals entry in the Claude Code config, never into `config.toml`.
 
 Only one uals process at a time may run claude-context. Milvus is slower to set up than Semble, and on the benchmark below it was not better. Pick it only if you have a reason.

@@ -1,4 +1,4 @@
-//! Parsers for the texts `@zilliz/claude-context-mcp` 0.1.15 returns.
+//! Parsers for the texts `@zilliz/claude-context-mcp` 0.1.15 and 0.1.16 return.
 //!
 //! Every format below is read from the package source (`dist/handlers.js`), not recorded from a
 //! live run: Milvus was down when the adapter was written (spike S1). The line numbers refer to

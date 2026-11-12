@@ -1,4 +1,4 @@
-//! claude-context adapter: semantic search through `@zilliz/claude-context-mcp` 0.1.15 (Milvus
+//! claude-context adapter: semantic search through `@zilliz/claude-context-mcp` 0.1.15 and 0.1.16 (Milvus
 //! and an embedding server behind it), driven through [`McpToolCaller`]. Findings and recorded
 //! outputs: `docs/spikes/s1-rmcp.md` and `tests/fixtures/claude_context/`.
 //!
