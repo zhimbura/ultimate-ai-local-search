@@ -1,6 +1,7 @@
 //! The command line: `run`, `compare` and `report`.
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
@@ -10,7 +11,7 @@ use crate::compare::{Metric, compare};
 use crate::engine::AnyEngine;
 use crate::gold::{GoldQuery, GoldUsages, Half, QueryType, parse_jsonl};
 use crate::markdown;
-use crate::real::RealOptions;
+use crate::real::{DEFAULT_WARM_UP_TIMEOUT, RealOptions};
 use crate::report::Report;
 use crate::runner::{RunOptions, run};
 
@@ -72,6 +73,9 @@ pub enum Command {
         /// Config file of the real engine; default: `$UALS_CONFIG`, then `~/.config/uals/config.toml`.
         #[arg(long)]
         config: Option<PathBuf>,
+        /// How long the real engine may take to warm up before the hits are measured, in seconds.
+        #[arg(long, default_value_t = DEFAULT_WARM_UP_TIMEOUT.as_secs())]
+        warm_up_timeout: u64,
         /// Overrides `semantic.default` of the config, to measure one config with each backend.
         #[arg(long, value_enum)]
         semantic: Option<SemanticFlag>,
@@ -138,6 +142,7 @@ pub async fn execute(cli: Cli) -> Result<()> {
             usages,
             engine,
             config,
+            warm_up_timeout,
             semantic,
             name,
             out,
@@ -149,7 +154,11 @@ pub async fn execute(cli: Cli) -> Result<()> {
         } => {
             let queries: Vec<GoldQuery> = read_gold(&gold)?;
             let usage_gold: Vec<GoldUsages> = usages.as_deref().map(read_gold).transpose()?.unwrap_or_default();
-            let real = RealOptions { config, semantic: semantic.map(SemanticChoice::from) };
+            let real = RealOptions {
+                config,
+                semantic: semantic.map(SemanticChoice::from),
+                warm_up_timeout: Duration::from_secs(warm_up_timeout),
+            };
             let backend = AnyEngine::from_spec(&engine, &real)?;
             let engine = backend.label().unwrap_or(engine);
             let options = RunOptions { name, engine, half: half.into(), types, warm_repeats, limit, usages_limit };

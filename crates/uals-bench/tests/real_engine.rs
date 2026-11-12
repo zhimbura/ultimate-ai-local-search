@@ -59,7 +59,7 @@ fn copy_dir(from: &Path, to: &Path) {
 }
 
 fn open(workspace: &Workspace, semantic: Option<SemanticChoice>) -> AnyEngine {
-    let options = RealOptions { config: Some(workspace.config.clone()), semantic };
+    let options = RealOptions { config: Some(workspace.config.clone()), semantic, ..RealOptions::default() };
     AnyEngine::from_spec(&format!("real:{}", workspace.root.display()), &options).expect("open the real engine")
 }
 
@@ -110,7 +110,7 @@ fn the_semantic_override_wins_over_the_config_and_names_the_report_label() {
 
 #[test]
 fn options_of_the_real_engine_are_refused_for_the_mock() {
-    let options = RealOptions { config: None, semantic: Some(SemanticChoice::None) };
+    let options = RealOptions { semantic: Some(SemanticChoice::None), ..RealOptions::default() };
     let error = AnyEngine::from_spec("mock:responses.json", &options).err().expect("refused").to_string();
     assert!(error.contains("real engine only"), "{error}");
 }

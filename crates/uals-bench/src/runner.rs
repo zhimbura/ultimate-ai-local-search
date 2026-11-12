@@ -40,7 +40,14 @@ pub fn filter_queries<'a>(queries: &'a [GoldQuery], half: Option<Half>, types: &
         .collect()
 }
 
-/// Runs every selected query once, then `warm_repeats` more passes for the warm latency.
+/// Runs the selected queries in this order:
+/// 1. the first query once, before `Engine::warm_up`: it gives only the cold latency and is not
+///    scored; if it fails there is no cold latency;
+/// 2. `Engine::warm_up`;
+/// 3. every query once: hits, tokens and first-call latencies;
+/// 4. `warm_repeats` more passes for the warm latency;
+/// 5. the usages.
+///
 /// A query whose call fails counts as a miss; its error goes to stderr, not to the report.
 pub async fn run<E: Engine>(
     engine: &E,
@@ -49,8 +56,9 @@ pub async fn run<E: Engine>(
     options: &RunOptions,
 ) -> Result<Report> {
     let selected = filter_queries(queries, options.half, &options.types);
+    let cold_ms = time_cold_call(engine, &selected, options.limit).await;
+    engine.warm_up().await?;
     let results = run_first_pass(engine, &selected, options.limit).await;
-    let cold_ms = results.iter().find(|result| !result.failed).map(|result| result.latency_ms);
     let warm_ms = time_warm_passes(engine, &selected, &results, options).await;
     let usage_scores = score_all_usages(engine, usages, options.usages_limit).await;
 
@@ -71,6 +79,22 @@ pub async fn run<E: Engine>(
 /// Milliseconds since `started`.
 fn elapsed_ms(started: Instant) -> f64 {
     started.elapsed().as_secs_f64() * 1000.0
+}
+
+/// Times the first selected query on the engine as it is, before any warm-up. `None` when there is
+/// no query or the call fails.
+async fn time_cold_call<E: Engine>(engine: &E, selected: &[&GoldQuery], limit: usize) -> Option<f64> {
+    let first = selected.first()?;
+    let started = Instant::now();
+    let outcome = engine.search(&first.query, None, limit).await;
+    let latency_ms = elapsed_ms(started);
+    match outcome {
+        Ok(_) => Some(latency_ms),
+        Err(error) => {
+            eprintln!("cold call {}: {error:#}", first.id);
+            None
+        }
+    }
 }
 
 /// Runs each query once and scores the response; a failed call becomes a miss.
@@ -168,7 +192,7 @@ async fn all_usages<E: Engine>(engine: &E, symbol: &str, page_size: usize) -> Re
 #[cfg(test)]
 mod tests {
     use std::sync::LazyLock;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     use uals_core::config::OutputConfig;
     use uals_core::types::{QueryKind, Repo, SearchResponse, UsagesResponse};
@@ -241,7 +265,7 @@ mod tests {
         let engine = Counting { calls: AtomicUsize::new(0), repos: vec![], output: OutputConfig::default() };
         let queries = [gold("1", QueryType::Natural, Half::A), gold("2", QueryType::Config, Half::B)];
         let report = run(&engine, &queries, &[], &options(4)).await.unwrap();
-        assert_eq!(engine.calls.load(Ordering::SeqCst), 2 + 2 * 4);
+        assert_eq!(engine.calls.load(Ordering::SeqCst), 1 + 2 + 2 * 4, "cold call, first pass, warm passes");
         assert_eq!(report.summary.latency.warm_samples, 8);
         assert!(report.summary.latency.cold_ms.is_some());
         assert_eq!(report.queries.len(), 2);
@@ -295,13 +319,56 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cold_latency_is_the_first_successful_call() {
+    async fn a_failed_cold_call_leaves_no_cold_latency_and_is_not_scored() {
         let engine = FailsFirst { calls: AtomicUsize::new(0) };
         let queries = [gold("1", QueryType::Natural, Half::A), gold("2", QueryType::Natural, Half::A)];
         let report = run(&engine, &queries, &[], &options(0)).await.unwrap();
-        assert!(report.queries[0].failed && !report.queries[1].failed);
-        let cold = report.summary.latency.cold_ms.expect("one call succeeded");
-        assert!(cold >= 30.0, "cold_ms {cold} is the failed call, not the first successful one");
+        assert_eq!(report.summary.latency.cold_ms, None);
+        assert!(report.queries.iter().all(|query| !query.failed), "the failed cold call is not a query result");
+    }
+
+    /// Answers nothing, slowly, until `warm_up` has run; then answers the canned response.
+    struct Warming {
+        warmed: AtomicBool,
+        canned: MockEngine,
+    }
+
+    impl Engine for Warming {
+        fn repos(&self) -> &[Repo] {
+            self.canned.repos()
+        }
+
+        fn output(&self) -> &OutputConfig {
+            self.canned.output()
+        }
+
+        async fn warm_up(&self) -> Result<()> {
+            self.warmed.store(true, Ordering::SeqCst);
+            Ok(())
+        }
+
+        async fn search(&self, query: &str, kind: Option<QueryKind>, limit: usize) -> Result<SearchResponse> {
+            let mut response = self.canned.search(query, kind, limit).await?;
+            if !self.warmed.load(Ordering::SeqCst) {
+                tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+                response.hits.clear();
+            }
+            Ok(response)
+        }
+
+        async fn usages(&self, symbol: &str, limit: usize, offset: usize) -> Result<UsagesResponse> {
+            self.canned.usages(symbol, limit, offset).await
+        }
+    }
+
+    #[tokio::test]
+    async fn hits_are_measured_after_warm_up_and_the_cold_call_only_gives_latency() {
+        let engine = Warming { warmed: AtomicBool::new(false), canned: MockEngine::from_json(ONE_HIT).unwrap() };
+        let queries = [gold("1", QueryType::Natural, Half::A)];
+        let report = run(&engine, &queries, &[], &options(0)).await.unwrap();
+        assert_eq!(report.queries[0].rank_primary, Some(1), "the ranks come from the warmed engine");
+        let cold = report.summary.latency.cold_ms.expect("the cold call succeeded");
+        assert!(cold >= 30.0, "cold_ms {cold} was not taken before the warm-up");
     }
 
     #[tokio::test]
