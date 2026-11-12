@@ -12,6 +12,7 @@ use uals_core::backend::{BackendError, McpToolCaller, ToolOutput};
 /// Starts the server. Called on the first call, and again after a failed start.
 pub type Starter = Arc<dyn Fn() -> BoxFuture<'static, Result<Arc<dyn McpToolCaller>, BackendError>> + Send + Sync>;
 
+/// A start in progress or finished, shared by every call that waits for it.
 type Start = Shared<BoxFuture<'static, Result<Arc<dyn McpToolCaller>, BackendError>>>;
 
 /// How long a failed start is reported before the next call tries again.
@@ -24,17 +25,21 @@ const RETRY_AFTER: Duration = Duration::from_secs(30);
 /// A failed start is returned to every call for `retry_after`, then tried again. The server stops
 /// when the `LazyCaller` is dropped.
 pub struct LazyCaller {
+    /// The server's name, for logs.
     name: String,
     starter: Starter,
     retry_after: Duration,
+    /// The latest start and when it began; `None` until the first call.
     start: Mutex<Option<(Start, Instant)>>,
 }
 
 impl LazyCaller {
+    /// A caller for the server `name` (used in logs) that retries a failed start after `RETRY_AFTER`.
     pub fn new(name: impl Into<String>, starter: Starter) -> Self {
         Self::with_retry_after(name, starter, RETRY_AFTER)
     }
 
+    /// Like `new`, with the pause before a failed start is tried again set to `retry_after`.
     pub fn with_retry_after(name: impl Into<String>, starter: Starter, retry_after: Duration) -> Self {
         Self { name: name.into(), starter, retry_after, start: Mutex::new(None) }
     }
@@ -54,6 +59,7 @@ impl LazyCaller {
         start
     }
 
+    /// Runs the starter on its own task and returns a future that every waiting call can share.
     fn spawn_start(&self) -> Start {
         let task = tokio::spawn((self.starter)());
         let name = self.name.clone();
