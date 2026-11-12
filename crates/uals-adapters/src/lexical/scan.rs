@@ -49,6 +49,7 @@ pub(super) struct ScanPlan {
     pub stop_at: Instant,
 }
 
+/// What a scan found and why it stopped early, if it did.
 pub(super) struct ScanOutput {
     pub matches: Vec<RawMatch>,
     /// A match beyond `global_cap` exists: the list is a subset.
@@ -57,6 +58,7 @@ pub(super) struct ScanOutput {
     pub timed_out: bool,
 }
 
+/// The read-only part of a plan, shared by every worker thread.
 struct Params {
     matcher: RegexMatcher,
     skip_line: Option<Regex>,
@@ -66,6 +68,7 @@ struct Params {
     stop_at: Instant,
 }
 
+/// The state the worker threads share: counters, stop flags and the collected matches.
 struct Shared {
     total: AtomicUsize,
     stop: AtomicBool,
@@ -170,6 +173,8 @@ impl Worker {
         Self { params, shared, searcher, local: Vec::new() }
     }
 
+    /// True once the scan was told to stop or the deadline has passed (the latter also marks the
+    /// scan as timed out).
     fn should_stop(&self) -> bool {
         if self.shared.stop.load(Ordering::Relaxed) {
             return true;
@@ -182,6 +187,7 @@ impl Worker {
         false
     }
 
+    /// Searches one walked file; a stop request ends the walk.
     fn visit(&mut self, entry: Result<DirEntry, ignore::Error>) -> WalkState {
         if self.should_stop() {
             return WalkState::Quit;
@@ -200,6 +206,8 @@ impl Worker {
         if self.shared.stop.load(Ordering::Relaxed) { WalkState::Quit } else { WalkState::Continue }
     }
 
+    /// Collects the matches of one file into the local list. A file that cannot be read is
+    /// logged and skipped.
     fn search_file(&mut self, path: &Path) {
         let Self { params, shared, searcher, local } = self;
         let mut in_file = 0usize;
@@ -207,8 +215,9 @@ impl Worker {
             &params.matcher,
             path,
             Lossy(|line_number, line| {
-                if shared.stop.load(Ordering::Relaxed) || Instant::now() >= params.stop_at {
-                    if Instant::now() >= params.stop_at {
+                let deadline_passed = Instant::now() >= params.stop_at;
+                if shared.stop.load(Ordering::Relaxed) || deadline_passed {
+                    if deadline_passed {
                         shared.timed_out.store(true, Ordering::Relaxed);
                     }
                     shared.stop.store(true, Ordering::Relaxed);
