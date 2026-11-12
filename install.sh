@@ -15,6 +15,8 @@ SEMBLE_VERSION="0.7.3"
 CLAUDE_CONTEXT_VERSION="0.1.16"
 NODE_MIN="22.12.0"                  # a claude-context dependency uses require(ESM)
 UV_VERSION="0.13.8"
+# The newest Python with prebuilt tree-sitter wheels for Semble: a newer one needs a C compiler.
+SEMBLE_PYTHON="3.14"
 
 # SHA-256 of the ast-index release assets (the release has no checksum files).
 ast_index_sha256() {
@@ -316,7 +318,7 @@ install_semble() {
   UV_TOOL_DIR="$SEMBLE_HOME/tools" UV_TOOL_BIN_DIR="$SEMBLE_HOME/bin" \
     UV_PYTHON_INSTALL_DIR="$SEMBLE_HOME/python" UV_PYTHON_BIN_DIR="$SEMBLE_HOME/python-bin" \
     UV_CACHE_DIR="$TMP_ROOT/uv-cache" UV_LINK_MODE=copy \
-    "$uv_bin" tool install --force --python ">=3.10" "$SEMBLE_SPEC" >"$log" 2>&1 || { cat "$log" >&2; die "cannot install $SEMBLE_SPEC"; }
+    "$uv_bin" tool install --force --python "$SEMBLE_PYTHON" "$SEMBLE_SPEC" >"$log" 2>&1 || { cat "$log" >&2; die "cannot install $SEMBLE_SPEC"; }
   SEMBLE_BIN="$SEMBLE_HOME/bin/semble"
   ok "semble $SEMBLE_VERSION → $SEMBLE_BIN"
 }
