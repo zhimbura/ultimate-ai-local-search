@@ -78,9 +78,11 @@ fn run_reports_hand_computed_metrics() {
     assert_eq!(q005["rank_any"], Value::Null);
     let q007 = worse["queries"].as_array().unwrap().iter().find(|q| q["id"] == "q007").unwrap();
     assert_eq!(q007["rank_primary"], 2, "the same relative path in another repository is wrong");
-    // u04 has no canned answer: counted as nothing found
+    // u04 has no canned answer: the call failed, so it is marked and kept out of the means
     let u04 = worse["usages"].as_array().unwrap().iter().find(|u| u["id"] == "u04").unwrap();
-    close(&u04["line_recall"], 0.0);
+    assert_eq!(u04["failed"], true);
+    assert_eq!(worse["summary"]["usages"]["failed"], 1);
+    assert_eq!(worse["summary"]["usages"]["symbols"], 3);
     // a report never carries paths or query text
     let text = worse.to_string();
     assert!(!text.contains(".kt") && !text.contains("HostSelector") && !text.contains("/ws/"));
@@ -154,6 +156,7 @@ fn markdown_report_has_tables_and_no_code() {
         "## Usages",
         "| q005 | natural | A | 2/2 | -/- |",
         "| q009 | cross_repo | B | 1/1 | err |",
+        "| u04 | err | err | err | err | - | - |",
     ] {
         assert!(md.contains(needle), "missing {needle:?} in:\n{md}");
     }

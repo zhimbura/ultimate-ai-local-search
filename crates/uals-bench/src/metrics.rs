@@ -89,10 +89,9 @@ pub fn rank_stats(ranks: &[Option<u32>]) -> RankStats {
     }
 }
 
-/// Output size of a response: characters of its compact JSON divided by 4, rounded up.
-pub fn tokens_of<T: Serialize>(value: &T) -> u64 {
-    let chars = serde_json::to_string(value).map(|s| s.chars().count()).unwrap_or(0);
-    chars.div_ceil(4) as u64
+/// Output size of a text: its characters divided by 4, rounded up.
+pub fn tokens_of_text(text: &str) -> u64 {
+    text.chars().count().div_ceil(4) as u64
 }
 
 /// Recall and precision of one symbol's usages, by file and by line.
@@ -116,6 +115,32 @@ pub struct UsageScore {
     pub expected_lines: usize,
     /// Number of found lines.
     pub found_lines: usize,
+    /// True when the usages call failed: every number above is 0 and means nothing.
+    #[serde(default)]
+    pub failed: bool,
+    /// True when the engine said its answer is not complete (a source hit its limit): the
+    /// recall is a lower bound.
+    #[serde(default)]
+    pub incomplete: bool,
+}
+
+impl UsageScore {
+    /// The score of a usages call that failed; it is kept out of the averages.
+    pub fn failed(id: &str) -> Self {
+        Self {
+            id: id.to_string(),
+            file_recall: 0.0,
+            file_precision: 0.0,
+            line_recall: 0.0,
+            line_precision: 0.0,
+            expected_files: 0,
+            found_files: 0,
+            expected_lines: 0,
+            found_lines: 0,
+            failed: true,
+            incomplete: false,
+        }
+    }
 }
 
 /// `part / whole`; 0 when `whole` is 0.
@@ -123,7 +148,8 @@ fn ratio(part: usize, whole: usize) -> f64 {
     if whole == 0 { 0.0 } else { part as f64 / whole as f64 }
 }
 
-/// Compares the usages the engine found with the gold ones.
+/// Compares the usages the engine found with the gold ones. `incomplete` is set when the
+/// response says it is not complete.
 ///
 /// - The definition line itself is not a usage: it is dropped from the found set.
 /// - Found usages are deduplicated by (repo, path, line).
@@ -164,6 +190,8 @@ pub fn score_usages(repos: &[Repo], gold: &GoldUsages, response: &UsagesResponse
         found_files: found_files.len(),
         expected_lines: expected.len(),
         found_lines: found.len(),
+        failed: false,
+        incomplete: !response.complete,
     }
 }
 
@@ -380,9 +408,10 @@ mod tests {
 
     #[test]
     fn tokens_are_chars_over_four_rounded_up() {
-        assert_eq!(tokens_of(&"abc"), 2); // "abc" with quotes = 5 chars -> ceil(5/4)
-        assert_eq!(tokens_of(&[1, 2, 3]), 2); // [1,2,3] = 7 chars
-        assert_eq!(tokens_of(&"abcdef"), 2); // 8 chars -> exactly 2
-        assert_eq!(tokens_of(&"abcdefg"), 3); // 9 chars
+        assert_eq!(tokens_of_text(""), 0);
+        assert_eq!(tokens_of_text("abc"), 1);
+        assert_eq!(tokens_of_text("abcd"), 1);
+        assert_eq!(tokens_of_text("abcde"), 2);
+        assert_eq!(tokens_of_text("жжжжжжжж"), 2, "characters, not bytes");
     }
 }

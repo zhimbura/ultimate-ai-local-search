@@ -1,20 +1,27 @@
 //! The seam between the harness and the search engine.
 //!
-//! The real orchestrator is wired in a later phase. Until then `MockEngine` replays canned
-//! responses from a JSON file, so the whole harness runs without any backend.
+//! `RealEngine` runs the real search; `MockEngine` replays canned responses from a JSON file, so
+//! the whole harness also runs without any backend.
 
 use std::collections::HashMap;
 use std::future::Future;
 use std::path::Path;
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow, bail, ensure};
 use serde::{Deserialize, Serialize};
+use uals_core::config::OutputConfig;
 use uals_core::types::{QueryKind, Repo, SearchResponse, UsagesResponse};
+
+use crate::real::{RealEngine, RealOptions, semantic_name};
 
 /// What the harness needs from a search engine.
 pub trait Engine {
     /// The repositories of the workspace; their roots turn absolute hit paths into relative ones.
     fn repos(&self) -> &[Repo];
+
+    /// The output settings the engine renders results with; they decide how much text an agent
+    /// receives for one response.
+    fn output(&self) -> &OutputConfig;
 
     /// Runs a search for `query` (kind detected when `None`) returning at most `limit` hits.
     fn search(
@@ -24,8 +31,9 @@ pub trait Engine {
         limit: usize,
     ) -> impl Future<Output = Result<SearchResponse>> + Send;
 
-    /// Finds the usages of `symbol`, at most `limit` of them.
-    fn usages(&self, symbol: &str, limit: usize) -> impl Future<Output = Result<UsagesResponse>> + Send;
+    /// Finds the usages of `symbol`: one page of at most `limit` usages, starting at `offset`.
+    /// `UsagesResponse::next_offset` is the offset of the next page, `None` after the last one.
+    fn usages(&self, symbol: &str, limit: usize, offset: usize) -> impl Future<Output = Result<UsagesResponse>> + Send;
 }
 
 /// The content of a mock responses file.
@@ -33,7 +41,8 @@ pub trait Engine {
 /// ```json
 /// { "repos":  [{"name": "sample-web", "root": "/ws/sample-web"}],
 ///   "search": {"<query text>": <SearchResponse>},
-///   "usages": {"<symbol>": <UsagesResponse>} }
+///   "usages": {"<symbol>": <UsagesResponse>},
+///   "output": {"max_output_chars": 12000} }
 /// ```
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MockEngine {
@@ -45,6 +54,9 @@ pub struct MockEngine {
     /// Canned usages responses by symbol.
     #[serde(default)]
     pub usages: HashMap<String, UsagesResponse>,
+    /// The output settings of the engine the responses came from; the defaults when absent.
+    #[serde(default)]
+    pub output: OutputConfig,
 }
 
 impl MockEngine {
@@ -65,6 +77,10 @@ impl Engine for MockEngine {
         &self.repos
     }
 
+    fn output(&self) -> &OutputConfig {
+        &self.output
+    }
+
     async fn search(&self, query: &str, _kind: Option<QueryKind>, limit: usize) -> Result<SearchResponse> {
         let mut response =
             self.search.get(query).cloned().ok_or_else(|| anyhow!("no canned search response for \"{query}\""))?;
@@ -72,31 +88,57 @@ impl Engine for MockEngine {
         Ok(response)
     }
 
-    async fn usages(&self, symbol: &str, limit: usize) -> Result<UsagesResponse> {
+    async fn usages(&self, symbol: &str, limit: usize, offset: usize) -> Result<UsagesResponse> {
         let mut response =
             self.usages.get(symbol).cloned().ok_or_else(|| anyhow!("no canned usages response for \"{symbol}\""))?;
-        let mut left = limit;
+        let total: usize = response.repos.iter().map(|repo| repo.usages.len()).sum();
+        let (mut skip, mut left) = (offset, limit);
         for repo in &mut response.repos {
+            let skipped = skip.min(repo.usages.len());
+            repo.usages.drain(..skipped);
+            skip -= skipped;
             repo.usages.truncate(left);
             left -= repo.usages.len();
         }
+        response.offset = offset;
+        response.next_offset = (offset.saturating_add(limit) < total).then_some(offset + limit);
         Ok(response)
     }
 }
 
 /// An engine picked on the command line.
-#[derive(Debug, Clone)]
 pub enum AnyEngine {
     /// Replays canned responses.
     Mock(MockEngine),
+    /// Runs the real search.
+    Real(Box<RealEngine>),
 }
 
 impl AnyEngine {
-    /// `mock:<responses.json>`. The real engine is added when the orchestrator is wired.
-    pub fn from_spec(spec: &str) -> Result<Self> {
+    /// `mock:<responses.json>` or `real:<workspace folder>`. `options` only apply to `real`;
+    /// they are an error for `mock`.
+    pub fn from_spec(spec: &str, options: &RealOptions) -> Result<Self> {
         match spec.split_once(':') {
-            Some(("mock", path)) if !path.is_empty() => Ok(AnyEngine::Mock(MockEngine::from_file(Path::new(path))?)),
-            _ => bail!("unknown engine \"{spec}\": expected mock:<responses.json>"),
+            Some(("mock", path)) if !path.is_empty() => {
+                ensure!(
+                    options.config.is_none() && options.semantic.is_none(),
+                    "--config and --semantic apply to the real engine only"
+                );
+                Ok(AnyEngine::Mock(MockEngine::from_file(Path::new(path))?))
+            }
+            Some(("real", folder)) if !folder.is_empty() => {
+                Ok(AnyEngine::Real(Box::new(RealEngine::open(Path::new(folder), options)?)))
+            }
+            _ => bail!("unknown engine \"{spec}\": expected mock:<responses.json> or real:<workspace folder>"),
+        }
+    }
+
+    /// The label of the engine for the report when the spec cannot serve: a spec holds a folder
+    /// path and a report holds no paths. `None` for the mock, whose spec is the label.
+    pub fn label(&self) -> Option<String> {
+        match self {
+            AnyEngine::Mock(_) => None,
+            AnyEngine::Real(engine) => Some(format!("real:{}", semantic_name(engine.semantic()))),
         }
     }
 }
@@ -105,18 +147,28 @@ impl Engine for AnyEngine {
     fn repos(&self) -> &[Repo] {
         match self {
             AnyEngine::Mock(engine) => engine.repos(),
+            AnyEngine::Real(engine) => engine.repos(),
+        }
+    }
+
+    fn output(&self) -> &OutputConfig {
+        match self {
+            AnyEngine::Mock(engine) => engine.output(),
+            AnyEngine::Real(engine) => engine.output(),
         }
     }
 
     async fn search(&self, query: &str, kind: Option<QueryKind>, limit: usize) -> Result<SearchResponse> {
         match self {
             AnyEngine::Mock(engine) => engine.search(query, kind, limit).await,
+            AnyEngine::Real(engine) => engine.search(query, kind, limit).await,
         }
     }
 
-    async fn usages(&self, symbol: &str, limit: usize) -> Result<UsagesResponse> {
+    async fn usages(&self, symbol: &str, limit: usize, offset: usize) -> Result<UsagesResponse> {
         match self {
-            AnyEngine::Mock(engine) => engine.usages(symbol, limit).await,
+            AnyEngine::Mock(engine) => engine.usages(symbol, limit, offset).await,
+            AnyEngine::Real(engine) => engine.usages(symbol, limit, offset).await,
         }
     }
 }
@@ -142,13 +194,16 @@ mod tests {
         assert_eq!(engine.search("q", None, 2).await.unwrap().hits.len(), 2);
         let error = engine.search("other", None, 30).await.unwrap_err();
         assert!(error.to_string().contains("no canned search response"));
-        assert!(engine.usages("s", 5).await.is_err());
+        assert!(engine.usages("s", 5, 0).await.is_err());
     }
 
     #[test]
     fn spec_parsing() {
-        assert!(AnyEngine::from_spec("real").unwrap_err().to_string().contains("expected mock:"));
-        assert!(AnyEngine::from_spec("mock:").is_err());
-        assert!(AnyEngine::from_spec("mock:/does/not/exist.json").unwrap_err().to_string().contains("cannot read"));
+        let none = RealOptions::default();
+        let error = |spec: &str, options: &RealOptions| AnyEngine::from_spec(spec, options).err().unwrap().to_string();
+        assert!(error("semble", &none).contains("expected mock:"));
+        assert!(error("mock:", &none).contains("expected mock:"));
+        assert!(error("real:", &none).contains("expected mock:"));
+        assert!(error("mock:/does/not/exist.json", &none).contains("cannot read"));
     }
 }
