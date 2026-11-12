@@ -1,0 +1,10 @@
+{
+  "arguments": {
+    "query": "HostSelector",
+    "repo": "$WORKSPACE/sample-android"
+  },
+  "duration_ms": 1,
+  "notes": "exact repeat, warm timing",
+  "server": "semble 0.7.3",
+  "tool": "search"
+}

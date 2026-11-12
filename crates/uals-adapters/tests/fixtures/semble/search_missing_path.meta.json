@@ -1,0 +1,10 @@
+{
+  "arguments": {
+    "query": "retry",
+    "repo": "$WORKSPACE/does-not-exist"
+  },
+  "duration_ms": 1,
+  "notes": "ERROR CASE: nonexistent path",
+  "server": "semble 0.7.3",
+  "tool": "search"
+}

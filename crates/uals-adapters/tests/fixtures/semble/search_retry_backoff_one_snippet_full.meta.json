@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "max_snippet_lines": null,
+    "query": "retry with exponential backoff",
+    "repo": "$WORKSPACE/sample-android",
+    "top_k": 3
+  },
+  "duration_ms": 1,
+  "notes": "max_snippet_lines=null (full chunk), top_k=3",
+  "server": "semble 0.7.3",
+  "tool": "search"
+}

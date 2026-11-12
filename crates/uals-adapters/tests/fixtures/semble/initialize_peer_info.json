@@ -1,0 +1,20 @@
+{
+  "capabilities": {
+    "prompts": {
+      "listChanged": false
+    },
+    "resources": {
+      "listChanged": false,
+      "subscribe": false
+    },
+    "tools": {
+      "listChanged": false
+    }
+  },
+  "instructions": "Instant code search for any local or remote git repository. Call `search` once with a focused query, it returns the file path and exact line. Navigate directly to that file at the given line; do not grep for the same content. Use `find_related` to discover similar code elsewhere in the same repo. When working in a local project, pass the project root as `repo`. For remote repos, pass an explicit https:// URL. Never guess or infer URLs.",
+  "protocolVersion": "2025-11-25",
+  "serverInfo": {
+    "name": "semble",
+    "version": "0.7.3"
+  }
+}

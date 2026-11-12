@@ -1,0 +1,12 @@
+{
+  "content": [
+    {
+      "text": "{\"query\": \"retry with exponential backoff\", \"results\": [{\"file_path\": \"core/src/main/kotlin/sample/core/RetryPolicy.kt\", \"start_line\": 1, \"end_line\": 18, \"score\": 0.02447155744546866}, {\"file_path\": \"network/src/main/kotlin/sample/network/ConfigLoader.kt\", \"start_line\": 19, \"end_line\": 43, \"score\": 0.019155704653622423}, {\"file_path\": \"app/src/main/kotlin/sample/app/App.kt\", \"start_line\": 1, \"end_line\": 18, \"score\": 0.0168447323524912}, {\"file_path\": \"network/src/main/kotlin/sample/network/HostSelector.kt\", \"start_line\": 1, \"end_line\": 9, \"score\": 0.009234961049389553}, {\"file_path\": \"network/src/main/kotlin/sample/network/HostStore.kt\", \"start_line\": 1, \"end_line\": 17, \"score\": 0.008233325941914919}]}",
+      "type": "text"
+    }
+  ],
+  "isError": false,
+  "structuredContent": {
+    "result": "{\"query\": \"retry with exponential backoff\", \"results\": [{\"file_path\": \"core/src/main/kotlin/sample/core/RetryPolicy.kt\", \"start_line\": 1, \"end_line\": 18, \"score\": 0.02447155744546866}, {\"file_path\": \"network/src/main/kotlin/sample/network/ConfigLoader.kt\", \"start_line\": 19, \"end_line\": 43, \"score\": 0.019155704653622423}, {\"file_path\": \"app/src/main/kotlin/sample/app/App.kt\", \"start_line\": 1, \"end_line\": 18, \"score\": 0.0168447323524912}, {\"file_path\": \"network/src/main/kotlin/sample/network/HostSelector.kt\", \"start_line\": 1, \"end_line\": 9, \"score\": 0.009234961049389553}, {\"file_path\": \"network/src/main/kotlin/sample/network/HostStore.kt\", \"start_line\": 1, \"end_line\": 17, \"score\": 0.008233325941914919}]}"
+  }
+}

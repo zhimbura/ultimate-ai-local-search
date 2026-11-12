@@ -1,0 +1,9 @@
+{
+  "arguments": {
+    "path": "$WORKSPACE/sample-android"
+  },
+  "duration_ms": 14995,
+  "notes": "Milvus HUNG (TCP accepts, never speaks gRPC). Server stays up and tools/list works, but tool calls block; Milvus client deadline (15 s) expires, uncaught rejection kills the node process at ~15.7 s after start. Call in flight gets TransportClosed.",
+  "server": "claude-context 0.1.15",
+  "tool": "get_indexing_status"
+}

@@ -1,0 +1,12 @@
+{
+  "content": [
+    {
+      "text": "{\"query\": \"zzzqqqxxyy vvwwkk\", \"results\": [{\"file_path\": \"sample_tools/text.py\", \"start_line\": 1, \"end_line\": 8, \"score\": 0.009836065573770493, \"content\": \"import re\\n\\n_NON_WORD = re.compile(r\\\"[^a-z0-9]+\\\")\\n\\n\\ndef slugify(title: str) -> str:\\n    \\\"\\\"\\\"Turns a title into a lowercase URL slug: \\\"Hello, World!\\\" -> \\\"hello-world\\\".\\\"\\\"\\\"\\n    return _NON_WORD.sub(\\\"-\\\", title.lower()).strip(\\\"-\\\")\"}, {\"file_path\": \"sample_tools/cache.py\", \"start_line\": 1, \"end_line\": 21, \"score\": 0.00967741935483871, \"content\": \"from collections import OrderedDict\\n\\n\\nclass LruCache:\\n    \\\"\\\"\\\"Keeps the most recently used values and evicts the oldest one when full.\\\"\\\"\\\"\\n\\n    def __init__(self, capacity: int = 128) -> None:\\n        self.capacity = capacity\\n        self._items: OrderedDict[str, object] = OrderedDict()\\n\"}, {\"file_path\": \"sample_tools/__init__.py\", \"start_line\": 1, \"end_line\": 4, \"score\": 0.0047619047619047615, \"content\": \"from sample_tools.cache import LruCache\\nfrom sample_tools.text import slugify\\n\\n__all__ = [\\\"LruCache\\\", \\\"slugify\\\"]\"}]}",
+      "type": "text"
+    }
+  ],
+  "isError": false,
+  "structuredContent": {
+    "result": "{\"query\": \"zzzqqqxxyy vvwwkk\", \"results\": [{\"file_path\": \"sample_tools/text.py\", \"start_line\": 1, \"end_line\": 8, \"score\": 0.009836065573770493, \"content\": \"import re\\n\\n_NON_WORD = re.compile(r\\\"[^a-z0-9]+\\\")\\n\\n\\ndef slugify(title: str) -> str:\\n    \\\"\\\"\\\"Turns a title into a lowercase URL slug: \\\"Hello, World!\\\" -> \\\"hello-world\\\".\\\"\\\"\\\"\\n    return _NON_WORD.sub(\\\"-\\\", title.lower()).strip(\\\"-\\\")\"}, {\"file_path\": \"sample_tools/cache.py\", \"start_line\": 1, \"end_line\": 21, \"score\": 0.00967741935483871, \"content\": \"from collections import OrderedDict\\n\\n\\nclass LruCache:\\n    \\\"\\\"\\\"Keeps the most recently used values and evicts the oldest one when full.\\\"\\\"\\\"\\n\\n    def __init__(self, capacity: int = 128) -> None:\\n        self.capacity = capacity\\n        self._items: OrderedDict[str, object] = OrderedDict()\\n\"}, {\"file_path\": \"sample_tools/__init__.py\", \"start_line\": 1, \"end_line\": 4, \"score\": 0.0047619047619047615, \"content\": \"from sample_tools.cache import LruCache\\nfrom sample_tools.text import slugify\\n\\n__all__ = [\\\"LruCache\\\", \\\"slugify\\\"]\"}]}"
+  }
+}

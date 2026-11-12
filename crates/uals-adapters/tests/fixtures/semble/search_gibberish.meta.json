@@ -1,0 +1,10 @@
+{
+  "arguments": {
+    "query": "zzzqqqxxyy vvwwkk",
+    "repo": "$WORKSPACE/sample-tools"
+  },
+  "duration_ms": 1,
+  "notes": "nonsense query; checks the no-results shape",
+  "server": "semble 0.7.3",
+  "tool": "search"
+}

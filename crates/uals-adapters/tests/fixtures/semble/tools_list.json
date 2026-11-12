@@ -1,0 +1,184 @@
+{
+  "tools": [
+    {
+      "description": "Search once with a focused query describing what the code does or its name.\n\n        Write queries using function/class names or behavior descriptions, not error messages.\n        Returns file paths and line numbers — navigate directly there, do not repeat the search.\n        Pass a git URL or local path as `repo`; indexes are cached for the session.\n        ",
+      "inputSchema": {
+        "properties": {
+          "content": {
+            "anyOf": [
+              {
+                "enum": [
+                  "code",
+                  "docs",
+                  "config",
+                  "all"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Content to search. Defaults to the MCP server's configured content.",
+            "title": "Content"
+          },
+          "max_snippet_lines": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": 10,
+            "description": "Lines of source to include per result. Default (10): function/class signature + first body lines, enough to confirm the location. 0: file path and line range only. None: full chunk (~10-20 lines). If the snippet does not contain enough context to confirm you have the right location, call again with max_snippet_lines=None.",
+            "title": "Max Snippet Lines"
+          },
+          "query": {
+            "description": "Natural language or code query.",
+            "title": "Query",
+            "type": "string"
+          },
+          "repo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            ],
+            "description": "A local directory path or https:// or http:// git URL (e.g. https://github.com/org/repo) to index and search, or a list of them to search several repos at once. Indexes are cached after the first call, so repeat queries are fast. Multi-repo results prefix file_path with the repo name.",
+            "title": "Repo"
+          },
+          "top_k": {
+            "default": 5,
+            "description": "Number of results to return.",
+            "minimum": 1,
+            "title": "Top K",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "query",
+          "repo"
+        ],
+        "title": "searchArguments",
+        "type": "object"
+      },
+      "name": "search",
+      "outputSchema": {
+        "properties": {
+          "result": {
+            "title": "Result",
+            "type": "string"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "title": "searchOutput",
+        "type": "object"
+      }
+    },
+    {
+      "description": "Find code similar to a known location.\n\n        Useful for discovering all implementations of an interface, all callers of a function,\n        or all tests for a class. Use after `search` when you need related code beyond the primary result.\n        Pass `file_path` and `line` from a prior search result.\n        ",
+      "inputSchema": {
+        "properties": {
+          "content": {
+            "anyOf": [
+              {
+                "enum": [
+                  "code",
+                  "docs",
+                  "config",
+                  "all"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Content containing the related file. Defaults to the MCP server configuration.",
+            "title": "Content"
+          },
+          "file_path": {
+            "description": "Path to the file as stored in the index (use file_path from a search result).",
+            "title": "File Path",
+            "type": "string"
+          },
+          "line": {
+            "description": "Line number (1-indexed).",
+            "title": "Line",
+            "type": "integer"
+          },
+          "max_snippet_lines": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": 10,
+            "description": "Lines of source per result. Default 10 = signature + first body lines. 0 = location only. None = full chunk.",
+            "title": "Max Snippet Lines"
+          },
+          "repo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            ],
+            "description": "A local directory path or https:// or http:// git URL (e.g. https://github.com/org/repo) to index and search, or a list of them to search several repos at once. Indexes are cached after the first call, so repeat queries are fast. Multi-repo results prefix file_path with the repo name.",
+            "title": "Repo"
+          },
+          "top_k": {
+            "default": 5,
+            "description": "Number of similar chunks to return.",
+            "minimum": 1,
+            "title": "Top K",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "file_path",
+          "line",
+          "repo"
+        ],
+        "title": "find_relatedArguments",
+        "type": "object"
+      },
+      "name": "find_related",
+      "outputSchema": {
+        "properties": {
+          "result": {
+            "title": "Result",
+            "type": "string"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "title": "find_relatedOutput",
+        "type": "object"
+      }
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "arguments": {
+    "query": "retry",
+    "repo": [
+      "$WORKSPACE/sample-android",
+      "$WORKSPACE/does-not-exist"
+    ]
+  },
+  "duration_ms": 0,
+  "notes": "ERROR CASE: list with one missing path",
+  "server": "semble 0.7.3",
+  "tool": "search"
+}

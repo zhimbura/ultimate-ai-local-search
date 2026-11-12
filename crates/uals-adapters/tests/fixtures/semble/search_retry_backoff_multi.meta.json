@@ -1,0 +1,14 @@
+{
+  "arguments": {
+    "query": "retry with exponential backoff",
+    "repo": [
+      "$WORKSPACE/sample-android",
+      "$WORKSPACE/sample-web",
+      "$WORKSPACE/sample-tools"
+    ]
+  },
+  "duration_ms": 25,
+  "notes": "repo = list of 3 project paths in one call.",
+  "server": "semble 0.7.3",
+  "tool": "search"
+}

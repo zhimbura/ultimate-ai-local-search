@@ -1,0 +1,11 @@
+{
+  "arguments": {
+    "query": "x",
+    "repo": "$WORKSPACE/sample-android",
+    "top_k": 0
+  },
+  "duration_ms": 1,
+  "notes": "schema violation: top_k minimum is 1",
+  "server": "semble 0.7.3",
+  "tool": "search"
+}

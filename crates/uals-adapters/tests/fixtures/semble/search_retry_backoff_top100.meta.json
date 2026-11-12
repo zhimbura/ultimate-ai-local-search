@@ -1,0 +1,11 @@
+{
+  "arguments": {
+    "query": "retry with exponential backoff",
+    "repo": "$WORKSPACE/sample-android",
+    "top_k": 100
+  },
+  "duration_ms": 2,
+  "notes": "top_k larger than corpus",
+  "server": "semble 0.7.3",
+  "tool": "search"
+}

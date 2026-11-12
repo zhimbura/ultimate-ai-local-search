@@ -1,0 +1,9 @@
+{
+  "content": [
+    {
+      "text": "Error executing tool search: 1 validation error for searchArguments\nrepo\n  Field required [type=missing, input_value={'query': 'x'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.14/v/missing",
+      "type": "text"
+    }
+  ],
+  "isError": true
+}

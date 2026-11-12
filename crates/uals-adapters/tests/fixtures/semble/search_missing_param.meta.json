@@ -1,0 +1,9 @@
+{
+  "arguments": {
+    "query": "x"
+  },
+  "duration_ms": 0,
+  "notes": "schema violation: repo missing",
+  "server": "semble 0.7.3",
+  "tool": "search"
+}

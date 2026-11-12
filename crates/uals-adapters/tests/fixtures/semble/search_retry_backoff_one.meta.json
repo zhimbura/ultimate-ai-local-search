@@ -1,0 +1,10 @@
+{
+  "arguments": {
+    "query": "retry with exponential backoff",
+    "repo": "$WORKSPACE/sample-android"
+  },
+  "duration_ms": 411,
+  "notes": "COLD: first search on a fresh copy builds the index. single repo path, defaults (top_k 5, max_snippet_lines 10).",
+  "server": "semble 0.7.3",
+  "tool": "search"
+}

@@ -1,0 +1,10 @@
+{
+  "arguments": {
+    "query": "retry",
+    "repo": "$WORKSPACE/sample-android/core/build.gradle.kts"
+  },
+  "duration_ms": 1,
+  "notes": "ERROR CASE: repo is a file",
+  "server": "semble 0.7.3",
+  "tool": "search"
+}

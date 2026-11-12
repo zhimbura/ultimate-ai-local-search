@@ -1,0 +1,10 @@
+{
+  "arguments": {
+    "query": "retry with exponential backoff",
+    "repo": "$WORKSPACE"
+  },
+  "duration_ms": 10,
+  "notes": "repo = the non-git workspace root containing 3 git repos",
+  "server": "semble 0.7.3",
+  "tool": "search"
+}

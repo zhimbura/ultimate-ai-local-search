@@ -1,0 +1,11 @@
+{
+  "arguments": {
+    "file_path": "nope/Missing.kt",
+    "line": 1,
+    "repo": "$WORKSPACE/sample-android"
+  },
+  "duration_ms": 3,
+  "notes": "ERROR CASE: file not in index",
+  "server": "semble 0.7.3",
+  "tool": "find_related"
+}
