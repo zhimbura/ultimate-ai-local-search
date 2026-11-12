@@ -1,6 +1,7 @@
 //! `McpChild` against the real `semble` on a temp copy of the public fixture workspace.
-//! Skipped at runtime (with a message) when `semble` is not on PATH. Semble's cache is redirected
-//! to the temp folder with `SEMBLE_CACHE_LOCATION`, so nothing is left in the user's cache.
+//! The tests that need Semble are `#[ignore]`d; run them with `-- --ignored`. They panic when
+//! `semble` or `git` is not on PATH. Semble's cache is redirected to the temp folder with
+//! `SEMBLE_CACHE_LOCATION`, so nothing is left in the user's cache.
 #![cfg(unix)]
 
 use std::collections::BTreeMap;
@@ -25,12 +26,10 @@ struct Live {
     spec: ChildSpec,
 }
 
-/// None (after printing why) when Semble is missing.
-fn live() -> Option<Live> {
-    let Ok(semble) = which::which("semble") else {
-        eprintln!("SKIPPED: `semble` is not on PATH");
-        return None;
-    };
+/// The fixture workspace and the spec of the real Semble; panics when `semble` is not on PATH.
+fn live() -> Live {
+    let semble =
+        which::which("semble").expect("live test needs `semble` on PATH (install it, e.g. `uv tool install semble`)");
     let dir = TempDir::new().unwrap();
     let workspace = dir.path().join("workspace");
     copy_dir(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/workspace"), &workspace);
@@ -48,7 +47,7 @@ fn live() -> Option<Live> {
         pass_env: ["HF_HOME", "HF_ENDPOINT", "HF_HUB_OFFLINE", "XDG_CACHE_HOME"].map(String::from).to_vec(),
         cwd: None,
     };
-    Some(Live { _dir: dir, workspace, spec })
+    Live { _dir: dir, workspace, spec }
 }
 
 fn copy_dir(from: &Path, to: &Path) {
@@ -93,8 +92,9 @@ async fn wait_until(what: &str, timeout: Duration, mut condition: impl FnMut() -
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "live: needs semble and git on PATH"]
 async fn spawns_searches_cold_and_warm() {
-    let Some(live) = live() else { return };
+    let live = live();
     let started = Instant::now();
     let child = McpChild::spawn(live.spec.clone()).await.unwrap();
     let spawn_time = started.elapsed();
@@ -117,8 +117,9 @@ async fn spawns_searches_cold_and_warm() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "live: needs semble and git on PATH"]
 async fn semble_failures_come_back_as_text_not_as_errors() {
-    let Some(live) = live() else { return };
+    let live = live();
     let child = McpChild::spawn(live.spec.clone()).await.unwrap();
     let missing = live.workspace.join("does-not-exist");
     let output = child.call_tool("search", json!({"query": "x", "repo": missing.display().to_string()})).await.unwrap();
@@ -130,8 +131,9 @@ async fn semble_failures_come_back_as_text_not_as_errors() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "live: needs semble and git on PATH"]
 async fn concurrent_calls_on_one_connection() {
-    let Some(live) = live() else { return };
+    let live = live();
     let child = Arc::new(McpChild::spawn(live.spec.clone()).await.unwrap());
     let started = Instant::now();
     let mut tasks = tokio::task::JoinSet::new();
@@ -153,8 +155,9 @@ async fn concurrent_calls_on_one_connection() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "live: needs semble and git on PATH"]
 async fn a_timed_out_call_leaves_the_connection_usable() {
-    let Some(live) = live() else { return };
+    let live = live();
     let child = McpChild::spawn(live.spec.clone()).await.unwrap();
     let pgid = child.process_group();
 
@@ -171,8 +174,9 @@ async fn a_timed_out_call_leaves_the_connection_usable() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "live: needs semble and git on PATH"]
 async fn dropping_kills_the_process_group() {
-    let Some(live) = live() else { return };
+    let live = live();
     let child = McpChild::spawn(live.spec.clone()).await.unwrap();
     let pgid = child.process_group().unwrap();
     child.call_tool("search", search_args(&live, "sample-tools", "cache")).await.unwrap();
@@ -185,8 +189,9 @@ async fn dropping_kills_the_process_group() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "live: needs semble and git on PATH"]
 async fn a_crashed_semble_is_respawned_and_finds_its_index_on_disk() {
-    let Some(live) = live() else { return };
+    let live = live();
     let child = McpChild::spawn(live.spec.clone()).await.unwrap();
     let args = search_args(&live, "sample-android", "retry with exponential backoff");
     child.call_tool("search", args.clone()).await.unwrap();
