@@ -402,3 +402,35 @@ async fn path_negations_alone_drop_only_the_matching_hits() {
     let ranks: Vec<u32> = answer.hits.iter().map(|h| h.rank).collect();
     assert_eq!(ranks, vec![0, 1, 2, 3]);
 }
+
+/// Answers with a recorded fixture, except for repositories named `hung*`, which never answer.
+struct HangsOnSomeRepos {
+    answer: ToolOutput,
+}
+
+#[async_trait]
+impl McpToolCaller for HangsOnSomeRepos {
+    async fn call_tool(&self, _name: &str, arguments: Value) -> Result<ToolOutput, BackendError> {
+        if arguments["repo"].as_str().is_some_and(|repo| repo.contains("/hung")) {
+            std::future::pending::<()>().await;
+        }
+        Ok(self.answer.clone())
+    }
+}
+
+#[tokio::test]
+async fn warm_does_not_let_hung_searches_block_the_other_repositories() {
+    let caller = Arc::new(HangsOnSomeRepos { answer: load_fixture("search_retry_backoff_one_top2") });
+    let backend = SembleBackend::new(caller, SembleConfig::default()).with_warm_timeout(Duration::from_millis(100));
+    // More hung repositories than warm slots: without a timeout they hold every slot for good.
+    let repos: Vec<Repo> = ["hung1", "hung2", "hung3", "hung4", "hung5", "ok"].map(repo).into();
+    backend.warm(&repos).await.unwrap();
+
+    for _ in 0..100 {
+        if backend.index_state(&repo("ok")).await.indexed {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!("the repository behind the hung searches was never warmed");
+}

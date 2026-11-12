@@ -75,6 +75,14 @@ const RESULT_START: &str = "\n\n1. Code snippet (";
 
 /// Parses a `search_code` text (`handleSearchCode`, handlers.js:567-747).
 pub(super) fn parse_search(text: &str, is_error: bool) -> SearchReply {
+    // Success texts: 686-692 (no results) and 710-716 (results). They are told apart by their start
+    // only: the code in a result can quote any error text.
+    if text.starts_with("No results found for query:") {
+        return SearchReply::NoResults { indexing: text.contains("still being indexed") };
+    }
+    if text.starts_with("Found ") && text.contains(" results for query: ") {
+        return parse_results(text);
+    }
     // Error texts: handlers.js:580 (path), 626 and 636 (not indexed), 681 (lost), 742 (other).
     if text.contains("is not indexed. Please index it first") {
         return SearchReply::NotIndexed;
@@ -84,13 +92,6 @@ pub(super) fn parse_search(text: &str, is_error: bool) -> SearchReply {
     }
     if is_error {
         return error_reply(text);
-    }
-    // Success texts: 686-692 (no results) and 710-716 (results).
-    if text.starts_with("No results found for query:") {
-        return SearchReply::NoResults { indexing: text.contains("still being indexed") };
-    }
-    if text.starts_with("Found ") && text.contains(" results for query: ") {
-        return parse_results(text);
     }
     // The collection limit message (core `COLLECTION_LIMIT_MESSAGE`) comes back as a success.
     SearchReply::Failed(format!("unexpected claude-context reply: {}", abbreviate(text)))
@@ -140,7 +141,7 @@ fn parse_results(text: &str) -> SearchReply {
     }
     SearchReply::Results {
         root: header_root(header),
-        indexing: header.contains("Indexing in Progress") || text.contains("still being indexed"),
+        indexing: header.contains("Indexing in Progress") || header.contains("still being indexed"),
         declared,
         results,
     }

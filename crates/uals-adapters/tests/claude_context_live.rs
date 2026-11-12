@@ -1,5 +1,6 @@
-//! Live test against a real claude-context server. Runs only when Milvus answers and the entry
-//! point is installed; otherwise it prints why and returns (it does not fail).
+//! Live test against a real claude-context server. Ignored by default (`cargo test -- --ignored`
+//! runs it); it fails when Milvus does not answer, the entry point is not installed or no
+//! embedding service indexes the fixture.
 //!
 //! The server runs with `HOME` set to a temporary folder, so the test never reads or rewrites the
 //! user's `~/.context` (snapshot, sync lock) and cannot race another claude-context process. The
@@ -62,23 +63,20 @@ fn copy_dir(from: &Path, to: &Path) {
 }
 
 #[tokio::test]
+#[ignore = "live: needs Milvus, the claude-context entry point, node and an embedding service"]
 async fn index_search_and_clear_against_a_live_server() {
     let mut config = ClaudeContextConfig::default();
     let address = std::env::var("MILVUS_ADDRESS").unwrap_or_else(|_| "127.0.0.1:19530".into());
     config.env.insert("MILVUS_ADDRESS".into(), address.clone());
     let probe_address = ClaudeContextBackend::new(Arc::new(NoCaller), config.clone()).milvus_address();
     if let Err(why) = probe_tcp(&probe_address, MILVUS_PROBE_TIMEOUT).await {
-        eprintln!("SKIP live claude-context test: Milvus is not reachable at {probe_address} ({why})");
-        return;
+        panic!("live test needs Milvus: not reachable at {probe_address} ({why})");
     }
-    let Some(entry) = config.entry_path().filter(|entry| entry.exists()) else {
-        eprintln!("SKIP live claude-context test: the claude-context entry point is not installed");
-        return;
-    };
-    let Ok(node) = which::which(&config.node) else {
-        eprintln!("SKIP live claude-context test: `{}` is not on PATH", config.node);
-        return;
-    };
+    let entry = config
+        .entry_path()
+        .filter(|entry| entry.exists())
+        .expect("live test needs the claude-context entry point to be installed");
+    let node = which::which(&config.node).unwrap_or_else(|_| panic!("live test needs `{}` on PATH", config.node));
 
     let home = tempfile::tempdir().unwrap();
     let workspace = tempfile::tempdir().unwrap();
@@ -110,34 +108,32 @@ async fn index_search_and_clear_against_a_live_server() {
 
     backend.warm(std::slice::from_ref(&repo)).await.expect("warm");
     let deadline = Instant::now() + Duration::from_secs(180);
-    let indexed = loop {
+    loop {
         let state = backend.index_state(&repo).await;
         if state.indexed {
-            break true;
+            break;
         }
         let detail = state.detail.unwrap_or_default();
-        if detail.starts_with("indexing failed") {
-            eprintln!("SKIP live claude-context test: indexing failed, probably no embedding service ({detail})");
-            break false;
-        }
+        assert!(
+            !detail.starts_with("indexing failed"),
+            "indexing failed, is an embedding service configured? ({detail})"
+        );
         assert!(Instant::now() < deadline, "indexing did not finish in 180 s (last state: {detail})");
         tokio::time::sleep(Duration::from_secs(2)).await;
-    };
+    }
 
-    if indexed {
-        let request = SearchRequest {
-            query: "retry with exponential backoff".into(),
-            kind: QueryKind::Natural,
-            fetch_limit: 10,
-            paths: Vec::new(),
-        };
-        let answer = backend.search(&repo, &request).await.expect("search");
-        assert!(!answer.hits.is_empty(), "no hits for the query");
-        for (position, hit) in (0u32..).zip(&answer.hits) {
-            assert_eq!(hit.rank, position);
-            assert!(hit.path.starts_with(&root) && hit.path.exists(), "bad path {}", hit.path.display());
-            assert!(hit.lines.start >= 1 && hit.lines.start <= hit.lines.end);
-        }
+    let request = SearchRequest {
+        query: "retry with exponential backoff".into(),
+        kind: QueryKind::Natural,
+        fetch_limit: 10,
+        paths: Vec::new(),
+    };
+    let answer = backend.search(&repo, &request).await.expect("search");
+    assert!(!answer.hits.is_empty(), "no hits for the query");
+    for (position, hit) in (0u32..).zip(&answer.hits) {
+        assert_eq!(hit.rank, position);
+        assert!(hit.path.starts_with(&root) && hit.path.exists(), "bad path {}", hit.path.display());
+        assert!(hit.lines.start >= 1 && hit.lines.start <= hit.lines.end);
     }
 
     // Always remove the collection: it lives in Milvus, outside the temporary folders.
