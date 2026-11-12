@@ -1,0 +1,13 @@
+{
+  "schema_version": 2,
+  "items": [
+    {"name": "InMemoryHostSelector", "kind": "class", "line": 3, "signature": "class InMemoryHostSelector", "path": "network/src/main/kotlin/sample/network/InMemoryHostSelector.kt"},
+    {"name": "hostSelectorOf", "kind": "function", "line": 8, "signature": "fun hostSelectorOf(", "path": "network/src/main/kotlin/sample/network/Factories.kt"},
+    {"name": "HostSelectorConfig", "kind": "class", "line": 20, "signature": "class HostSelectorConfig(", "path": "network/src/main/kotlin/sample/network/Factories.kt"},
+    {"name": "HostSelector", "kind": "property", "line": 40, "signature": "val HostSelector", "path": "network/src/main/kotlin/sample/network/Factories.kt"},
+    {"name": "HostSelector", "kind": "function", "line": 30, "signature": "fun HostSelector(", "path": "network/src/main/kotlin/sample/network/Factories.kt"},
+    {"name": "HostSelector", "kind": "class", "line": 10, "signature": "class HostSelector(", "path": "network/src/main/kotlin/sample/network/HostSelector.kt"},
+    {"name": "HostSelector", "kind": "import", "line": 6, "signature": "import sample.network.HostSelector", "path": "app/src/main/kotlin/sample/app/App.kt"}
+  ],
+  "pagination": {"total": 7, "returned": 7, "truncated": false, "limit": 200}
+}
