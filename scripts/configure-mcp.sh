@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # Edit the uals entry in a Claude Code config (default ~/.claude.json) with a safe jq merge.
 #   configure-mcp.sh --uals-bin <path> [--env-file <file>] [--config <file>] [--remove-claude-context]
+#                    [--no-save-previous]
 #       Writes .mcpServers.uals. The env of the entry holds only the non-empty provider API keys
 #       from the env file. A different uals entry that was there before is saved to
-#       removed-mcp/uals.json first (--remove puts it back). --remove-claude-context first saves
+#       removed-mcp/uals.json first (--remove puts it back); --no-save-previous replaces it without
+#       saving, for an entry that an earlier install wrote. --remove-claude-context first saves
 #       every claude-context entry (.mcpServers and every .projects[*].mcpServers) and then deletes it.
 #   configure-mcp.sh --remove [--config <file>]
 #       Deletes .mcpServers.uals (entries under .projects[*] are not ours and stay) and puts back
@@ -22,7 +24,7 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$REPO_DIR/scripts/lib/env.sh"
 
 UALS_BIN=""; ENV_FILE=""; CONFIG="${CLAUDE_CONFIG:-$HOME/.claude.json}"
-MODE=add; REMOVE_CC=0
+MODE=add; REMOVE_CC=0; SAVE_PREVIOUS=1
 SAVED_DIR="$HOME/.local/share/uals/removed-mcp"; SAVED="$SAVED_DIR/claude-context.json"
 SAVED_UALS="$SAVED_DIR/uals.json"
 BACKUPS_KEPT=3
@@ -36,6 +38,7 @@ while [ $# -gt 0 ]; do case "$1" in
   --env-file) [ $# -ge 2 ] || die "$1 needs a value"; ENV_FILE="$2"; shift 2;;
   --config)   [ $# -ge 2 ] || die "$1 needs a value"; CONFIG="$2"; shift 2;;
   --remove-claude-context) REMOVE_CC=1; shift;;
+  --no-save-previous) SAVE_PREVIOUS=0; shift;;
   --remove) MODE=remove; shift;;
   --restore-claude-context) MODE=restore; shift;;
   *) die "unknown flag: $1";;
@@ -187,7 +190,7 @@ while :; do
   if [ "$had" = 1 ] && jq -en --slurpfile a "$snap" --slurpfile b "$out" '$a[0] == $b[0]' >/dev/null; then
     changed=0; echo "✓ $CONFIG is already up to date"; break
   fi
-  [ "$MODE" != add ] || save_previous_uals_entry
+  if [ "$MODE" = add ] && [ "$SAVE_PREVIOUS" = 1 ]; then save_previous_uals_entry; fi
   delete=0
   if [ "$MODE" = remove ] && jq -e '(del(.mcpServers) == {}) and ((.mcpServers // {}) == {})' "$out" >/dev/null 2>&1; then delete=1; fi
 

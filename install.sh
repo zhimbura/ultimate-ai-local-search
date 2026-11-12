@@ -600,6 +600,8 @@ saved_mcp() { [ ! -f "$DATA_DIR/removed-mcp/claude-context.json" ] || cat "$DATA
 if [ "$DO_MCP" = 1 ]; then
   entry_before="$(mcp_entry)"; saved_before="$(saved_mcp)"
   mcp_args=(--uals-bin "$UALS_BIN" --config "$CLAUDE_CONFIG")
+  # An entry that an earlier run of this installer wrote is ours: uninstall must not put it back.
+  if in_manifest mcp-entry "$CLAUDE_CONFIG"; then mcp_args+=(--no-save-previous); fi
   [ "$SEMANTIC" != claude-context ] || [ ! -f "$ENV_FILE" ] || mcp_args+=(--env-file "$ENV_FILE")
   [ "$REMOVE_CC" = 0 ] || mcp_args+=(--remove-claude-context)
   bash "$REPO_DIR/scripts/configure-mcp.sh" "${mcp_args[@]}"
