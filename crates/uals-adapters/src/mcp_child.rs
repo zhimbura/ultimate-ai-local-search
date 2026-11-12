@@ -15,12 +15,13 @@
 //!   exits before the handshake ends is `Unavailable` too.
 //! - Dropping the `McpChild` sends SIGTERM to the whole process group and SIGKILL 200 ms later,
 //!   unless the group is gone by then. [`McpChild::stop_and_wait`] does the same and waits.
+//!   [`wait_for_stopped_groups`] waits for those SIGKILLs, which a process needs before it exits.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex as StdMutex};
+use std::sync::{Arc, Mutex as StdMutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
@@ -55,6 +56,19 @@ const STDERR_DRAIN_GRACE: Duration = Duration::from_millis(50);
 const BASE_ENV_VARS: [&str; 6] = ["PATH", "HOME", "USER", "TMPDIR", "LANG", "LC_ALL"];
 
 type StderrTail = Arc<StdMutex<VecDeque<String>>>;
+
+/// The threads that send SIGKILL to the stopped process groups still alive after SIGTERM.
+static GROUP_KILLERS: StdMutex<Vec<std::thread::JoinHandle<()>>> = StdMutex::new(Vec::new());
+
+/// Waits until every process group stopped so far is gone or got SIGKILL: at most [`KILL_GRACE`]
+/// after its SIGTERM. The SIGKILL comes from a thread, and threads die with the process.
+pub fn wait_for_stopped_groups() {
+    let killers = std::mem::take(&mut *GROUP_KILLERS.lock().unwrap_or_else(PoisonError::into_inner));
+    for killer in killers {
+        // A killer that panicked has nothing more to send.
+        let _ = killer.join();
+    }
+}
 
 /// How to start an MCP server.
 ///
@@ -473,8 +487,9 @@ impl GroupGuard {
         group_exists(self.pgid)
     }
 
-    /// SIGTERM now, SIGKILL later from a detached thread, so this never blocks the runtime and
-    /// still happens while the runtime shuts down. Only the first call does anything.
+    /// SIGTERM now, SIGKILL later from a thread, so this never blocks the runtime and still
+    /// happens while the runtime shuts down; [`wait_for_stopped_groups`] waits for that thread.
+    /// Only the first call does anything.
     #[cfg(unix)]
     fn terminate(&self) {
         use nix::sys::signal::{Signal, killpg};
@@ -486,10 +501,13 @@ impl GroupGuard {
             return;
         }
         let pgid = self.pgid;
-        std::thread::spawn(move || {
+        let killer = std::thread::spawn(move || {
             wait_for_group_to_end(pgid, KILL_GRACE);
             kill_group_if_present(pgid);
         });
+        let mut killers = GROUP_KILLERS.lock().unwrap_or_else(PoisonError::into_inner);
+        killers.retain(|killer| !killer.is_finished());
+        killers.push(killer);
     }
 
     /// Windows: the job object and `KillOnDrop` stop the tree when the transport is dropped.

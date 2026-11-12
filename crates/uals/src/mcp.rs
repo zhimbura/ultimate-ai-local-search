@@ -2,15 +2,18 @@
 //!
 //! - The folder of a call is its `workspace` parameter, else the client's first local root folder
 //!   (when the client offers roots and lists them within 2 s), else `$UALS_WORKSPACE`, else the
-//!   folder the server runs in.
+//!   folder the server runs in. The server asks for the client's roots once, and again after the
+//!   client says they changed.
 //! - The first call in a workspace prepares it in the background: the backends start (semantic
 //!   servers, background indexing) and, when `ast_index.update_on_start` is set, the existing
-//!   ast-index indexes are updated. The workspace of `$UALS_WORKSPACE` or the server's folder is
-//!   prepared at start, before the first call. A workspace with more than `MAX_PREPARED_REPOS`
-//!   repositories is not prepared: that would start as many indexing jobs at once; its backends
-//!   start on first use.
-//! - The server stops when the client closes the connection, or on SIGTERM or SIGINT. Then the
-//!   runtime drops every task and with them the orchestrator, which stops the backend servers.
+//!   ast-index indexes are updated. Right after the handshake the server prepares the workspace of
+//!   a call without `workspace`, unless that folder is the file system root, the home folder or a
+//!   folder above it: discovery there finds unrelated projects. A workspace with more than
+//!   `MAX_PREPARED_REPOS` repositories is not prepared: that would start as many indexing jobs at
+//!   once; its backends start on first use.
+//! - The server stops when the client closes the connection, or on SIGTERM or SIGINT, also during
+//!   the handshake. Then the runtime drops every task and with them the orchestrator, which stops
+//!   the backend servers.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -21,6 +24,7 @@ use anyhow::Result;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{Implementation, ServerCapabilities, ServerConfig};
+use rmcp::service::NotificationContext;
 use rmcp::{Peer, RoleServer, ServerHandler, ServiceExt, tool, tool_handler, tool_router};
 use tokio::signal::unix::{SignalKind, signal};
 use tracing::{debug, info, warn};
@@ -46,10 +50,12 @@ client's root folder, else $UALS_WORKSPACE, else the folder the server runs in."
 
 const SEARCH_DESCRIPTION: &str = "Search code in every repository of a folder at once: symbol \
 definitions (ast-index), text (ripgrep engine) and meaning (semantic index), fused into one ranked \
-list with code snippets. Use it first for any question about the code: a symbol name, words that \
-describe the code, a regular expression, or an exact string. Each hit names the repository, the \
-absolute path and the lines; `backends:` says which sources answered; `next: offset=N` gives the \
-next page.";
+list with code snippets. Use it first for any question about the code. The query picks the \
+sources: `/regex/` and `\"exact text\"` search the text only; a code name with an uppercase letter, \
+`_`, `.`, `::` or `()` finds definitions first, then text and meaning; anything else, one lowercase \
+word included, is searched by meaning and symbol names, not as text (`kind` overrides this). Each \
+hit names the repository, the absolute path and the lines; `backends:` says which sources \
+answered; `next: offset=N` gives the next page.";
 
 const USAGES_DESCRIPTION: &str = "List every usage of a symbol in every repository of a folder, \
 grouped by repository and file, with line numbers. Uses the ast-index index where a repository \
@@ -59,12 +65,17 @@ const STATUS_DESCRIPTION: &str = "Show the state of each search backend's index 
 repository of a folder: indexed or not, when it was updated, and why a backend is not available. \
 Use it when results look stale or a backend is missing.";
 
+/// What the client said about its root folder: `None` until asked, `Some(None)` when it offers no
+/// local root or did not list its roots in time.
+type KnownRoot = Option<Option<PathBuf>>;
+
 /// The MCP tools over one orchestrator.
 #[derive(Clone)]
 pub struct UalsServer {
     orchestrator: Arc<Orchestrator>,
     /// Roots of the workspaces already prepared.
     prepared: Arc<Mutex<HashSet<PathBuf>>>,
+    known_root: Arc<tokio::sync::Mutex<KnownRoot>>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -72,7 +83,7 @@ pub struct UalsServer {
 impl UalsServer {
     /// A server that answers with `orchestrator`.
     pub fn new(orchestrator: Arc<Orchestrator>) -> Self {
-        Self { orchestrator, prepared: Arc::default(), tool_router: Self::tool_router() }
+        Self { orchestrator, prepared: Arc::default(), known_root: Arc::default(), tool_router: Self::tool_router() }
     }
 
     #[tool(description = SEARCH_DESCRIPTION)]
@@ -104,9 +115,19 @@ impl UalsServer {
     async fn folder(&self, explicit: Option<&Path>, peer: &Peer<RoleServer>) -> Result<PathBuf, String> {
         let client_root = match explicit {
             Some(_) => None,
-            None => client_root(peer).await,
+            None => self.client_root(peer).await,
         };
         workspace_folder(explicit, client_root.as_deref()).map_err(message)
+    }
+
+    /// The client's root folder (see `ask_client_root`), asked only when not known yet; concurrent
+    /// calls wait for one answer.
+    async fn client_root(&self, peer: &Peer<RoleServer>) -> Option<PathBuf> {
+        let mut known = self.known_root.lock().await;
+        if known.is_none() {
+            *known = Some(ask_client_root(peer).await);
+        }
+        known.clone().flatten()
     }
 
     /// The repositories of a call, named in `names` (all when empty). Prepares their workspace on
@@ -123,10 +144,26 @@ impl UalsServer {
         Ok(repos)
     }
 
-    /// Prepares the workspace of `$UALS_WORKSPACE` or the current folder, if it has repositories.
-    fn prepare_default_workspace(&self) {
-        let found = workspace_folder(None, None).and_then(|folder| repos_in(&folder, &[], self.orchestrator.config()));
-        match found {
+    /// Prepares, in the background, the workspace of a call without `workspace`, unless its folder
+    /// is the file system root, the home folder or a folder above it (see the module docs).
+    fn prepare_start_workspace(&self, peer: Peer<RoleServer>) {
+        let server = self.clone();
+        tokio::spawn(async move {
+            match server.folder(None, &peer).await {
+                Ok(folder) => server.prepare_at_start(&folder, dirs::home_dir().as_deref()),
+                Err(error) => debug!(%error, "no folder to prepare at start"),
+            }
+        });
+    }
+
+    /// Prepares the workspace of `folder`, unless `folder` is the file system root, `home` or a
+    /// folder above `home`.
+    fn prepare_at_start(&self, folder: &Path, home: Option<&Path>) {
+        if is_home_or_above(folder, home) {
+            debug!(folder = %folder.display(), "not preparing the root, the home folder or a folder above it");
+            return;
+        }
+        match repos_in(folder, &[], self.orchestrator.config()) {
             Ok((workspace, _)) => self.prepare(&workspace),
             Err(error) => debug!(error = %format!("{error:#}"), "no workspace to prepare at start"),
         }
@@ -164,22 +201,41 @@ impl ServerHandler for UalsServer {
             .with_server_info(Implementation::new("uals", env!("CARGO_PKG_VERSION")))
             .with_instructions(INSTRUCTIONS)
     }
+
+    async fn on_roots_list_changed(&self, _context: NotificationContext<RoleServer>) {
+        debug!("the client's roots changed; asking again on the next call");
+        *self.known_root.lock().await = None;
+    }
 }
 
 /// Serves the tools on stdin and stdout until the client closes the connection or the process
-/// gets SIGTERM or SIGINT.
+/// gets SIGTERM or SIGINT, also during the handshake.
 pub async fn serve(config: Config) -> Result<()> {
     let server = UalsServer::new(Arc::new(setup::orchestrator(config)));
     let mut terminate = signal(SignalKind::terminate())?;
     let mut interrupt = signal(SignalKind::interrupt())?;
-    let running = server.clone().serve(rmcp::transport::stdio()).await?;
-    server.prepare_default_workspace();
+    let session = async {
+        let running = server.clone().serve(rmcp::transport::stdio()).await?;
+        server.prepare_start_workspace(running.peer().clone());
+        let quit = running.waiting().await;
+        debug!(?quit, "the client closed the connection");
+        anyhow::Ok(())
+    };
     tokio::select! {
-        quit = running.waiting() => debug!(?quit, "the client closed the connection"),
+        ended = session => ended?,
         _ = terminate.recv() => info!("SIGTERM: stopping"),
         _ = interrupt.recv() => info!("SIGINT: stopping"),
     }
     Ok(())
+}
+
+/// Whether `folder` is the file system root, `home` or a folder above `home`.
+fn is_home_or_above(folder: &Path, home: Option<&Path>) -> bool {
+    let Ok(folder) = folder.canonicalize() else {
+        return false;
+    };
+    let home = home.and_then(|home| home.canonicalize().ok());
+    folder.parent().is_none() || home.is_some_and(|home| home.starts_with(&folder))
 }
 
 /// The first local folder among the client's roots, when the client offers roots and lists them
@@ -188,7 +244,7 @@ pub async fn serve(config: Config) -> Result<()> {
     deprecated,
     reason = "roots are deprecated by SEP-2577; a client that does not list them sends the call on to the next source"
 )]
-async fn client_root(peer: &Peer<RoleServer>) -> Option<PathBuf> {
+async fn ask_client_root(peer: &Peer<RoleServer>) -> Option<PathBuf> {
     let offers_roots = peer.peer_info().is_some_and(|info| info.capabilities.roots.is_some());
     if !offers_roots {
         return None;
@@ -295,20 +351,29 @@ mod tests {
         Workspace { root: PathBuf::from("/ws"), repos: repos.collect() }
     }
 
-    /// Prepares `workspaces` one after another and returns how many times the backend was warmed
-    /// and refreshed once the background work is over.
-    async fn prepare_all(update_on_start: bool, workspaces: &[Workspace]) -> (usize, usize) {
+    /// A server over one `Counting` backend.
+    fn counting_server(update_on_start: bool) -> (UalsServer, Arc<Counting>) {
         let backend = Arc::new(Counting::default());
         let mut config = Config::default();
         config.ast_index.update_on_start = update_on_start;
         let backends = Backends { search: vec![backend.clone()], usages: Vec::new(), spans: None };
-        let server = UalsServer::new(Arc::new(Orchestrator::new(backends, config)));
-        for workspace in workspaces {
-            server.prepare(workspace);
-        }
+        (UalsServer::new(Arc::new(Orchestrator::new(backends, config))), backend)
+    }
+
+    /// How many times `backend` was warmed and refreshed once the background work is over.
+    async fn counts_after_background_work(backend: &Counting) -> (usize, usize) {
         // Paused time moves on only when every task waits, so the spawned work is over by then.
         tokio::time::sleep(Duration::from_secs(1)).await;
         (backend.warms.load(Ordering::SeqCst), backend.refreshes.load(Ordering::SeqCst))
+    }
+
+    /// Prepares `workspaces` one after another; see `counts_after_background_work`.
+    async fn prepare_all(update_on_start: bool, workspaces: &[Workspace]) -> (usize, usize) {
+        let (server, backend) = counting_server(update_on_start);
+        for workspace in workspaces {
+            server.prepare(workspace);
+        }
+        counts_after_background_work(&backend).await
     }
 
     #[tokio::test(start_paused = true)]
@@ -318,6 +383,22 @@ mod tests {
         assert_eq!(prepare_all(false, &[two]).await, (1, 0));
         assert_eq!(prepare_all(true, &[workspace(MAX_PREPARED_REPOS)]).await, (1, MAX_PREPARED_REPOS));
         assert_eq!(prepare_all(true, &[workspace(MAX_PREPARED_REPOS + 1)]).await, (0, 0));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn at_start_the_root_the_home_folder_and_the_folders_above_it_are_not_prepared() {
+        let home = tempfile::tempdir().expect("temp dir");
+        let project = home.path().join("project");
+        std::fs::create_dir_all(project.join(".git")).expect("a repository");
+        let above = home.path().parent().expect("the temp dir has a parent");
+        for (folder, warms) in [(Path::new("/"), 0), (above, 0), (home.path(), 0), (&project, 1)] {
+            let (server, backend) = counting_server(false);
+
+            server.prepare_at_start(folder, Some(home.path()));
+
+            assert_eq!(counts_after_background_work(&backend).await, (warms, 0), "{}", folder.display());
+        }
+        assert!(is_home_or_above(Path::new("/"), None), "the root without a known home folder");
     }
 
     #[test]

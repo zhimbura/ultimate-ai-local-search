@@ -75,8 +75,10 @@ impl From<FormatArg> for Format {
 #[derive(Debug, Clone, Deserialize, JsonSchema, Args)]
 #[serde(deny_unknown_fields)]
 pub struct SearchArgs {
-    /// What to look for: a symbol name, words that describe the code, a regular expression, or an
-    /// exact string in quotes.
+    /// What to look for. `/…/` is a regular expression and `"…"` an exact string: both search the
+    /// text only. A code name with an uppercase letter, `_`, `.`, `::` or `()` is an identifier:
+    /// definitions first, then text and meaning. Anything else, one lowercase word included, is
+    /// searched by meaning and symbol names, not as text; `kind` overrides the choice.
     pub query: String,
     /// The folder whose repositories are searched. Default: the client's root folder, then
     /// $UALS_WORKSPACE, then the current folder.

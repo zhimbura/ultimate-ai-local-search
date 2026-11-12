@@ -6,6 +6,7 @@ use std::time::Duration;
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
 use uals::cli::{Cli, run};
+use uals_adapters::mcp_child::wait_for_stopped_groups;
 
 /// The variable with the log filter, e.g. `UALS_LOG=debug`. Logs go to stderr: stdout carries the
 /// output, and the MCP protocol under `uals mcp`.
@@ -30,6 +31,8 @@ fn main() -> ExitCode {
     let result = runtime.block_on(run(cli));
     // Drops every task, which stops the backend servers, then waits for blocking work.
     runtime.shutdown_timeout(SHUTDOWN_BOUND);
+    // A backend that outlives SIGTERM gets SIGKILL from a thread that dies with this process.
+    wait_for_stopped_groups();
     match result {
         Ok(code) => code,
         Err(error) => {

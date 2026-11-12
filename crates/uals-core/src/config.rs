@@ -32,7 +32,7 @@ pub struct Config {
     pub deadlines: Deadlines,
     pub fusion: FusionConfig,
     pub output: OutputConfig,
-    /// Named workspaces, e.g. `[workspaces.kids]`. Optional: any folder works without an entry.
+    /// Named workspaces, e.g. `[workspaces.work]`. Optional: any folder works without an entry.
     pub workspaces: BTreeMap<String, WorkspaceConfig>,
 }
 
@@ -453,8 +453,8 @@ mod tests {
             [fusion.weights.identifier]
             semantic = 0.5
 
-            [workspaces.kids]
-            root = "/work/kids"
+            [workspaces.work]
+            root = "/srv/work"
             exclude = ["docs"]
             "#,
         )
@@ -467,7 +467,7 @@ mod tests {
         assert_eq!(config.fusion.weights.identifier.ast_index, 0.0);
         assert_eq!(config.fusion.weights.natural, Weights::default().natural);
         assert_eq!(config.output, OutputConfig::default());
-        assert!(config.workspace_for(Path::new("/work/kids")).is_some());
+        assert!(config.workspace_for(Path::new("/srv/work")).is_some());
     }
 
     #[test]
