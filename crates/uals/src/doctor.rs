@@ -184,10 +184,13 @@ async fn check_ast_index(config: &AstIndexConfig) -> Check {
 /// Every problem is a warning: uals works without being registered.
 fn check_mcp(semantic: SemanticChoice) -> Check {
     const NAME: &str = "mcp";
-    let register_hint = format!(
-        "scripts/configure-mcp.sh --uals-bin {}",
-        std::env::current_exe().map_or_else(|_| "<path to uals>".to_owned(), |path| path.display().to_string())
-    );
+    // The script lives in the uals checkout and needs the absolute path of this binary.
+    let configure = |flags: &str| {
+        let binary =
+            std::env::current_exe().map_or_else(|_| "<path to uals>".to_owned(), |path| path.display().to_string());
+        format!("in the uals checkout: scripts/configure-mcp.sh --uals-bin {binary}{flags}")
+    };
+    let register_hint = configure("");
     let Some(path) = claude_config_path() else {
         return Check::warn(NAME, "cannot find the home folder, so the Claude Code config is unknown", register_hint);
     };
@@ -216,7 +219,7 @@ fn check_mcp(semantic: SemanticChoice) -> Check {
         detail.push_str(
             "; claude-context is also registered directly, and two claude-context servers race on ~/.context",
         );
-        hints.push("scripts/configure-mcp.sh --remove-claude-context".to_owned());
+        hints.push(configure(" --remove-claude-context"));
     }
     if hints.is_empty() { Check::ok(NAME, detail) } else { Check::warn(NAME, detail, hints.join("; ")) }
 }

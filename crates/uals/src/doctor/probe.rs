@@ -142,13 +142,15 @@ fn plan_embedding(env: &BTreeMap<String, String>) -> EmbeddingPlan {
     }
 }
 
-/// An HTTP agent that ignores proxy variables, with short connect and total timeouts.
+/// An HTTP agent that ignores proxy variables and redirects (an answer from loopback must not send
+/// the probe, and its key, to another host), with short connect and total timeouts.
 fn agent(timeout: Duration) -> ureq::Agent {
     ureq::Agent::config_builder()
         .timeout_connect(Some(CONNECT_TIMEOUT))
         .timeout_global(Some(timeout))
         .http_status_as_error(false)
         .proxy(None)
+        .max_redirects(0)
         .build()
         .into()
 }
