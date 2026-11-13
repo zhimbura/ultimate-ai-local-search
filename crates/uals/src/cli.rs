@@ -112,7 +112,7 @@ pub async fn run(cli: Cli) -> Result<ExitCode> {
         Command::Status(args) => {
             let (workspace, repos) = select(args.workspace.as_deref(), &args.repos, &config)?;
             let states = setup::orchestrator(config).status(&repos).await;
-            println!("{}", render_status(&workspace.root, &repos, &states, args.format.into(), now_ms()));
+            println!("{}", render_status(&workspace.root, &repos, &states, &[], args.format.into(), now_ms()));
         }
         Command::Refresh(args) => {
             let (_, repos) = select(args.workspace.as_deref(), &args.repos, &config)?;

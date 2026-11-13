@@ -50,6 +50,8 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
 # `uals doctor` probes Milvus and a local embedder over plain HTTP on 127.0.0.1. No TLS: uals
 # sends nothing to remote hosts.
+# `uals usages` turns paths into the file:// URIs language servers speak.
+url = "2.5.8"
 ureq = { version = "3.5.2", default-features = false, features = ["json"] }
 which = "8.0.6"
 

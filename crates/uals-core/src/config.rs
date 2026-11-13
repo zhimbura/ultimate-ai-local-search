@@ -28,6 +28,7 @@ pub enum ConfigError {
 pub struct Config {
     pub semantic: SemanticConfig,
     pub ast_index: AstIndexConfig,
+    pub lsp: LspConfig,
     pub lexical: LexicalConfig,
     pub deadlines: Deadlines,
     pub fusion: FusionConfig,
@@ -213,6 +214,53 @@ pub struct AstIndexConfig {
 impl Default for AstIndexConfig {
     fn default() -> Self {
         Self { binary: "ast-index".into(), update_on_start: true }
+    }
+}
+
+/// Language servers that make `usages` precise: they tell which usages refer to which
+/// declaration of a name. Without one, usages are found by name.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct LspConfig {
+    /// False finds usages by name only and starts no language server.
+    pub enabled: bool,
+    /// How long one `usages` call waits for a server that is still loading the project before it
+    /// answers by name. The server goes on loading, so a later call gets the precise answer.
+    pub ready_wait_ms: u64,
+    /// Deadline of one request to a loaded server.
+    pub request_ms: u64,
+    /// A server that has not been asked for this long is stopped to free its memory.
+    pub idle_minutes: u64,
+    /// Settings of one server, keyed by its name: `[lsp.servers.kotlin-lsp]`.
+    pub servers: BTreeMap<String, LspServerConfig>,
+}
+
+impl Default for LspConfig {
+    fn default() -> Self {
+        Self { enabled: true, ready_wait_ms: 10_000, request_ms: 20_000, idle_minutes: 30, servers: BTreeMap::new() }
+    }
+}
+
+/// Overrides for one language server. Every field is optional.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct LspServerConfig {
+    /// False never starts this server.
+    pub enabled: bool,
+    /// Executable and arguments; empty means the built-in command.
+    pub command: Vec<String>,
+    /// Literal environment variables of the server.
+    pub env: BTreeMap<String, String>,
+    /// Names of variables copied from the environment of uals when set.
+    pub pass_env: Vec<String>,
+    /// JDK the JVM servers use to load Gradle and Maven projects; the `JAVA_HOME` of uals when
+    /// unset.
+    pub java_home: Option<PathBuf>,
+}
+
+impl Default for LspServerConfig {
+    fn default() -> Self {
+        Self { enabled: true, command: Vec::new(), env: BTreeMap::new(), pass_env: Vec::new(), java_home: None }
     }
 }
 

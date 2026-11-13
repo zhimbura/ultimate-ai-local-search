@@ -7,10 +7,12 @@
 //! - `lexical`: track T3.
 //! - `mcp_child` and `semble`: track T4.
 //! - `claude_context`: track T5.
+//! - `lsp`: language servers for precise usages.
 
 pub mod ast_index;
 pub mod claude_context;
 pub mod lexical;
+pub mod lsp;
 pub mod mcp_child;
 mod path_filter;
 pub mod semble;

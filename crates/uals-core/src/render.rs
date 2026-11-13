@@ -41,6 +41,17 @@
 //!   sources asked before it failed (`RepoUsages::fallback`) and the source's own status when it
 //!   is not ok, joined with `; `.
 //! - `incomplete` replaces `complete` when any repository answered partially.
+//! - With language servers, a `definitions:` block follows the header: one numbered line per
+//!   declaration of the name with its location and how many usages its server attributed to it,
+//!   or why its usages are by name only. Usage lines then carry `[n]`, the declaration they refer
+//!   to; a line without `[n]` was found by name only.
+//!   ```text
+//!   definitions:
+//!     [1] function Store.load · /ws/app/Store.kt:12 · kotlin-lsp: 3 usages
+//!     [2] function Cache.load · /ws/app/Cache.kt:4 · by name: kotlin-lsp is still loading /ws/app (8s so far)
+//!   app (ast-index)
+//!     /ws/app/Main.kt: 5[1], 9[2], 20
+//!   ```
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -49,8 +60,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::OutputConfig;
 use crate::types::{
-    BackendReport, BackendStatus, FusedHit, LineRange, QueryKind, RepoUsages, SearchResponse, Snippet, SymbolKind,
-    Usage, UsagesResponse,
+    BackendReport, BackendStatus, DefinitionReport, FusedHit, LineRange, QueryKind, RepoUsages, SearchResponse,
+    Snippet, SymbolKind, Usage, UsagesResponse,
 };
 
 /// Snippet lines longer than this many characters are cut.
@@ -312,6 +323,12 @@ fn usages_text(response: &UsagesResponse, format: Format) -> String {
     let state = if response.complete { "complete" } else { "incomplete" };
     let mut lines =
         vec![format!("usages of \"{}\"{SEPARATOR}{count} in {files} files{SEPARATOR}{state}", response.symbol)];
+    if !response.definitions.is_empty() {
+        lines.push("definitions:".into());
+        for (index, report) in response.definitions.iter().enumerate() {
+            lines.push(format!("  [{}] {}", index + 1, definition_text(report)));
+        }
+    }
     for repo in &response.repos {
         lines.push(repo_heading(repo));
         push_usage_rows(&mut lines, repo, format);
@@ -320,6 +337,31 @@ fn usages_text(response: &UsagesResponse, format: Format) -> String {
         lines.push(format!("next: offset={next}"));
     }
     lines.join("\n")
+}
+
+/// `kind Container.name · path:line · server: N usages`, or `· by name: reason` when no server
+/// answered for the declaration.
+fn definition_text(report: &DefinitionReport) -> String {
+    let definition = &report.definition;
+    let place = format!("{}:{}", definition.path.display(), definition.line);
+    let head = format!("{} {}{SEPARATOR}{place}", symbol_kind_name(definition.kind), definition.qualified_name());
+    match (&report.server, &report.status) {
+        (Some(server), BackendStatus::Ok) => {
+            let noun = if report.usages == 1 { "usage" } else { "usages" };
+            format!("{head}{SEPARATOR}{server}: {} {noun}", report.usages)
+        }
+        (_, status) => {
+            let reason = status_note(status).unwrap_or_else(|| "no language server".into());
+            // A server's stderr can span lines; the declaration stays on one.
+            let reason = reason.lines().map(str::trim).filter(|line| !line.is_empty()).collect::<Vec<_>>().join(" ");
+            format!("{head}{SEPARATOR}by name: {reason}")
+        }
+    }
+}
+
+/// `[n]` after a usage line: the 1-based declaration it refers to.
+fn definition_mark(usage: &Usage) -> String {
+    usage.definition.map(|index| format!("[{}]", index + 1)).unwrap_or_default()
 }
 
 /// `repo (source)`, with the fallback note and the status note after the source when the answer
@@ -352,10 +394,11 @@ fn push_usage_rows(out: &mut Vec<String>, repo: &RepoUsages, format: Format) {
             out.push(format!("  {}", path.display()));
             for usage in usages {
                 let context = usage.context.as_deref().map(|text| format!(" {}", cut_line(text))).unwrap_or_default();
-                out.push(format!("    {}:{context}", usage.line));
+                out.push(format!("    {}{}:{context}", usage.line, definition_mark(usage)));
             }
         } else {
-            let numbers: Vec<String> = usages.iter().map(|usage| usage.line.to_string()).collect();
+            let numbers: Vec<String> =
+                usages.iter().map(|usage| format!("{}{}", usage.line, definition_mark(usage))).collect();
             out.push(format!("  {}: {}", path.display(), numbers.join(", ")));
         }
     }

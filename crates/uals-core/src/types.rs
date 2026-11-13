@@ -8,7 +8,7 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -370,6 +370,79 @@ pub struct Usage {
     /// The source line, trimmed, if the backend gave it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context: Option<String>,
+    /// Index into `UsagesResponse::definitions` of the definition a language server says this
+    /// usage refers to; `None` when the usage was found by name only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub definition: Option<usize>,
+}
+
+/// One declaration of a symbol in the code.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Definition {
+    /// `Repo::name`.
+    pub repo: String,
+    /// Absolute path.
+    pub path: PathBuf,
+    /// 1-based line of the declaration.
+    pub line: u32,
+    pub name: String,
+    pub kind: SymbolKind,
+    /// The innermost class, interface, object or similar type around the declaration, by name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub container: Option<String>,
+}
+
+impl Definition {
+    /// `Container.name`, or the bare name for a top-level declaration.
+    pub fn qualified_name(&self) -> String {
+        match &self.container {
+            Some(container) => format!("{container}.{}", self.name),
+            None => self.name.clone(),
+        }
+    }
+}
+
+/// One place a language server reports as a usage. Absolute path, 1-based line.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct Reference {
+    pub path: PathBuf,
+    pub line: u32,
+}
+
+/// The usages of one definition as a language server found them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedReferences {
+    /// The server that answered, e.g. `kotlin-lsp`.
+    pub server: String,
+    /// The project the server loaded. A usage by name of the same symbol in a file of this project
+    /// that the server did not return refers to something else.
+    pub root: PathBuf,
+    /// File extensions, without the dot, whose usages the server sees.
+    pub extensions: Vec<String>,
+    pub references: Vec<Reference>,
+}
+
+impl ResolvedReferences {
+    /// Whether the server saw the whole file `path`: it lies in the loaded project and has one of
+    /// the server's extensions.
+    pub fn covers(&self, path: &Path) -> bool {
+        let extension = path.extension().and_then(|ext| ext.to_str()).unwrap_or_default();
+        path.starts_with(&self.root) && self.extensions.iter().any(|known| known == extension)
+    }
+}
+
+/// A definition in a `usages` answer and how its usages were found.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DefinitionReport {
+    pub definition: Definition,
+    /// The language server that found the usages; `None` when none answered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server: Option<String>,
+    /// `Ok` when the server answered; otherwise why the usages of this definition are known by
+    /// name only.
+    pub status: BackendStatus,
+    /// Usages the server attributed to this definition, over all pages.
+    pub usages: usize,
 }
 
 /// A usage source's answer for one repository.
@@ -409,6 +482,10 @@ pub struct UsagesResponse {
     pub next_offset: Option<usize>,
     /// True when every repository answered completely.
     pub complete: bool,
+    /// The definitions of the symbol and how precisely their usages are known. Empty when
+    /// precise usages are off or no definition was found.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub definitions: Vec<DefinitionReport>,
 }
 
 /// State of one backend's index for one repository.

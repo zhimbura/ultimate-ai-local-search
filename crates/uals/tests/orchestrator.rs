@@ -11,11 +11,12 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use pretty_assertions::assert_eq;
 use uals::orchestrator::{Backends, Orchestrator, SearchParams, UsagesParams, select_repos};
-use uals_core::backend::{BackendError, SearchBackend, SpanProvider, UsageSource};
+use uals_core::backend::{BackendError, DefinitionSource, ReferenceResolver, SearchBackend, SpanProvider, UsageSource};
 use uals_core::config::Config;
 use uals_core::types::{
-    BackendAnswer, BackendId, BackendResult, BackendStatus, Hit, IndexState, LineRange, QueryKind, Repo,
-    SearchAllAnswer, SearchRequest, Snippet, SymbolKind, SymbolSpan, Usage, UsageAnswer, Workspace,
+    BackendAnswer, BackendId, BackendResult, BackendStatus, Definition, Hit, IndexState, LineRange, QueryKind,
+    Reference, Repo, ResolvedReferences, SearchAllAnswer, SearchRequest, Snippet, SymbolKind, SymbolSpan, Usage,
+    UsageAnswer, UsagesResponse, Workspace,
 };
 
 type SearchReply = dyn Fn(&Repo, &SearchRequest) -> Result<BackendAnswer, BackendError> + Send + Sync;
@@ -315,11 +316,11 @@ fn request(query: &str, kind: QueryKind) -> SearchRequest {
 }
 
 fn usage(repo: &Repo, file: &str, line: u32) -> Usage {
-    Usage { repo: repo.name.clone(), path: repo.root.join(file), line, context: None }
+    Usage { repo: repo.name.clone(), path: repo.root.join(file), line, context: None, definition: None }
 }
 
 fn search_only(search: Vec<Arc<dyn SearchBackend>>, config: Config) -> Orchestrator {
-    Orchestrator::new(Backends { search, usages: Vec::new(), spans: None }, config)
+    Orchestrator::new(Backends { search, usages: Vec::new(), spans: None, ..Default::default() }, config)
 }
 
 fn statuses(results: &[BackendResult]) -> Vec<(BackendId, String, BackendStatus)> {
@@ -692,7 +693,12 @@ async fn hits_inside_one_symbol_merge_into_one_result_that_spans_it() {
         lines: LineRange::new(1, 20),
     };
     let spans = Arc::new(FakeSpans { spans: vec![span], calls: AtomicUsize::new(0) });
-    let backends = Backends { search: vec![ast_index, lexical], usages: Vec::new(), spans: Some(spans.clone()) };
+    let backends = Backends {
+        search: vec![ast_index, lexical],
+        usages: Vec::new(),
+        spans: Some(spans.clone()),
+        ..Default::default()
+    };
     let orchestrator = Orchestrator::new(backends, Config::default());
 
     let response = orchestrator.search(&[app], &SearchParams::new("HostSelector")).await.expect("search");
@@ -788,7 +794,7 @@ async fn usages_fall_back_to_the_next_source_and_page_across_repositories() {
         }),
     });
     let orchestrator = Orchestrator::new(
-        Backends { search: Vec::new(), usages: vec![ast_index, lexical], spans: None },
+        Backends { search: Vec::new(), usages: vec![ast_index, lexical], spans: None, ..Default::default() },
         Config::default(),
     );
     let repos = [app.clone(), web.clone()];
@@ -837,7 +843,7 @@ async fn when_no_usage_source_answers_the_repository_says_how_each_one_failed() 
         reply: Box::new(|_| Err(BackendError::Failed("walk aborted".into()))),
     });
     let orchestrator = Orchestrator::new(
-        Backends { search: Vec::new(), usages: vec![ast_index, lexical], spans: None },
+        Backends { search: Vec::new(), usages: vec![ast_index, lexical], spans: None, ..Default::default() },
         Config::default(),
     );
     let unconfigured = Orchestrator::new(Backends::default(), Config::default());
@@ -872,4 +878,155 @@ fn unknown_repository_names_are_rejected_with_the_known_ones() {
     assert_eq!(picked, vec![repo("web", Path::new("/ws/web"))]);
     assert_eq!(error.to_string(), "unknown repository \"api\"; this workspace has: app, web");
     assert_eq!(select_repos(&workspace, &[]).expect("all"), workspace.repos);
+}
+
+// ---- precise usages ----
+
+/// Usages by name at fixed files of the repository; records the symbols it was asked for.
+struct NamedUsages {
+    asked: Mutex<Vec<String>>,
+    found: Vec<(&'static str, u32)>,
+}
+
+#[async_trait]
+impl UsageSource for NamedUsages {
+    fn id(&self) -> BackendId {
+        BackendId::AstIndex
+    }
+
+    async fn usages(&self, repo: &Repo, symbol: &str, _limit: usize) -> Result<UsageAnswer, BackendError> {
+        self.asked.lock().unwrap().push(symbol.to_owned());
+        let usages = self.found.iter().map(|(file, line)| usage(repo, file, *line)).collect();
+        Ok(UsageAnswer { usages, complete: true, stale: None })
+    }
+}
+
+/// Declarations of `load` in `Store` (Store.kt:2) and `Cache` (Cache.kt:4).
+struct LoadDeclarations;
+
+#[async_trait]
+impl DefinitionSource for LoadDeclarations {
+    async fn definitions(&self, repo: &Repo, name: &str) -> Result<Vec<Definition>, BackendError> {
+        let declare = |file: &str, line, container: &str| Definition {
+            repo: repo.name.clone(),
+            path: repo.root.join(file),
+            line,
+            name: name.to_owned(),
+            kind: SymbolKind::Function,
+            container: Some(container.to_owned()),
+        };
+        Ok(if name == "load" {
+            vec![declare("Store.kt", 2, "Store"), declare("Cache.kt", 4, "Cache")]
+        } else {
+            Vec::new()
+        })
+    }
+}
+
+/// A Kotlin server for the whole repository: `Store.load` is used at Use.kt:3 and New.kt:5;
+/// `Cache.load` is still loading.
+struct LoadServer;
+
+#[async_trait]
+impl ReferenceResolver for LoadServer {
+    async fn references(&self, repo: &Repo, definition: &Definition) -> Result<ResolvedReferences, BackendError> {
+        if definition.container.as_deref() != Some("Store") {
+            return Err(BackendError::Unavailable("kotlin-lsp is still loading".into()));
+        }
+        let reference = |file: &str, line| Reference { path: repo.root.join(file), line };
+        Ok(ResolvedReferences {
+            server: "kotlin-lsp".into(),
+            root: repo.root.clone(),
+            extensions: vec!["kt".into()],
+            references: vec![reference("Use.kt", 3), reference("New.kt", 5)],
+        })
+    }
+}
+
+/// An orchestrator with the fakes above; usages by name at Use.kt:3, Use.kt:7 and Main.java:9.
+fn precise_orchestrator() -> (Orchestrator, Arc<NamedUsages>) {
+    let named = Arc::new(NamedUsages {
+        asked: Mutex::new(Vec::new()),
+        found: vec![("Use.kt", 3), ("Use.kt", 7), ("Main.java", 9)],
+    });
+    let backends = Backends {
+        usages: vec![named.clone()],
+        definitions: Some(Arc::new(LoadDeclarations)),
+        references: Some(Arc::new(LoadServer)),
+        ..Default::default()
+    };
+    (Orchestrator::new(backends, Config::default()), named)
+}
+
+/// (file, line, declaration index) of every usage.
+fn attributed(response: &UsagesResponse) -> Vec<(String, u32, Option<usize>)> {
+    response
+        .repos
+        .iter()
+        .flat_map(|repo| &repo.usages)
+        .map(|usage| (usage.path.file_name().unwrap().to_string_lossy().into_owned(), usage.line, usage.definition))
+        .collect()
+}
+
+#[tokio::test]
+async fn a_qualified_symbol_keeps_the_usages_of_its_declaration_only() {
+    let (orchestrator, named) = precise_orchestrator();
+    let app = repo("app", Path::new("/ws/app"));
+
+    let response = orchestrator.usages(&[app], &UsagesParams::new("Store.load")).await.unwrap();
+
+    assert_eq!(*named.asked.lock().unwrap(), ["load"]);
+    assert_eq!(response.definitions.len(), 1);
+    assert_eq!(response.definitions[0].definition.qualified_name(), "Store.load");
+    assert_eq!((response.definitions[0].server.as_deref(), response.definitions[0].usages), (Some("kotlin-lsp"), 2));
+    // Use.kt:7 is a Kotlin usage the server did not return: another `load`. Main.java is not a
+    // Kotlin file, so it stays, unattributed.
+    assert_eq!(
+        attributed(&response),
+        [("Main.java".into(), 9, None), ("New.kt".into(), 5, Some(0)), ("Use.kt".into(), 3, Some(0))]
+    );
+    assert_eq!(response.total, 3);
+}
+
+#[tokio::test]
+async fn a_bare_name_lists_every_declaration_and_keeps_unresolved_usages() {
+    let (orchestrator, named) = precise_orchestrator();
+    let app = repo("app", Path::new("/ws/app"));
+
+    let response = orchestrator.usages(&[app], &UsagesParams::new("load")).await.unwrap();
+
+    assert_eq!(*named.asked.lock().unwrap(), ["load"]);
+    let reports: Vec<(String, BackendStatus, usize)> = response
+        .definitions
+        .iter()
+        .map(|report| (report.definition.qualified_name(), report.status.clone(), report.usages))
+        .collect();
+    assert_eq!(
+        reports,
+        [
+            ("Store.load".into(), BackendStatus::Ok, 2),
+            ("Cache.load".into(), BackendStatus::Unavailable { reason: "kotlin-lsp is still loading".into() }, 0),
+        ]
+    );
+    assert_eq!(
+        attributed(&response),
+        [
+            ("Main.java".into(), 9, None),
+            ("New.kt".into(), 5, Some(0)),
+            ("Use.kt".into(), 3, Some(0)),
+            ("Use.kt".into(), 7, None),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn a_qualifier_without_a_matching_declaration_is_searched_as_typed() {
+    let (orchestrator, named) = precise_orchestrator();
+    let app = repo("app", Path::new("/ws/app"));
+
+    let response = orchestrator.usages(&[app], &UsagesParams::new("R.string")).await.unwrap();
+
+    assert_eq!(*named.asked.lock().unwrap(), ["R.string"]);
+    assert!(response.definitions.is_empty());
+    assert!(attributed(&response).iter().all(|(_, _, definition)| definition.is_none()));
 }

@@ -59,7 +59,11 @@ answered; `next: offset=N` gives the next page.";
 
 const USAGES_DESCRIPTION: &str = "List every usage of a symbol in every repository of a folder, \
 grouped by repository and file, with line numbers. Uses the ast-index index where a repository \
-has one, otherwise a whole-word text search; each repository says which source answered.";
+has one, otherwise a whole-word text search; each repository says which source answered. Where a \
+language server for the file's language is installed (kotlin-lsp, jdtls, gopls, rust-analyzer, \
+typescript-language-server, pyright, clangd, sourcekit-lsp), the answer lists the declarations of \
+the name and marks each usage with the declaration it refers to, `[n]`; `Container.name` (e.g. \
+`Store.load`) keeps only the usages of that declaration.";
 
 const STATUS_DESCRIPTION: &str = "Show the state of each search backend's index in every \
 repository of a folder: indexed or not, when it was updated, and why a backend is not available. \
@@ -106,7 +110,14 @@ impl UalsServer {
         let (workspace, repos) = repos_in(&folder, &args.repos, self.orchestrator.config()).map_err(message)?;
         self.prepare(&workspace);
         let states = self.orchestrator.status(&repos).await;
-        Ok(render_status(&workspace.root, &repos, &states, args.format.into(), now_ms()))
+        Ok(render_status(
+            &workspace.root,
+            &repos,
+            &states,
+            &self.orchestrator.language_servers(),
+            args.format.into(),
+            now_ms(),
+        ))
     }
 }
 
@@ -356,7 +367,8 @@ mod tests {
         let backend = Arc::new(Counting::default());
         let mut config = Config::default();
         config.ast_index.update_on_start = update_on_start;
-        let backends = Backends { search: vec![backend.clone()], usages: Vec::new(), spans: None };
+        let backends =
+            Backends { search: vec![backend.clone()], usages: Vec::new(), spans: None, ..Default::default() };
         (UalsServer::new(Arc::new(Orchestrator::new(backends, config))), backend)
     }
 

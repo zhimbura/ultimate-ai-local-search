@@ -34,6 +34,8 @@ const MS_PER_DAY: u64 = 24 * MS_PER_HOUR;
 struct StatusJson<'a> {
     workspace: &'a Path,
     repos: Vec<RepoStatusJson<'a>>,
+    #[serde(skip_serializing_if = "<[String]>::is_empty")]
+    language_servers: &'a [String],
 }
 
 #[derive(Serialize)]
@@ -45,20 +47,34 @@ struct RepoStatusJson<'a> {
 
 /// Renders the index states of `repos` in the workspace `root`. `now_ms` is the current Unix time
 /// in milliseconds, for the age of each index.
-pub fn render_status(root: &Path, repos: &[Repo], states: &[IndexState], format: Format, now_ms: u64) -> String {
+/// `servers` has one line per running language server.
+pub fn render_status(
+    root: &Path,
+    repos: &[Repo],
+    states: &[IndexState],
+    servers: &[String],
+    format: Format,
+    now_ms: u64,
+) -> String {
     let states_of = |repo: &Repo| states.iter().filter(|state| state.repo == repo.name).collect::<Vec<_>>();
     if format == Format::Json {
         let repos = repos
             .iter()
             .map(|repo| RepoStatusJson { name: &repo.name, root: &repo.root, backends: states_of(repo) })
             .collect();
-        return to_json(&StatusJson { workspace: root, repos });
+        return to_json(&StatusJson { workspace: root, repos, language_servers: servers });
     }
     let mut out = format!("status of {} · {}", root.display(), count(repos.len(), "repository", "repositories"));
     for repo in repos {
         let _ = write!(out, "\n{} · {}", repo.name, repo.root.display());
         for state in states_of(repo) {
             let _ = write!(out, "\n  {}", state_line(state, now_ms));
+        }
+    }
+    if !servers.is_empty() {
+        out.push_str("\nlanguage servers:");
+        for server in servers {
+            let _ = write!(out, "\n  {server}");
         }
     }
     out
@@ -200,7 +216,7 @@ mod tests {
             IndexState { detail: Some(String::new()), ..state(BackendId::AstIndex, "web", false) },
         ];
 
-        let text = render_status(Path::new("/ws"), &repos, &states, Format::Concise, NOW);
+        let text = render_status(Path::new("/ws"), &repos, &states, &[], Format::Concise, NOW);
 
         assert_eq!(
             text,
@@ -217,7 +233,7 @@ mod tests {
     fn status_json_groups_the_states_by_repository() {
         let states = [state(BackendId::Lexical, "web", true), state(BackendId::AstIndex, "android", false)];
 
-        let json = render_status(Path::new("/ws"), &[repo("android")], &states, Format::Json, NOW);
+        let json = render_status(Path::new("/ws"), &[repo("android")], &states, &[], Format::Json, NOW);
 
         let value: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(

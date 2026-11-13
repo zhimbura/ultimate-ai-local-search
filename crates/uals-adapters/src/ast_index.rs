@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use uals_core::backend::{BackendError, SearchBackend, SpanProvider, UsageSource};
+use uals_core::backend::{BackendError, DefinitionSource, SearchBackend, SpanProvider, UsageSource};
 use uals_core::classify::bare_name;
 use uals_core::config::AstIndexConfig;
 use uals_core::types::{
@@ -25,8 +25,9 @@ use uals_core::types::{
 
 use crate::path_filter::PathFilter;
 use parse::{
-    Explore, ExploreSymbol, FileStampRow, QueryResult, STATE_SQL, SpanRow, StateRow, SymbolList, UsageItem, UsageList,
-    definition_extents_sql, file_stamps_sql, missing_index, normalize_kind, parse_json, spans_sql,
+    DefinitionRow, Explore, ExploreSymbol, FileStampRow, QueryResult, STATE_SQL, SpanRow, StateRow, SymbolList,
+    UsageItem, UsageList, container_name, definition_extents_sql, definitions_sql, file_stamps_sql, missing_index,
+    normalize_kind, parse_json, spans_sql,
 };
 use runner::require_folder;
 pub use runner::{AstIndexRunner, CommandOutput, ProcessRunner};
@@ -448,10 +449,33 @@ impl UsageSource for AstIndexBackend {
                 path: repo.root.join(item.path),
                 line: item.line,
                 context: item.context,
+                definition: None,
             })
             .collect();
         let stale = self.stale_reason(repo, usages.iter().map(|usage| usage.path.as_path())).await;
         Ok(UsageAnswer { usages, complete, stale })
+    }
+}
+
+#[async_trait]
+impl DefinitionSource for AstIndexBackend {
+    async fn definitions(&self, repo: &Repo, name: &str) -> Result<Vec<uals_core::types::Definition>, BackendError> {
+        self.require_index(repo)?;
+        let rows = self.run_query::<DefinitionRow>(repo, &definitions_sql(name), DEFINITION_LIMIT).await?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|row| {
+                let kind = normalize_kind(&row.kind)?;
+                Some(uals_core::types::Definition {
+                    repo: repo.name.clone(),
+                    path: repo.root.join(&row.path),
+                    line: row.line,
+                    name: row.name,
+                    kind,
+                    container: container_name(row.container.as_deref(), row.signature.as_deref()),
+                })
+            })
+            .collect())
     }
 }
 

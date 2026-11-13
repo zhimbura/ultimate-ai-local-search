@@ -276,6 +276,7 @@ impl UsageSource for LexicalBackend {
                     path: found.path,
                     line: found.line,
                     context: Some(found.text.trim().to_owned()),
+                    definition: None,
                 })
                 .collect();
             Ok(UsageAnswer { usages, complete, stale: None })

@@ -311,7 +311,7 @@ mod tests {
     }
 
     fn usage(repo: &str, path: &str, line: u32) -> Usage {
-        Usage { repo: repo.into(), path: PathBuf::from(path), line, context: None }
+        Usage { repo: repo.into(), path: PathBuf::from(path), line, context: None, definition: None }
     }
 
     fn gold() -> GoldUsages {
@@ -342,6 +342,7 @@ mod tests {
             }],
             next_offset: None,
             complete: true,
+            definitions: Vec::new(),
         }
     }
 

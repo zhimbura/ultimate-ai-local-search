@@ -1,6 +1,6 @@
 //! `uals doctor`: checks that uals and its backends are installed and work, and says how to fix
 //! what does not. The checks run in a fixed order: config, ast-index, the semantic backend, the
-//! registration in Claude Code. A warning means uals still works, with less; a failure means a
+//! language servers, the registration in Claude Code. A warning means uals still works, with less; a failure means a
 //! backend or the config is broken.
 //!
 //! The pure parts (versions, the registration in the Claude Code config, the probe requests) are
@@ -17,7 +17,7 @@ use anyhow::Result;
 use serde::Serialize;
 use serde_json::Value;
 use tokio::process::Command;
-use uals_core::config::{AstIndexConfig, Config, SemanticChoice};
+use uals_core::config::{AstIndexConfig, Config, LspConfig, SemanticChoice};
 
 use crate::args::FormatArg;
 
@@ -128,12 +128,14 @@ pub async fn diagnose(explicit_config: Option<&Path>) -> Report {
         Some(config) => {
             checks.push(check_ast_index(&config.ast_index).await);
             checks.extend(semantic::check(&config.semantic).await);
+            checks.push(check_language_servers(&config.lsp));
             checks.push(check_mcp(config.semantic.default));
         }
         None => {
             let reason = "not checked: the config is not valid";
             checks.push(Check::skip("ast-index", reason));
             checks.push(Check::skip("semantic", reason));
+            checks.push(Check::skip("lsp", reason));
             checks.push(Check::skip("mcp", reason));
         }
     }
@@ -177,6 +179,25 @@ async fn check_ast_index(config: &AstIndexConfig) -> Check {
             "run install.sh to update ast-index",
         ),
         Ok(version) => Check::ok(NAME, format!("{version} at {}", path.display())),
+    }
+}
+
+/// Which language servers precise `usages` can start. They are optional: without one, usages are
+/// found by name, so a missing server is never a failure.
+fn check_language_servers(config: &LspConfig) -> Check {
+    const NAME: &str = "lsp";
+    if !config.enabled {
+        return Check::skip(NAME, "precise usages are off (lsp.enabled = false)");
+    }
+    let (found, missing): (Vec<_>, Vec<_>) =
+        uals_adapters::lsp::locate(config).into_iter().partition(|(_, located)| located.is_ok());
+    let names =
+        |list: &[(&str, Result<PathBuf, String>)]| list.iter().map(|(name, _)| *name).collect::<Vec<_>>().join(", ");
+    let hint = "install the language server of each language you work in; see «Precise usages» in the README";
+    match (found.is_empty(), missing.is_empty()) {
+        (true, _) => Check::warn(NAME, "no language server found: usages are found by name", hint),
+        (false, true) => Check::ok(NAME, format!("found {}", names(&found))),
+        (false, false) => Check::ok(NAME, format!("found {}; not installed: {}", names(&found), names(&missing))),
     }
 }
 

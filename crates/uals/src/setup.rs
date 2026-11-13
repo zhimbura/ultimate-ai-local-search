@@ -11,9 +11,13 @@ use futures::FutureExt;
 use uals_adapters::ast_index::AstIndexBackend;
 use uals_adapters::claude_context::ClaudeContextBackend;
 use uals_adapters::lexical::LexicalBackend;
+use uals_adapters::lsp::LspPool;
 use uals_adapters::mcp_child::{ChildSpec, McpChild};
 use uals_adapters::semble::SembleBackend;
-use uals_core::backend::{BackendError, McpToolCaller, SearchBackend, SpanProvider, ToolOutput, UsageSource};
+use uals_core::backend::{
+    BackendError, DefinitionSource, McpToolCaller, ReferenceResolver, SearchBackend, SpanProvider, ToolOutput,
+    UsageSource,
+};
 use uals_core::config::{ClaudeContextConfig, Config, SemanticChoice, SembleConfig};
 
 use crate::lazy_caller::LazyCaller;
@@ -30,9 +34,9 @@ pub fn orchestrator(config: Config) -> Orchestrator {
     Orchestrator::new(backends(&config), config)
 }
 
-/// ast-index (search, usages, spans), lexical search (search, and usages where ast-index cannot
-/// answer) and the semantic backend `semantic.default` names. Semantic servers start on their
-/// first call.
+/// ast-index (search, usages, spans, declarations), lexical search (search, and usages where
+/// ast-index cannot answer), the semantic backend `semantic.default` names and, when `lsp.enabled`,
+/// the language servers of precise usages. Semantic and language servers start on their first call.
 pub fn backends(config: &Config) -> Backends {
     let ast_index = Arc::new(AstIndexBackend::new(config.ast_index.clone()));
     let lexical =
@@ -45,8 +49,25 @@ pub fn backends(config: &Config) -> Backends {
         search.push(semantic);
     }
     let usages: Vec<Arc<dyn UsageSource>> = vec![ast_index.clone(), lexical];
-    let spans: Arc<dyn SpanProvider> = ast_index;
-    Backends { search, usages, spans: Some(spans) }
+    let spans: Arc<dyn SpanProvider> = ast_index.clone();
+    let (definitions, references) = match language_servers(config) {
+        Some(pool) => {
+            let definitions: Arc<dyn DefinitionSource> = ast_index;
+            (Some(definitions), Some(pool))
+        }
+        None => (None, None),
+    };
+    Backends { search, usages, spans: Some(spans), definitions, references }
+}
+
+/// The language-server pool, `None` when `lsp.enabled` is false. Servers keep their per-project
+/// state in the user cache folder (`uals/lsp`).
+fn language_servers(config: &Config) -> Option<Arc<dyn ReferenceResolver>> {
+    if !config.lsp.enabled {
+        return None;
+    }
+    let cache = dirs::cache_dir().or_else(|| dirs::home_dir().map(|home| home.join(".cache")))?;
+    Some(Arc::new(LspPool::new(config.lsp.clone(), cache.join("uals").join("lsp"))))
 }
 
 /// The semantic backend `semantic.default` names, behind a `LazyCaller`; `None` for `none`.

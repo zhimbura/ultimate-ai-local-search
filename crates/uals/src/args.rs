@@ -129,7 +129,8 @@ impl SearchArgs {
 #[derive(Debug, Clone, Deserialize, JsonSchema, Args)]
 #[serde(deny_unknown_fields)]
 pub struct UsagesArgs {
-    /// The symbol whose usages are listed, e.g. `HostSelector` or `markFailed`.
+    /// The symbol whose usages are listed, e.g. `HostSelector` or `markFailed`. `Store.load` asks
+    /// for the `load` declared in `Store` when a language server can tell the declarations apart.
     pub symbol: String,
     /// The folder whose repositories are searched. Default: the client's root folder, then
     /// $UALS_WORKSPACE, then the current folder.

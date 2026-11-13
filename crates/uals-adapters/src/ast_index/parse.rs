@@ -151,6 +151,60 @@ pub struct SpanRow {
     pub end_line: Option<u32>,
 }
 
+/// One row of the definitions SQL ([`definitions_sql`]).
+#[derive(Debug, Deserialize)]
+pub struct DefinitionRow {
+    pub path: String,
+    pub name: String,
+    #[serde(default)]
+    pub kind: String,
+    pub line: u32,
+    #[serde(default)]
+    pub container: Option<String>,
+    #[serde(default)]
+    pub signature: Option<String>,
+}
+
+/// The type a declaration belongs to, by name. `enclosing` is the innermost type around it as
+/// ast-index records it; Rust gives `impl Store` or `impl Show for Store`, which mean `Store`. A Go
+/// method lies outside its type, so its receiver in `signature` (`func (c *Cache) Stop()`) names it.
+pub fn container_name(enclosing: Option<&str>, signature: Option<&str>) -> Option<String> {
+    let bare = |text: &str| {
+        let text = text.trim().trim_start_matches(['&', '*']);
+        let text = text.split(['<', '[']).next().unwrap_or(text);
+        Some(text.rsplit("::").next().unwrap_or(text).trim().to_owned()).filter(|name| !name.is_empty())
+    };
+    if let Some(enclosing) = enclosing {
+        let Some(implemented) = enclosing.strip_prefix("impl").filter(|rest| rest.starts_with([' ', '<'])) else {
+            return Some(enclosing.to_owned());
+        };
+        // `impl<T> Trait for Type<T>`: the generics after `impl`, then the type after ` for `.
+        let implemented = skip_generics(implemented.trim_start());
+        return bare(implemented.rsplit(" for ").next().unwrap_or(implemented));
+    }
+    let receiver = signature?.trim().strip_prefix("func (")?.split(')').next()?;
+    bare(receiver.split_whitespace().last()?)
+}
+
+/// `text` without the `<...>` it starts with, nested ones included.
+fn skip_generics(text: &str) -> &str {
+    if !text.starts_with('<') {
+        return text;
+    }
+    let mut depth = 0;
+    for (at, c) in text.char_indices() {
+        match c {
+            '<' => depth += 1,
+            '>' => depth -= 1,
+            _ => {}
+        }
+        if depth == 0 {
+            return text[at + 1..].trim_start();
+        }
+    }
+    text
+}
+
 /// The row of the index-state SQL ([`STATE_SQL`]).
 #[derive(Debug, Deserialize)]
 pub struct StateRow {
@@ -188,6 +242,22 @@ pub fn normalize_kind(kind: &str) -> Option<SymbolKind> {
         "constant" => Some(SymbolKind::Constant),
         _ => Some(SymbolKind::Other),
     }
+}
+
+/// SQL for every declaration named exactly `name`, imports and packages left out, with the
+/// innermost type around it as `container`. ast-index leaves `parent_id` empty, so the container
+/// is the type in the same file whose lines enclose the declaration and that starts last.
+pub fn definitions_sql(name: &str) -> String {
+    let name = name.replace('\'', "''");
+    format!(
+        "SELECT f.path AS path, s.name AS name, s.kind AS kind, s.line AS line, s.signature AS signature, \
+         (SELECT c.name FROM symbols c WHERE c.file_id = s.file_id AND c.id <> s.id \
+            AND c.kind IN ('class','interface','object','enum','struct','trait','protocol','impl','record') \
+            AND c.line <= s.line AND COALESCE(c.end_line, c.line) >= s.line \
+            ORDER BY c.line DESC LIMIT 1) AS container \
+         FROM symbols s JOIN files f ON f.id = s.file_id \
+         WHERE s.name = '{name}' AND s.kind NOT IN ('import','package') ORDER BY f.path, s.line"
+    )
 }
 
 /// SQL for the symbol extents of the given project-relative paths.
@@ -231,6 +301,19 @@ mod tests {
     fn spans_sql_escapes_quotes() {
         let sql = spans_sql(&["a/it's.kt".to_string(), "b.kt".to_string()]);
         assert!(sql.contains("IN ('a/it''s.kt','b.kt')"), "{sql}");
+    }
+
+    #[test]
+    fn containers_are_type_names() {
+        assert_eq!(container_name(Some("Store"), None).as_deref(), Some("Store"));
+        assert_eq!(container_name(Some("impl Store"), None).as_deref(), Some("Store"));
+        assert_eq!(container_name(Some("impl<T> fmt::Display for Wrapper<T>"), None).as_deref(), Some("Wrapper"));
+        assert_eq!(container_name(Some("impl<K: Ord<K>> Map<K>"), None).as_deref(), Some("Map"));
+        assert_eq!(container_name(Some("Implementation"), None).as_deref(), Some("Implementation"));
+        assert_eq!(container_name(None, Some("func (c *Cache) Stop() {}")).as_deref(), Some("Cache"));
+        assert_eq!(container_name(None, Some("func (l List[T]) Len() int")).as_deref(), Some("List"));
+        assert_eq!(container_name(None, Some("func Stop() {}")), None);
+        assert_eq!(container_name(None, None), None);
     }
 
     #[test]

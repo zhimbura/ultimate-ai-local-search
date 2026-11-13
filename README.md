@@ -1,8 +1,12 @@
-# uals
+# uals: local code search MCP server for AI coding agents
 
-uals (ultimate-ai-local-search) is one code search for AI coding agents. It is a Rust MCP server and a command line tool.
+**One fast code search for Claude Code and other MCP clients: symbol search, text and regex search, semantic search and IDE-precise find-usages over every repository in a folder. Everything runs on your machine.**
 
-It searches every repository in a folder at once, with three backends: symbols (ast-index), text (an in-process search built on the ripgrep crates) and meaning (Semble by default, claude-context with Milvus as an option). It fuses the answers into one ranked list with code snippets.
+uals (ultimate-ai-local-search) is a Rust MCP (Model Context Protocol) server and a command line tool.
+
+It searches every repository in a folder at once, with three backends: symbols (ast-index), text (an in-process search built on the ripgrep crates) and meaning (Semble by default, claude-context with Milvus as an option). It fuses the answers into one ranked list with code snippets. For find-usages it asks the language servers you have installed (kotlin-lsp, jdtls, gopls, rust-analyzer, typescript-language-server, pyright, clangd, sourcekit-lsp), so it tells apart two functions with the same name, the way an IDE does. See [Precise usages](#precise-usages).
+
+Languages: Kotlin, Java, Go, Rust, TypeScript, JavaScript, Python, C, C++, Swift and every other language ast-index and text search cover. Works for a monorepo and for a folder of several repositories.
 
 uals is not a hosted service. It has no account, no server of its own and no telemetry. It opens no network ports.
 
@@ -185,17 +189,55 @@ The server name is `uals`. Claude Code shows the tools as `mcp__uals__search`, `
 | `offset` | 0 | Results to skip: the `next: offset=N` of the previous page. |
 | `format` | `concise` | `concise`, `detailed` (adds scores, raw source ranks and longer snippets) or `json`. |
 
-**`usages`** lists every usage of a symbol, grouped by repository and file. It uses the ast-index index of a repository when there is one, and a whole-word text search otherwise. Each repository names the source that answered.
+**`usages`** lists every usage of a symbol, grouped by repository and file. It uses the ast-index index of a repository when there is one, and a whole-word text search otherwise. Each repository names the source that answered. When a language server is installed, the answer also says which declaration each usage refers to; see [Precise usages](#precise-usages).
 
 | Parameter | Default | Meaning |
 |---|---|---|
-| `symbol` | required | The symbol, for example `HostSelector` or `markFailed`. |
+| `symbol` | required | The symbol, for example `HostSelector` or `markFailed`. `Store.load` asks for the `load` declared in `Store` only. |
 | `workspace`, `repos` | as in `search` | |
 | `limit` | 100 | Usages per page. At most 1000. |
 | `offset` | 0 | Usages to skip. |
 | `format` | `concise` | As in `search`. |
 
 **`status`** shows, for every repository, whether each backend has an index, when it was updated, and why a backend is not available. Parameters: `workspace`, `repos`, `format`.
+
+### Precise usages
+
+A name search cannot tell two functions called `load` apart. A language server can, the way an IDE does. When the server of a file's language is installed, `usages` asks it which usages refer to which declaration:
+
+```text
+usages of "Cache.stop" · 3 in 3 files · complete
+definitions:
+  [1] function Cache.stop · /work/app/src/main/kotlin/demo/Cache.kt:4 · kotlin-lsp: 2 usages
+  [2] function Cache.stop · /work/web/src/store.ts:6 · typescript-language-server: 1 usage
+app (ast-index)
+  /work/app/src/main/java/demo/Other.java: 5[1]
+  /work/app/src/main/kotlin/demo/Use.kt: 6[1]
+web (ast-index)
+  /work/web/src/use.ts: 5[2]
+```
+
+- `[n]` after a line number is the declaration the usage refers to. A line without `[n]` was found by name only.
+- `Container.name` keeps the usages of that declaration. A usage by name that the server did not return, in a file the server loaded, refers to another declaration and is left out. Without a container, every usage stays.
+- The declarations come from the ast-index index, so precise usages need one (`uals refresh`).
+- A server that is missing, still loading, or cannot load the project does not break the answer: its declaration says `by name:` and why, and its usages are found by name.
+
+| Language | Server | Project root (nearest folder with) |
+|---|---|---|
+| Kotlin | `kotlin-lsp` | `settings.gradle(.kts)`, else `build.gradle(.kts)` or `pom.xml` |
+| Java | `jdtls` | the same as Kotlin |
+| Go | `gopls` | `go.work`, else `go.mod` |
+| Rust | `rust-analyzer` | `Cargo.toml` |
+| TypeScript, JavaScript | `typescript-language-server` | `tsconfig.json` or `jsconfig.json`, else `package.json` |
+| Python | `basedpyright-langserver` or `pyright-langserver` | `pyrightconfig.json`, `pyproject.toml`, `setup.py` or `setup.cfg` |
+| C, C++, Objective-C | `clangd` | `compile_commands.json`, `compile_flags.txt` or `.clangd`, else `CMakeLists.txt` |
+| Swift | `sourcekit-lsp` | `Package.swift` |
+
+**Several languages in one folder.** uals runs one server per language and project. A folder with a Go module and an Android project runs gopls, kotlin-lsp and jdtls side by side, each on its own project. kotlin-lsp also returns the Java callers of a Kotlin declaration.
+
+**Start and memory.** A server starts on the first `usages` call that needs it. That call waits at most `lsp.ready_wait_ms` (10 s) for the project to load. A large Gradle project takes longer, so the first answers are by name until kotlin-lsp is ready. A server stops after `lsp.idle_minutes` (30) without calls. kotlin-lsp takes about 1.6 GB per project. `status` lists the running servers; `doctor` lists the installed ones.
+
+**Limits.** clangd needs a `compile_commands.json` and sourcekit-lsp a built index; when they return nothing, uals does not trust the empty answer and keeps the usages by name. Name search finds one usage per line, so a line with two calls gets the mark of one of them. kotlin-lsp cannot load Android Gradle projects yet ([Kotlin/kotlin-lsp#253](https://github.com/Kotlin/kotlin-lsp/issues/253)); uals then reports the failure and answers by name.
 
 ### Command line
 
@@ -208,6 +250,7 @@ uals search '/retry\(.*\)/' --path 'src/**/*.kt'  # a regex in some files
 uals search '"connection refused"' --limit 5      # an exact string
 uals search HostSelector --repo android --format json
 uals usages markFailed --workspace ~/code
+uals usages Store.load                            # only the load declared in Store
 uals status
 uals refresh                  # update the indexes
 uals refresh --full           # rebuild them
@@ -302,6 +345,19 @@ custom_extensions = [".kts"]
 [ast_index]
 binary = "ast-index"
 update_on_start = true          # update existing ast-index indexes when `uals mcp` starts
+
+[lsp]                           # precise usages; see "Precise usages"
+enabled = true
+ready_wait_ms = 10000           # how long a call waits for a server that is loading its project
+request_ms = 20000              # deadline of one request to a loaded server
+idle_minutes = 30               # a server unused this long is stopped
+
+# [lsp.servers.kotlin-lsp]      # one table per server, by its name; every key is optional
+# enabled = true
+# command = ["kotlin-lsp", "--stdio", "--data-sharing=none", "--system-path={state}"]   # {state}: a per-project folder under the user cache
+# env = {}
+# pass_env = []
+# java_home = "/path/to/jdk-17" # JVM servers (kotlin-lsp, jdtls); default: JAVA_HOME of uals
 
 [lexical]
 max_matches_per_file = 10

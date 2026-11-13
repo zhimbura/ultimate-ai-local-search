@@ -7,7 +7,9 @@
 //! loses only its own hits; `SearchResponse::backends` says what happened to every (repository,
 //! backend) pair.
 //!
-//! `usages`: per repository, the first usage source that answers (ast-index, then lexical).
+//! `usages`: per repository, the first usage source that answers (ast-index, then lexical). When
+//! language servers are configured, the declarations of the name are looked up and each server
+//! says which usages refer to which declaration (see `precise`).
 
 use std::any::Any;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
@@ -22,16 +24,18 @@ use futures::FutureExt;
 use futures::future::{BoxFuture, join_all};
 use tokio::task::{JoinHandle, JoinSet};
 use tracing::{debug, warn};
-use uals_core::backend::{BackendError, SearchBackend, SpanProvider, UsageSource};
+use uals_core::backend::{BackendError, DefinitionSource, ReferenceResolver, SearchBackend, SpanProvider, UsageSource};
 use uals_core::classify::classify;
 use uals_core::config::Config;
 use uals_core::fuse::fuse;
 use uals_core::render::{self, Format};
 use uals_core::types::{
-    BackendAnswer, BackendId, BackendReport, BackendResult, BackendStatus, Hit, IndexState, QueryKind, Repo,
-    RepoUsages, SearchAllAnswer, SearchRequest, SearchResponse, SymbolSpan, UsageAnswer, UsagesResponse, Workspace,
+    BackendAnswer, BackendId, BackendReport, BackendResult, BackendStatus, Definition, DefinitionReport, Hit,
+    IndexState, QueryKind, Repo, RepoUsages, ResolvedReferences, SearchAllAnswer, SearchRequest, SearchResponse,
+    SymbolSpan, UsageAnswer, UsagesResponse, Workspace,
 };
 
+use crate::precise;
 use crate::snippets;
 
 /// No backend is asked for more hits than this per repository.
@@ -53,6 +57,10 @@ const WARM_DEADLINE: Duration = Duration::from_secs(15);
 const REFRESH_DEADLINE: Duration = Duration::from_secs(3_600);
 /// An incremental ast-index update takes seconds; this only stops a hung one.
 const AST_INDEX_UPDATE_DEADLINE: Duration = Duration::from_secs(600);
+/// Finding the declarations of a name is one indexed query per repository.
+const DEFINITIONS_DEADLINE: Duration = Duration::from_secs(3);
+/// Added to the language-server limits of `LspConfig`, so the pool reports its own timeouts.
+const REFERENCES_MARGIN: Duration = Duration::from_secs(2);
 
 /// The backends the orchestrator asks.
 #[derive(Clone, Default)]
@@ -63,6 +71,11 @@ pub struct Backends {
     pub usages: Vec<Arc<dyn UsageSource>>,
     /// Symbol extents for the merge step. Without it, hits merge by line windows only.
     pub spans: Option<Arc<dyn SpanProvider>>,
+    /// Declarations of a name, for precise `usages`. Precise usages need both this and
+    /// `references`.
+    pub definitions: Option<Arc<dyn DefinitionSource>>,
+    /// Language servers that resolve the usages of one declaration.
+    pub references: Option<Arc<dyn ReferenceResolver>>,
 }
 
 /// What `search` is asked.
@@ -242,9 +255,83 @@ impl Orchestrator {
         }
         let limit = params.limit.unwrap_or(DEFAULT_USAGES_LIMIT).clamp(1, MAX_USAGES_LIMIT);
         let scan_limit = params.offset.saturating_add(limit).max(USAGES_SCAN_LIMIT);
-        let answers = join_all(repos.iter().map(|repo| self.usages_in(repo, symbol, scan_limit))).await;
-        let answers = answers.into_iter().collect::<Result<Vec<_>>>()?;
-        Ok(usages_page(symbol, answers, params.offset, limit))
+        let (container, name) = precise::split_qualifier(symbol);
+        let definitions = self.definitions(repos, container, name).await;
+        // A qualified symbol searches by its bare name only when its declaration was found;
+        // otherwise it is searched as typed, as without language servers.
+        let search = if definitions.is_empty() { symbol } else { name };
+        let answers = join_all(repos.iter().map(|repo| self.usages_in(repo, search, scan_limit))).await;
+        let mut answers = answers.into_iter().collect::<Result<Vec<_>>>()?;
+        let reports = match &self.backends.references {
+            Some(resolver) if !definitions.is_empty() => {
+                let resolved = self.resolve(resolver, repos, &definitions).await;
+                let mut found: Vec<&mut RepoUsages> = answers.iter_mut().map(|answer| &mut answer.found).collect();
+                precise::merge(repos, &mut found, definitions, resolved, container.is_some())
+            }
+            _ => Vec::new(),
+        };
+        Ok(usages_page(symbol, answers, reports, params.offset, limit))
+    }
+
+    /// The declarations named `name` in `repos`, those inside `container` when it is given, at most
+    /// `precise::MAX_DEFINITIONS`. Empty when precise usages are not configured.
+    async fn definitions(&self, repos: &[Repo], container: Option<&str>, name: &str) -> Vec<Definition> {
+        let (Some(source), Some(_)) = (&self.backends.definitions, &self.backends.references) else {
+            return Vec::new();
+        };
+        let mut batch = Batch::new();
+        for repo in repos {
+            let (source, repo_owned, name) = (Arc::clone(source), repo.clone(), name.to_owned());
+            batch.push(
+                repo.name.clone(),
+                Call::new(DEFINITIONS_DEADLINE, async move { source.definitions(&repo_owned, &name).await }),
+            );
+        }
+        let mut definitions = Vec::new();
+        for (repo, timed) in batch.run().await {
+            match timed.result {
+                Ok(found) => definitions.extend(found),
+                Err(status) => debug!(repo, ?status, "no declarations; usages are by name"),
+            }
+        }
+        if let Some(container) = container {
+            definitions.retain(|definition| definition.container.as_deref() == Some(container));
+        }
+        if definitions.len() > precise::MAX_DEFINITIONS {
+            debug!(name, found = definitions.len(), "too many declarations; the first ones are resolved");
+            definitions.truncate(precise::MAX_DEFINITIONS);
+        }
+        definitions
+    }
+
+    /// Asks the language servers about every definition at once; one answer per definition.
+    async fn resolve(
+        &self,
+        resolver: &Arc<dyn ReferenceResolver>,
+        repos: &[Repo],
+        definitions: &[Definition],
+    ) -> Vec<Result<ResolvedReferences, BackendStatus>> {
+        // A cold call starts the server (`initialize`, up to `request_ms`), waits for the project
+        // (`ready_wait_ms`) and asks (`request_ms`). A shorter deadline would kill a slow server
+        // while it starts, on every call.
+        let lsp = &self.config.lsp;
+        let budget = lsp.ready_wait_ms.saturating_add(lsp.request_ms.saturating_mul(2));
+        let deadline = Duration::from_millis(budget) + REFERENCES_MARGIN;
+        let calls = definitions.iter().map(|definition| {
+            let repo = repos.iter().find(|repo| repo.name == definition.repo).cloned();
+            let (resolver, definition) = (Arc::clone(resolver), definition.clone());
+            Call::new(deadline, async move {
+                let repo =
+                    repo.ok_or_else(|| BackendError::Failed(format!("unknown repository {}", definition.repo)))?;
+                resolver.references(&repo, &definition).await
+            })
+        });
+        run_all(calls.collect()).await.into_iter().map(|timed| timed.result).collect()
+    }
+
+    /// One line per language server, for `status`.
+    pub fn language_servers(&self) -> Vec<String> {
+        self.backends.references.as_ref().map(|resolver| resolver.servers()).unwrap_or_default()
     }
 
     /// The index state of every search backend in every repository.
@@ -597,7 +684,13 @@ fn fallback_note(failures: &[(BackendId, BackendStatus)]) -> Option<String> {
 
 /// One page of the usages of all repositories together; each usage lands in its repository's
 /// list, and `total` counts all of them.
-fn usages_page(symbol: &str, answers: Vec<RepoAnswer>, offset: usize, limit: usize) -> UsagesResponse {
+fn usages_page(
+    symbol: &str,
+    answers: Vec<RepoAnswer>,
+    definitions: Vec<DefinitionReport>,
+    offset: usize,
+    limit: usize,
+) -> UsagesResponse {
     let mut complete = true;
     let mut repos = Vec::with_capacity(answers.len());
     let mut all = Vec::new();
@@ -613,7 +706,7 @@ fn usages_page(symbol: &str, answers: Vec<RepoAnswer>, offset: usize, limit: usi
             repo.usages.push(usage);
         }
     }
-    UsagesResponse { symbol: symbol.to_owned(), total, offset, repos, next_offset, complete }
+    UsagesResponse { symbol: symbol.to_owned(), total, offset, repos, next_offset, complete, definitions }
 }
 
 /// The status of an answer: `Partial` wins over `Stale` and carries both reasons.

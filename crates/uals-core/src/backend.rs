@@ -12,7 +12,8 @@ use async_trait::async_trait;
 use thiserror::Error;
 
 use crate::types::{
-    BackendAnswer, BackendId, IndexState, QueryKind, Repo, SearchAllAnswer, SearchRequest, SymbolSpan, UsageAnswer,
+    BackendAnswer, BackendId, Definition, IndexState, QueryKind, Repo, ResolvedReferences, SearchAllAnswer,
+    SearchRequest, SymbolSpan, UsageAnswer,
 };
 
 /// Why a backend could not answer.
@@ -74,6 +75,28 @@ pub trait UsageSource: Send + Sync {
     fn id(&self) -> BackendId;
 
     async fn usages(&self, repo: &Repo, symbol: &str, limit: usize) -> Result<UsageAnswer, BackendError>;
+}
+
+/// Finds where a symbol is declared, for `usages` to ask a language server about each declaration.
+#[async_trait]
+pub trait DefinitionSource: Send + Sync {
+    /// Every declaration named exactly `name` in `repo`, imports excluded, each with its container.
+    async fn definitions(&self, repo: &Repo, name: &str) -> Result<Vec<Definition>, BackendError>;
+}
+
+/// Asks language servers which usages refer to one definition.
+#[async_trait]
+pub trait ReferenceResolver: Send + Sync {
+    /// The usages of `definition`, which lies in `repo`. The project the server loads is the
+    /// nearest folder of `repo` with a build file of the definition's language, else `repo` itself.
+    /// `Unavailable` when no server handles its file, when the server is still loading the project
+    /// (the call starts it, so a later call can succeed), or when the server could not load it.
+    async fn references(&self, repo: &Repo, definition: &Definition) -> Result<ResolvedReferences, BackendError>;
+
+    /// One line per language server this process runs, for `status`.
+    fn servers(&self) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 /// Gives symbol extents so the merge step can group hits by the symbol they fall into.

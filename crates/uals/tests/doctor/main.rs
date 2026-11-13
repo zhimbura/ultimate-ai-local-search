@@ -49,14 +49,38 @@ fn without_a_config_file_the_defaults_are_checked() {
     assert_eq!(lines[0], "✓ config: no file: defaults");
     assert!(lines[1].starts_with("✓ ast-index: 3.56.0 at "), "{}", lines[1]);
     assert!(lines[2].starts_with("✓ semble: 0.7.3 at "), "{}", lines[2]);
-    assert!(lines[3].starts_with("! mcp: "), "{}", lines[3]);
+    assert_eq!(lines[3], "! lsp: no language server found: usages are found by name");
+    assert!(lines[4].starts_with("    hint: install the language server"), "{}", lines[4]);
+    assert!(lines[5].starts_with("! mcp: "), "{}", lines[5]);
     assert!(
-        lines[4].starts_with("    hint: in the uals checkout: scripts/configure-mcp.sh --uals-bin "),
+        lines[6].starts_with("    hint: in the uals checkout: scripts/configure-mcp.sh --uals-bin "),
         "{}",
-        lines[4]
+        lines[6]
     );
-    assert_eq!(lines[5], "3 ok, 1 warn, 0 fail, 0 skip");
-    assert_eq!(lines.len(), 6);
+    assert_eq!(lines[7], "3 ok, 2 warn, 0 fail, 0 skip");
+    assert_eq!(lines.len(), 8);
+}
+
+#[test]
+fn installed_language_servers_are_listed() {
+    let sandbox = Sandbox::new();
+    sandbox.versioned("gopls", "golang.org/x/tools/gopls v0.21.0");
+    sandbox.versioned("pyright-langserver", "pyright 1.1.400");
+
+    let run = sandbox.doctor(None, &[]);
+
+    let line = run.check("lsp");
+    assert!(line.starts_with("✓ lsp: found gopls, pyright; not installed: kotlin-lsp, jdtls, rust-analyzer"), "{line}");
+}
+
+#[test]
+fn precise_usages_turned_off_skip_the_language_servers() {
+    let sandbox = Sandbox::new();
+    let config = sandbox.config("[lsp]\nenabled = false\n");
+
+    let run = sandbox.doctor(Some(&config), &[]);
+
+    assert_eq!(run.check("lsp"), "- lsp: precise usages are off (lsp.enabled = false)");
 }
 
 #[test]
@@ -72,10 +96,10 @@ fn a_broken_config_fails_its_check_and_skips_the_rest() {
     assert!(stdout.starts_with("✗ config: invalid config "), "{stdout}");
     assert!(stdout.contains("nonsense"), "the parser's text is shown: {stdout}");
     assert!(stdout.contains("\n    hint: "), "{stdout}");
-    for name in ["ast-index", "semantic", "mcp"] {
+    for name in ["ast-index", "semantic", "lsp", "mcp"] {
         assert!(run.check(name).starts_with(&format!("- {name}: not checked")), "{name}");
     }
-    assert!(stdout.ends_with("0 ok, 0 warn, 1 fail, 3 skip\n"), "{stdout}");
+    assert!(stdout.ends_with("0 ok, 0 warn, 1 fail, 4 skip\n"), "{stdout}");
 }
 
 #[test]
@@ -695,11 +719,12 @@ fn json_output_has_the_checks_in_order_and_the_verdict() {
             "claude-context package",
             "claude-context embedder",
             "claude-context milvus",
+            "lsp",
             "mcp"
         ]
     );
     let statuses: Vec<&str> = checks.iter().map(|check| check["status"].as_str().unwrap()).collect();
-    assert_eq!(statuses, ["ok", "ok", "ok", "ok", "fail", "ok", "ok"]);
+    assert_eq!(statuses, ["ok", "ok", "ok", "ok", "fail", "ok", "warn", "ok"]);
     assert!(checks[0].get("hint").is_none(), "an ok check has no hint");
     assert!(checks[4]["hint"].as_str().unwrap().contains("EMBEDDING_DIMENSION=1024"));
     assert!(checks[4]["detail"].as_str().unwrap().contains("1024"));

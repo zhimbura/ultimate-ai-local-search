@@ -4,8 +4,8 @@ use pretty_assertions::assert_eq;
 use uals_core::config::OutputConfig;
 use uals_core::render::{Format, page, render_search, render_usages, snippet_range};
 use uals_core::types::{
-    BackendId, BackendReport, BackendStatus, FusedHit, LineRange, QueryKind, RepoUsages, SearchResponse, Snippet,
-    SourceRef, SymbolKind, Usage, UsagesResponse,
+    BackendId, BackendReport, BackendStatus, Definition, DefinitionReport, FusedHit, LineRange, QueryKind, RepoUsages,
+    SearchResponse, Snippet, SourceRef, SymbolKind, Usage, UsagesResponse,
 };
 
 const HOST_SELECTOR: &str = "/ws/sample-android/network/src/main/kotlin/sample/network/HostSelector.kt";
@@ -239,7 +239,7 @@ fn page_bounds() {
 }
 
 fn usage(repo: &str, path: &str, line: u32, context: Option<&str>) -> Usage {
-    Usage { repo: repo.into(), path: path.into(), line, context: context.map(Into::into) }
+    Usage { repo: repo.into(), path: path.into(), line, context: context.map(Into::into), definition: None }
 }
 
 fn usages_response() -> UsagesResponse {
@@ -272,6 +272,7 @@ fn usages_response() -> UsagesResponse {
         ],
         next_offset: None,
         complete: true,
+        definitions: Vec::new(),
     }
 }
 
@@ -286,6 +287,50 @@ sample-web (lexical: ast-index unavailable (no index))
   /ws/sample-web/a.ts: 1
   /ws/sample-web/b.ts: 2";
     assert_eq!(render_usages(&usages_response(), Format::Concise, &OutputConfig::default()), expected);
+}
+
+#[test]
+fn usages_name_their_definitions() {
+    let mut response = usages_response();
+    response.repos.truncate(1);
+    response.total = 3;
+    response.repos[0].usages[0].definition = Some(0);
+    response.repos[0].usages[2].definition = Some(0);
+    let definition = |path: &str, line, container: &str| Definition {
+        repo: "sample-android".into(),
+        path: path.into(),
+        line,
+        name: "HostSelector".into(),
+        kind: SymbolKind::Class,
+        container: Some(container.into()),
+    };
+    response.definitions = vec![
+        DefinitionReport {
+            definition: definition(HOST_SELECTOR, 3, "network"),
+            server: Some("kotlin-lsp".into()),
+            status: BackendStatus::Ok,
+            usages: 2,
+        },
+        DefinitionReport {
+            definition: definition("/ws/sample-android/old/HostSelector.kt", 1, "old"),
+            server: None,
+            status: BackendStatus::Unavailable {
+                reason: "kotlin-lsp is still loading /ws/sample-android\n  (4s so far)".into(),
+            },
+            usages: 0,
+        },
+    ];
+    let expected = format!(
+        "\
+usages of \"HostSelector\" · 3 in 2 files · complete
+definitions:
+  [1] class network.HostSelector · {HOST_SELECTOR}:3 · kotlin-lsp: 2 usages
+  [2] class old.HostSelector · /ws/sample-android/old/HostSelector.kt:1 · by name: kotlin-lsp is still loading /ws/sample-android (4s so far)
+sample-android (ast-index)
+  /ws/sample-android/app/App.kt: 9[1], 14
+  /ws/sample-android/app/Main.kt: 3[1]"
+    );
+    assert_eq!(render_usages(&response, Format::Concise, &OutputConfig::default()), expected);
 }
 
 #[test]
@@ -348,6 +393,7 @@ fn empty_usages() {
         }],
         next_offset: None,
         complete: true,
+        definitions: Vec::new(),
     };
     assert_eq!(
         render_usages(&response, Format::Concise, &OutputConfig::default()),

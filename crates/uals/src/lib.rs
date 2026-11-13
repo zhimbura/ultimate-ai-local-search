@@ -8,6 +8,7 @@ pub mod hook;
 pub mod lazy_caller;
 pub mod mcp;
 pub mod orchestrator;
+mod precise;
 pub mod report;
 pub mod setup;
 mod snippets;

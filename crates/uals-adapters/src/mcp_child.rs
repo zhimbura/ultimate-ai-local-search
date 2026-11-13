@@ -55,7 +55,7 @@ const STDERR_DRAIN_GRACE: Duration = Duration::from_millis(50);
 /// Variables every child receives from the current environment, when set.
 const BASE_ENV_VARS: [&str; 6] = ["PATH", "HOME", "USER", "TMPDIR", "LANG", "LC_ALL"];
 
-type StderrTail = Arc<StdMutex<VecDeque<String>>>;
+pub(crate) type StderrTail = Arc<StdMutex<VecDeque<String>>>;
 
 /// The threads that send SIGKILL to the stopped process groups still alive after SIGTERM.
 static GROUP_KILLERS: StdMutex<Vec<std::thread::JoinHandle<()>>> = StdMutex::new(Vec::new());
@@ -336,7 +336,7 @@ fn backoff_for(failures: u32) -> Option<Duration> {
 
 /// The executable to start: a path with folders as is, a bare name looked up in the child's
 /// `PATH`.
-fn resolve_program(spec: &ChildSpec, env: &BTreeMap<String, String>) -> Result<PathBuf, BackendError> {
+pub(crate) fn resolve_program(spec: &ChildSpec, env: &BTreeMap<String, String>) -> Result<PathBuf, BackendError> {
     if spec.program.components().count() > 1 {
         return Ok(spec.program.clone());
     }
@@ -434,7 +434,7 @@ fn to_output(result: &rmcp::model::CallToolResult) -> ToolOutput {
 }
 
 /// Reads the child's stderr to the end: debug log lines plus a ring of the last few for errors.
-async fn drain_stderr(name: String, stderr: impl AsyncRead + Unpin, tail: StderrTail) {
+pub(crate) async fn drain_stderr(name: String, stderr: impl AsyncRead + Unpin, tail: StderrTail) {
     let mut reader = BufReader::new(stderr);
     let mut buf = Vec::new();
     loop {
@@ -459,7 +459,7 @@ async fn drain_stderr(name: String, stderr: impl AsyncRead + Unpin, tail: Stderr
 }
 
 /// The server's last stderr lines as an error-message suffix, empty when it printed nothing.
-fn stderr_suffix(tail: &StdMutex<VecDeque<String>>) -> String {
+pub(crate) fn stderr_suffix(tail: &StdMutex<VecDeque<String>>) -> String {
     let text = tail.lock().map(|tail| tail.iter().cloned().collect::<Vec<_>>().join("\n")).unwrap_or_default();
     if text.is_empty() { String::new() } else { format!("; server stderr (last lines):\n{text}") }
 }
@@ -467,13 +467,13 @@ fn stderr_suffix(tail: &StdMutex<VecDeque<String>>) -> String {
 /// Stops the server's process group when dropped: SIGTERM at once, SIGKILL after [`KILL_GRACE`]
 /// when the group is still there. The whole group is signalled, never only the child pid, so
 /// helper processes die too.
-struct GroupGuard {
+pub(crate) struct GroupGuard {
     pgid: i32,
     terminated: AtomicBool,
 }
 
 impl GroupGuard {
-    fn new(pgid: i32) -> Self {
+    pub(crate) fn new(pgid: i32) -> Self {
         Self { pgid, terminated: AtomicBool::new(false) }
     }
 
@@ -483,7 +483,7 @@ impl GroupGuard {
     }
 
     /// Whether the process group still has a process.
-    fn exists(&self) -> bool {
+    pub(crate) fn exists(&self) -> bool {
         group_exists(self.pgid)
     }
 
@@ -491,7 +491,7 @@ impl GroupGuard {
     /// happens while the runtime shuts down; [`wait_for_stopped_groups`] waits for that thread.
     /// Only the first call does anything.
     #[cfg(unix)]
-    fn terminate(&self) {
+    pub(crate) fn terminate(&self) {
         use nix::sys::signal::{Signal, killpg};
         use nix::unistd::Pid;
         if self.pgid <= 0 || self.terminated.swap(true, Ordering::SeqCst) {
@@ -512,7 +512,7 @@ impl GroupGuard {
 
     /// Windows: the job object and `KillOnDrop` stop the tree when the transport is dropped.
     #[cfg(not(unix))]
-    fn terminate(&self) {}
+    pub(crate) fn terminate(&self) {}
 }
 
 impl Drop for GroupGuard {
