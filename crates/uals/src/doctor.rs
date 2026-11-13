@@ -17,6 +17,7 @@ use anyhow::Result;
 use serde::Serialize;
 use serde_json::Value;
 use tokio::process::Command;
+use uals_adapters::lsp::Located;
 use uals_core::config::{AstIndexConfig, Config, LspConfig, SemanticChoice};
 
 use crate::args::FormatArg;
@@ -189,16 +190,28 @@ fn check_language_servers(config: &LspConfig) -> Check {
     if !config.enabled {
         return Check::skip(NAME, "precise usages are off (lsp.enabled = false)");
     }
-    let (found, missing): (Vec<_>, Vec<_>) =
-        uals_adapters::lsp::locate(config).into_iter().partition(|(_, located)| located.is_ok());
-    let names =
-        |list: &[(&str, Result<PathBuf, String>)]| list.iter().map(|(name, _)| *name).collect::<Vec<_>>().join(", ");
-    let hint = "install the language server of each language you work in; see «Precise usages» in the README";
-    match (found.is_empty(), missing.is_empty()) {
-        (true, _) => Check::warn(NAME, "no language server found: usages are found by name", hint),
-        (false, true) => Check::ok(NAME, format!("found {}", names(&found))),
-        (false, false) => Check::ok(NAME, format!("found {}; not installed: {}", names(&found), names(&missing))),
+    let mut found = Vec::new();
+    let mut off = Vec::new();
+    let mut missing = Vec::new();
+    for (name, located) in uals_adapters::lsp::locate(config) {
+        match located {
+            Located::Found(_) => found.push(name),
+            Located::Off => off.push(name),
+            Located::Missing(_) => missing.push(name),
+        }
     }
+    let hint = "install the language server of each language you work in; see «Precise usages» in the README";
+    if found.is_empty() {
+        return Check::warn(NAME, "no language server found: usages are found by name", hint);
+    }
+    let mut text = format!("found {}", found.join(", "));
+    if !off.is_empty() {
+        text.push_str(&format!("; off: {}", off.join(", ")));
+    }
+    if !missing.is_empty() {
+        text.push_str(&format!("; not installed: {}", missing.join(", ")));
+    }
+    Check::ok(NAME, text)
 }
 
 /// Whether Claude Code knows uals, and whether a second claude-context server runs next to it.

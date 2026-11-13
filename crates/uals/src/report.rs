@@ -71,11 +71,12 @@ pub fn render_status(
             let _ = write!(out, "\n  {}", state_line(state, now_ms));
         }
     }
-    if !servers.is_empty() {
-        out.push_str("\nlanguage servers:");
-        for server in servers {
-            let _ = write!(out, "\n  {server}");
-        }
+    out.push_str("\nlanguage servers:");
+    if servers.is_empty() {
+        out.push_str(" none running; each starts on the first `usages` call that needs it");
+    }
+    for server in servers {
+        let _ = write!(out, "\n  {server}");
     }
     out
 }
@@ -225,7 +226,8 @@ mod tests {
              ast-index: indexed, updated 3 h ago, stale (2 files changed)\n  \
              semble: not indexed (not checked)\n\
              web · /ws/web\n  \
-             ast-index: not indexed"
+             ast-index: not indexed\n\
+             language servers: none running; each starts on the first `usages` call that needs it"
         );
     }
 

@@ -53,7 +53,7 @@ impl MixedRepo {
         ]);
         env.extend(extra.iter().map(|(k, v)| ((*k).to_owned(), (*v).to_owned())));
         let command = vec!["python3".into(), FAKE.into(), "--system-path={state}".into()];
-        (name.to_owned(), LspServerConfig { command, env, ..LspServerConfig::default() })
+        (name.to_owned(), LspServerConfig { enabled: Some(true), command, env, ..LspServerConfig::default() })
     }
 
     fn log_path(&self, name: &str) -> PathBuf {
@@ -233,7 +233,7 @@ async fn a_project_that_does_not_load_is_not_retried_at_once() {
 async fn files_without_a_server_and_turned_off_servers_are_unavailable() {
     let fx = MixedRepo::new();
     let state = tempfile::tempdir().unwrap();
-    let off = LspServerConfig { enabled: false, ..LspServerConfig::default() };
+    let off = LspServerConfig { enabled: Some(false), ..LspServerConfig::default() };
     let pool = pool(vec![("gopls".into(), off)], 1_000, state.path());
 
     let markdown = unavailable(pool.references(&fx.repo, &fx.definition("README.md", 1, "x")).await);
@@ -241,6 +241,37 @@ async fn files_without_a_server_and_turned_off_servers_are_unavailable() {
 
     assert!(markdown.starts_with("no language server handles "), "{markdown}");
     assert_eq!(go, "gopls is turned off in the config");
+}
+
+#[tokio::test]
+async fn the_gradle_servers_are_off_unless_turned_on() {
+    let fx = MixedRepo::new();
+    let state = tempfile::tempdir().unwrap();
+    let pool = pool(Vec::new(), 1_000, state.path());
+
+    let kotlin = unavailable(pool.references(&fx.repo, &fx.definition("app/Store.kt", 2, "load")).await);
+
+    assert_eq!(
+        kotlin,
+        "kotlin-lsp is off by default (loading a Gradle project takes minutes); turn it on with `enabled = true` \
+         under [lsp.servers.kotlin-lsp]"
+    );
+}
+
+#[tokio::test]
+async fn jdtls_is_told_to_keep_its_files_out_of_the_project() {
+    let fx = MixedRepo::new();
+    std::fs::write(fx.path("app/Store.java"), "class Store {\n    void load() {}\n}\n").unwrap();
+    let state = tempfile::tempdir().unwrap();
+    let pool = pool(vec![fx.server("jdtls", "app/Use.kt", &[("FAKE_PROGRESS", "full")])], 10_000, state.path());
+
+    pool.references(&fx.repo, &fx.definition("app/Store.java", 2, "load")).await.unwrap();
+
+    let initialize = fx.log("jdtls").into_iter().find(|m| m["method"] == "initialize").unwrap();
+    let java = &initialize["params"]["initializationOptions"]["settings"]["java"];
+    assert_eq!(java["import"]["generatesMetadataFilesAtProjectRoot"], false);
+    assert_eq!(java["autobuild"]["enabled"], false);
+    pool.shutdown().await;
 }
 
 #[tokio::test]

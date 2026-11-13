@@ -173,6 +173,7 @@ impl Inner {
         Ok(Launch {
             child,
             load_failures: spec.load_failures.iter().map(|text| (*text).to_owned()).collect(),
+            initialization_options: initialization_options(spec),
             root_uri: file_uri(&slot.root)?,
             root_name: folder_label(&slot.root),
             state_lock,
@@ -312,8 +313,11 @@ impl ReferenceResolver for LspPool {
         let spec = languages::server_for(&definition.path).ok_or_else(|| {
             BackendError::Unavailable(format!("no language server handles {}", definition.path.display()))
         })?;
-        if !inner.config.enabled || !inner.server_config(spec).enabled {
-            return Err(BackendError::Unavailable(format!("{} is turned off in the config", spec.name)));
+        if !inner.config.enabled {
+            return Err(BackendError::Unavailable("precise usages are off in the config".to_owned()));
+        }
+        if let Some(off) = turned_off(spec, &inner.server_config(spec)) {
+            return Err(BackendError::Unavailable(off));
         }
         let boundary = canonical(&repo.root);
         let path = canonical(&definition.path);
@@ -383,18 +387,54 @@ impl ReferenceResolver for LspPool {
     }
 }
 
+/// Where a known server's program is, for `uals doctor`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Located {
+    Found(PathBuf),
+    /// Not started: off by default or in the config.
+    Off,
+    /// Not installed; the reason names the programs looked for.
+    Missing(String),
+}
+
 /// Where each known server's program is, or why it is not used: for `uals doctor`.
-pub fn locate(config: &LspConfig) -> Vec<(&'static str, Result<PathBuf, String>)> {
+pub fn locate(config: &LspConfig) -> Vec<(&'static str, Located)> {
     languages::SERVERS
         .iter()
         .map(|spec| {
             let server = config.servers.get(spec.name).cloned().unwrap_or_default();
-            if !server.enabled {
-                return (spec.name, Err("turned off in the config".to_owned()));
+            if turned_off(spec, &server).is_some() {
+                return (spec.name, Located::Off);
             }
-            (spec.name, installed_command(spec, &server, None).map(|(_, program)| program).map_err(|e| error_text(&e)))
+            let located = match installed_command(spec, &server, None) {
+                Ok((_, program)) => Located::Found(program),
+                Err(error) => Located::Missing(error_text(&error)),
+            };
+            (spec.name, located)
         })
         .collect()
+}
+
+/// Why `spec` is not started under `config`, if it is not.
+fn turned_off(spec: &ServerSpec, config: &LspServerConfig) -> Option<String> {
+    match config.enabled {
+        Some(true) => None,
+        Some(false) => Some(format!("{} is turned off in the config", spec.name)),
+        None if spec.on_by_default => None,
+        None => Some(format!(
+            "{} is off by default (loading a Gradle project takes minutes); turn it on with \
+             `enabled = true` under [lsp.servers.{}]",
+            spec.name, spec.name
+        )),
+    }
+}
+
+/// The `initializationOptions` of `spec`; null when it has none.
+fn initialization_options(spec: &ServerSpec) -> serde_json::Value {
+    if spec.initialization_options.is_empty() {
+        return serde_json::Value::Null;
+    }
+    serde_json::from_str(spec.initialization_options).unwrap_or(serde_json::Value::Null)
 }
 
 /// The first command of `spec` (or the one `config` sets) whose program is installed, with the

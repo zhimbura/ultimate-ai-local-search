@@ -242,11 +242,13 @@ impl Default for LspConfig {
 }
 
 /// Overrides for one language server. Every field is optional.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct LspServerConfig {
-    /// False never starts this server.
-    pub enabled: bool,
+    /// True starts the server when a `usages` call needs it, false never does. Unset: the
+    /// server's default, which is off for kotlin-lsp and jdtls (loading a Gradle project takes
+    /// minutes and gigabytes) and on for the others.
+    pub enabled: Option<bool>,
     /// Executable and arguments; empty means the built-in command.
     pub command: Vec<String>,
     /// Literal environment variables of the server.
@@ -256,12 +258,6 @@ pub struct LspServerConfig {
     /// JDK the JVM servers use to load Gradle and Maven projects; the `JAVA_HOME` of uals when
     /// unset.
     pub java_home: Option<PathBuf>,
-}
-
-impl Default for LspServerConfig {
-    fn default() -> Self {
-        Self { enabled: true, command: Vec::new(), env: BTreeMap::new(), pass_env: Vec::new(), java_home: None }
-    }
 }
 
 /// Settings of the in-process lexical search. Defaults come from spike S3 (`docs/spikes/s3-lexical.md`).

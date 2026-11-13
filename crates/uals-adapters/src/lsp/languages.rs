@@ -40,6 +40,10 @@ pub struct ServerSpec {
     /// An empty answer only means the server has no index yet, not that nothing refers to the
     /// definition.
     pub empty_is_unknown: bool,
+    /// Started without `enabled = true` in the config.
+    pub on_by_default: bool,
+    /// JSON of `initializationOptions`; empty for none.
+    pub initialization_options: &'static str,
 }
 
 const GRADLE_SETTINGS: &[&str] = &["settings.gradle.kts", "settings.gradle"];
@@ -56,6 +60,8 @@ pub const SERVERS: &[ServerSpec] = &[
         load_failures: &["Unable to import"],
         needs_java: true,
         empty_is_unknown: false,
+        on_by_default: false,
+        initialization_options: "",
     },
     ServerSpec {
         name: "jdtls",
@@ -63,9 +69,15 @@ pub const SERVERS: &[ServerSpec] = &[
         root_markers: &[GRADLE_SETTINGS, JVM_BUILD],
         commands: &[&["jdtls", "-data", "{state}"]],
         readiness: Readiness::Progress { reports_loading: true },
-        load_failures: &[],
+        load_failures: &["failed due to an error configuring Eclipse", "Failed to import"],
         needs_java: true,
         empty_is_unknown: false,
+        on_by_default: false,
+        // Eclipse metadata (`.project`, `.classpath`, `.settings`) goes to the state folder, and no
+        // build writes classes into `bin/` of the project: uals only reads.
+        initialization_options: r#"{"settings": {"java": {
+            "import": {"generatesMetadataFilesAtProjectRoot": false},
+            "autobuild": {"enabled": false}}}}"#,
     },
     ServerSpec {
         name: "gopls",
@@ -76,6 +88,8 @@ pub const SERVERS: &[ServerSpec] = &[
         load_failures: &[],
         needs_java: false,
         empty_is_unknown: false,
+        on_by_default: true,
+        initialization_options: "",
     },
     ServerSpec {
         name: "rust-analyzer",
@@ -83,9 +97,11 @@ pub const SERVERS: &[ServerSpec] = &[
         root_markers: &[&["Cargo.toml"]],
         commands: &[&["rust-analyzer"]],
         readiness: Readiness::QuiescentStatus,
-        load_failures: &[],
+        load_failures: &["Failed to load workspaces", "failed to discover workspace"],
         needs_java: false,
         empty_is_unknown: false,
+        on_by_default: true,
+        initialization_options: "",
     },
     ServerSpec {
         name: "typescript-language-server",
@@ -97,6 +113,8 @@ pub const SERVERS: &[ServerSpec] = &[
         load_failures: &[],
         needs_java: false,
         empty_is_unknown: false,
+        on_by_default: true,
+        initialization_options: "",
     },
     ServerSpec {
         name: "pyright",
@@ -107,6 +125,8 @@ pub const SERVERS: &[ServerSpec] = &[
         load_failures: &[],
         needs_java: false,
         empty_is_unknown: false,
+        on_by_default: true,
+        initialization_options: "",
     },
     ServerSpec {
         name: "clangd",
@@ -117,6 +137,8 @@ pub const SERVERS: &[ServerSpec] = &[
         load_failures: &[],
         needs_java: false,
         empty_is_unknown: true,
+        on_by_default: true,
+        initialization_options: "",
     },
     ServerSpec {
         name: "sourcekit-lsp",
@@ -127,6 +149,8 @@ pub const SERVERS: &[ServerSpec] = &[
         load_failures: &[],
         needs_java: false,
         empty_is_unknown: true,
+        on_by_default: true,
+        initialization_options: "",
     },
 ];
 
@@ -214,6 +238,14 @@ mod tests {
             for extension in spec.extensions {
                 assert!(seen.insert(*extension), "{extension} is claimed twice");
             }
+        }
+    }
+
+    #[test]
+    fn initialization_options_are_json_objects() {
+        for spec in SERVERS.iter().filter(|spec| !spec.initialization_options.is_empty()) {
+            let options: serde_json::Value = serde_json::from_str(spec.initialization_options).unwrap();
+            assert!(options.is_object(), "{}", spec.name);
         }
     }
 

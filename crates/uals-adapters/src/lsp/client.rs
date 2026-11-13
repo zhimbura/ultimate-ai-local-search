@@ -76,6 +76,8 @@ pub struct Launch {
     pub child: ChildSpec,
     /// Messages that mean the project did not load.
     pub load_failures: Vec<String>,
+    /// Sent as `initializationOptions` unless null.
+    pub initialization_options: Value,
     pub root_uri: String,
     pub root_name: String,
     pub state_lock: Option<std::fs::File>,
@@ -148,7 +150,7 @@ impl LspClient {
         ));
         tracing::debug!(server = %name, pid, "language server started");
 
-        let params = initialize_params(&launch.root_uri, &launch.root_name);
+        let params = initialize_params(&launch.root_uri, &launch.root_name, launch.initialization_options);
         client.request("initialize", params, timeout).await?;
         client.notify("initialized", json!({}))?;
         Ok(client)
@@ -300,8 +302,8 @@ async fn write_messages(mut stdin: ChildStdin, mut queued: mpsc::UnboundedReceiv
 }
 
 /// Parameters of `initialize`: the client announces what the reader task answers.
-fn initialize_params(root_uri: &str, root_name: &str) -> Value {
-    json!({
+fn initialize_params(root_uri: &str, root_name: &str, options: Value) -> Value {
+    let mut params = json!({
         "processId": std::process::id(),
         "clientInfo": { "name": "uals" },
         "rootUri": root_uri,
@@ -316,7 +318,11 @@ fn initialize_params(root_uri: &str, root_name: &str) -> Value {
             "general": { "positionEncodings": ["utf-16"] },
             "experimental": { "serverStatusNotification": true }
         }
-    })
+    });
+    if !options.is_null() {
+        params["initializationOptions"] = options;
+    }
+    params
 }
 
 /// Reads messages until the server closes stdout, then fails every pending request.

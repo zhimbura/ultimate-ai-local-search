@@ -70,7 +70,11 @@ fn installed_language_servers_are_listed() {
     let run = sandbox.doctor(None, &[]);
 
     let line = run.check("lsp");
-    assert!(line.starts_with("✓ lsp: found gopls, pyright; not installed: kotlin-lsp, jdtls, rust-analyzer"), "{line}");
+    // kotlin-lsp and jdtls are off by default, so they are not looked for.
+    assert!(
+        line.starts_with("✓ lsp: found gopls, pyright; off: kotlin-lsp, jdtls; not installed: rust-analyzer"),
+        "{line}"
+    );
 }
 
 #[test]

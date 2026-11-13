@@ -233,11 +233,20 @@ web (ast-index)
 | C, C++, Objective-C | `clangd` | `compile_commands.json`, `compile_flags.txt` or `.clangd`, else `CMakeLists.txt` |
 | Swift | `sourcekit-lsp` | `Package.swift` |
 
-**Several languages in one folder.** uals runs one server per language and project. A folder with a Go module and an Android project runs gopls, kotlin-lsp and jdtls side by side, each on its own project. kotlin-lsp also returns the Java callers of a Kotlin declaration.
+**kotlin-lsp and jdtls are off by default.** To load a Gradle project they run a Gradle sync: it takes minutes, starts Gradle and Kotlin daemons and can take several gigabytes. Turn each one on in the config:
+
+```toml
+[lsp.servers.kotlin-lsp]
+enabled = true
+```
+
+jdtls, when on, writes Eclipse files (`.project`, `.classpath`, `.settings/`) into each Gradle project it imports; add them to `.gitignore`. uals turns off its build, so it writes no `bin/` folders.
+
+**Several languages in one folder.** uals runs one server per language and project. A folder with a Go module and a Gradle project runs gopls, kotlin-lsp and jdtls side by side (with the last two turned on), each on its own project. kotlin-lsp also returns the Java callers of a Kotlin declaration.
 
 **Start and memory.** A server starts on the first `usages` call that needs it. That call waits at most `lsp.ready_wait_ms` (10 s) for the project to load. A large Gradle project takes longer, so the first answers are by name until kotlin-lsp is ready. A server stops after `lsp.idle_minutes` (30) without calls. kotlin-lsp takes about 1.6 GB per project. `status` lists the running servers; `doctor` lists the installed ones.
 
-**Limits.** clangd needs a `compile_commands.json` and sourcekit-lsp a built index; when they return nothing, uals does not trust the empty answer and keeps the usages by name. Name search finds one usage per line, so a line with two calls gets the mark of one of them. kotlin-lsp cannot load Android Gradle projects yet ([Kotlin/kotlin-lsp#253](https://github.com/Kotlin/kotlin-lsp/issues/253)); uals then reports the failure and answers by name.
+**Limits.** clangd needs a `compile_commands.json` and sourcekit-lsp a built index; when they return nothing, uals does not trust the empty answer and keeps the usages by name. Name search finds one usage per line, so a line with two calls gets the mark of one of them. kotlin-lsp cannot load Android Gradle projects yet ([Kotlin/kotlin-lsp#253](https://github.com/Kotlin/kotlin-lsp/issues/253)); uals then reports the failure and answers by name. jdtls does not load Android modules either. A server that reports that it could not load the project gets no trust for an empty answer: its usages are found by name.
 
 ### Command line
 
@@ -353,7 +362,7 @@ request_ms = 20000              # deadline of one request to a loaded server
 idle_minutes = 30               # a server unused this long is stopped
 
 # [lsp.servers.kotlin-lsp]      # one table per server, by its name; every key is optional
-# enabled = true
+# enabled = true                # default: off for kotlin-lsp and jdtls, on for the others
 # command = ["kotlin-lsp", "--stdio", "--data-sharing=none", "--system-path={state}"]   # {state}: a per-project folder under the user cache
 # env = {}
 # pass_env = []
