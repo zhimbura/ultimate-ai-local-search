@@ -1,0 +1,16 @@
+// Gradle init script uals gives kotlin-lsp for its project import only.
+// kotlin-lsp 271 fails the whole import of an Android project when a test component asks for a
+// generated source (BuildConfig, data binding, protobuf) that is not built yet
+// (https://github.com/Kotlin/kotlin-lsp/issues/253). Without the androidTest and unitTest
+// components the import passes; test sources are then not in kotlin-lsp's model.
+allprojects { p ->
+    ['com.android.application', 'com.android.library', 'com.android.dynamic-feature'].each { id ->
+        p.plugins.withId(id) {
+            def components = p.extensions.getByName('androidComponents')
+            components.beforeVariants(components.selector().all(), { variant ->
+                try { variant.enableAndroidTest = false } catch (Throwable ignored) {}
+                try { variant.enableUnitTest = false } catch (Throwable ignored) {}
+            } as org.gradle.api.Action)
+        }
+    }
+}

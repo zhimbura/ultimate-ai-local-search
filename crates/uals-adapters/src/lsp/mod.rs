@@ -164,6 +164,9 @@ impl Inner {
         let mut state_lock = None;
         if child.args.iter().any(|arg| arg.contains(STATE_DIR)) {
             let (dir, lock) = state_dir(&self.state_root, spec.name, &slot.root)?;
+            if !spec.gradle_init_script.is_empty() {
+                pass_gradle_init_script(&mut child, spec.gradle_init_script, &dir)?;
+            }
             let dir = dir.display().to_string();
             for arg in &mut child.args {
                 *arg = arg.replace(STATE_DIR, &dir);
@@ -539,6 +542,25 @@ fn state_dir(state_root: &Path, server: &str, root: &Path) -> Result<(PathBuf, s
         }
     }
     Err(BackendError::Unavailable(format!("the state folder of {server} for {} is locked", root.display())))
+}
+
+/// The JVM option kotlin-lsp reads its extra Gradle init scripts from (comma-separated paths).
+const INIT_SCRIPTS_PROPERTY: &str = "com.jetbrains.ls.imports.gradle.init.scripts";
+
+/// Writes `script` into `dir` and adds it to the JVM options of `child`. Written before every
+/// start: kotlin-lsp deletes its init scripts after each import
+/// (https://github.com/Kotlin/kotlin-lsp/issues/252).
+fn pass_gradle_init_script(child: &mut ChildSpec, script: &str, dir: &Path) -> Result<(), BackendError> {
+    let path = dir.join("uals-init.gradle");
+    std::fs::write(&path, script)
+        .map_err(|e| BackendError::Unavailable(format!("cannot write {}: {e}", path.display())))?;
+    let option = format!("-D{INIT_SCRIPTS_PROPERTY}={}", path.display());
+    let options = match child.env.get("IJ_JAVA_OPTIONS") {
+        Some(own) if !own.is_empty() => format!("{own} {option}"),
+        _ => option,
+    };
+    child.env.insert("IJ_JAVA_OPTIONS".to_owned(), options);
+    Ok(())
 }
 
 /// FNV-1a: a hash that stays the same across Rust versions, for folder names.

@@ -43,7 +43,8 @@ while True:
         break
     method = message.get("method")
     log.write(json.dumps({"method": method, "params": message.get("params"), "result": message.get("result"),
-                          "cwd": os.getcwd(), "args": sys.argv[1:]}) + "\n")
+                          "cwd": os.getcwd(), "args": sys.argv[1:],
+                          "java_options": os.environ.get("IJ_JAVA_OPTIONS")}) + "\n")
     log.flush()
     if method == "initialize":
         root = message["params"]["rootUri"]

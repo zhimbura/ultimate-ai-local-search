@@ -44,6 +44,9 @@ pub struct ServerSpec {
     pub on_by_default: bool,
     /// JSON of `initializationOptions`; empty for none.
     pub initialization_options: &'static str,
+    /// A Gradle init script for the server's project import, written to the state folder before
+    /// each start and passed in `IJ_JAVA_OPTIONS`; empty for none.
+    pub gradle_init_script: &'static str,
 }
 
 /// The jdtls launcher argument that keeps Eclipse metadata out of the project folders.
@@ -65,6 +68,7 @@ pub const SERVERS: &[ServerSpec] = &[
         empty_is_unknown: false,
         on_by_default: false,
         initialization_options: "",
+        gradle_init_script: include_str!("kotlin_lsp_android.gradle"),
     },
     ServerSpec {
         name: "jdtls",
@@ -82,6 +86,7 @@ pub const SERVERS: &[ServerSpec] = &[
         on_by_default: false,
         // No build: nothing writes classes into `bin/` of the project.
         initialization_options: r#"{"settings": {"java": {"autobuild": {"enabled": false}}}}"#,
+        gradle_init_script: "",
     },
     ServerSpec {
         name: "gopls",
@@ -94,6 +99,7 @@ pub const SERVERS: &[ServerSpec] = &[
         empty_is_unknown: false,
         on_by_default: true,
         initialization_options: "",
+        gradle_init_script: "",
     },
     ServerSpec {
         name: "rust-analyzer",
@@ -106,6 +112,7 @@ pub const SERVERS: &[ServerSpec] = &[
         empty_is_unknown: false,
         on_by_default: true,
         initialization_options: "",
+        gradle_init_script: "",
     },
     ServerSpec {
         name: "typescript-language-server",
@@ -119,6 +126,7 @@ pub const SERVERS: &[ServerSpec] = &[
         empty_is_unknown: false,
         on_by_default: true,
         initialization_options: "",
+        gradle_init_script: "",
     },
     ServerSpec {
         name: "pyright",
@@ -131,6 +139,7 @@ pub const SERVERS: &[ServerSpec] = &[
         empty_is_unknown: false,
         on_by_default: true,
         initialization_options: "",
+        gradle_init_script: "",
     },
     ServerSpec {
         name: "clangd",
@@ -143,6 +152,7 @@ pub const SERVERS: &[ServerSpec] = &[
         empty_is_unknown: true,
         on_by_default: true,
         initialization_options: "",
+        gradle_init_script: "",
     },
     ServerSpec {
         name: "sourcekit-lsp",
@@ -155,6 +165,7 @@ pub const SERVERS: &[ServerSpec] = &[
         empty_is_unknown: true,
         on_by_default: true,
         initialization_options: "",
+        gradle_init_script: "",
     },
 ];
 

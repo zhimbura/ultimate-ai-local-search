@@ -259,6 +259,22 @@ async fn the_gradle_servers_are_off_unless_turned_on() {
 }
 
 #[tokio::test]
+async fn kotlin_lsp_imports_android_projects_with_the_test_components_off() {
+    let fx = MixedRepo::new();
+    let state = tempfile::tempdir().unwrap();
+    let pool = pool(vec![fx.server("kotlin-lsp", "app/Use.kt", &[("FAKE_PROGRESS", "full")])], 10_000, state.path());
+
+    pool.references(&fx.repo, &fx.definition("app/Store.kt", 2, "load")).await.unwrap();
+
+    let options = fx.log("kotlin-lsp")[0]["java_options"].as_str().unwrap().to_owned();
+    let script = options.strip_prefix("-Dcom.jetbrains.ls.imports.gradle.init.scripts=").expect(&options);
+    assert!(script.starts_with(&state.path().join("kotlin-lsp").display().to_string()), "{script}");
+    let text = std::fs::read_to_string(script).unwrap();
+    assert!(text.contains("enableAndroidTest = false") && text.contains("enableUnitTest = false"), "{text}");
+    pool.shutdown().await;
+}
+
+#[tokio::test]
 async fn jdtls_is_told_not_to_build() {
     let fx = MixedRepo::new();
     std::fs::write(fx.path("app/Store.java"), "class Store {\n    void load() {}\n}\n").unwrap();
