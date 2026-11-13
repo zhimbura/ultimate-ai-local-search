@@ -1,6 +1,6 @@
 ---
 name: uals
-description: Local code search for AI coding agents across every repository in a folder. Use it to find code by symbol name, plain words, regex or exact text, and to find every usage (all references) of a function or class with IDE precision through language servers (Kotlin, Java, Go, Rust, TypeScript, Python, C/C++, Swift). Installs and uses the uals MCP server: one ranked answer from ast-index symbols, ripgrep text search and semantic search, instead of many grep and file reads.
+description: "Local code search for AI coding agents across every repository in a folder. Use it to find code by symbol name, plain words, regex or exact text, and to find every usage (all references) of a function or class with IDE precision through language servers (Kotlin, Java, Go, Rust, TypeScript, Python, C/C++, Swift). Installs and uses the uals MCP server: one ranked answer from ast-index symbols, ripgrep text search and semantic search, instead of many grep and file reads."
 ---
 
 # uals: code search for agents
