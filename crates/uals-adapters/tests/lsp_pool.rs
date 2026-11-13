@@ -259,7 +259,7 @@ async fn the_gradle_servers_are_off_unless_turned_on() {
 }
 
 #[tokio::test]
-async fn jdtls_is_told_to_keep_its_files_out_of_the_project() {
+async fn jdtls_is_told_not_to_build() {
     let fx = MixedRepo::new();
     std::fs::write(fx.path("app/Store.java"), "class Store {\n    void load() {}\n}\n").unwrap();
     let state = tempfile::tempdir().unwrap();
@@ -269,7 +269,6 @@ async fn jdtls_is_told_to_keep_its_files_out_of_the_project() {
 
     let initialize = fx.log("jdtls").into_iter().find(|m| m["method"] == "initialize").unwrap();
     let java = &initialize["params"]["initializationOptions"]["settings"]["java"];
-    assert_eq!(java["import"]["generatesMetadataFilesAtProjectRoot"], false);
     assert_eq!(java["autobuild"]["enabled"], false);
     pool.shutdown().await;
 }

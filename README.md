@@ -240,7 +240,7 @@ web (ast-index)
 enabled = true
 ```
 
-jdtls, when on, writes Eclipse files (`.project`, `.classpath`, `.settings/`) into each Gradle project it imports; add them to `.gitignore`. uals turns off its build, so it writes no `bin/` folders.
+uals starts jdtls with `--jvm-arg=-Djava.import.generatesMetadataFilesAtProjectRoot=false` and its build off, so jdtls keeps its Eclipse files (`.project`, `.classpath`, `.settings/`) in its state folder and writes no `bin/` folders. A `command` of your own for jdtls must keep that argument. Files an older jdtls left in a project stay there until you delete them. The Gradle sync itself still writes `.gradle/` and `build/` in the project, as any Gradle build does.
 
 **Several languages in one folder.** uals runs one server per language and project. A folder with a Go module and a Gradle project runs gopls, kotlin-lsp and jdtls side by side (with the last two turned on), each on its own project. kotlin-lsp also returns the Java callers of a Kotlin declaration.
 

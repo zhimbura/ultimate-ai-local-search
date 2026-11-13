@@ -46,6 +46,9 @@ pub struct ServerSpec {
     pub initialization_options: &'static str,
 }
 
+/// The jdtls launcher argument that keeps Eclipse metadata out of the project folders.
+pub const JDTLS_NO_PROJECT_FILES: &str = "--jvm-arg=-Djava.import.generatesMetadataFilesAtProjectRoot=false";
+
 const GRADLE_SETTINGS: &[&str] = &["settings.gradle.kts", "settings.gradle"];
 const JVM_BUILD: &[&str] = &["build.gradle.kts", "build.gradle", "pom.xml"];
 
@@ -67,17 +70,18 @@ pub const SERVERS: &[ServerSpec] = &[
         name: "jdtls",
         extensions: &["java"],
         root_markers: &[GRADLE_SETTINGS, JVM_BUILD],
-        commands: &[&["jdtls", "-data", "{state}"]],
+        // jdtls reads `generatesMetadataFilesAtProjectRoot` only as a JVM system property: with
+        // it, `.project`, `.classpath` and `.settings` go to the state folder, not the project.
+        commands: &[&["jdtls", JDTLS_NO_PROJECT_FILES, "-data", "{state}"]],
         readiness: Readiness::Progress { reports_loading: true },
-        load_failures: &["failed due to an error configuring Eclipse", "Failed to import"],
+        // "Synchronize project X failed due to an error configuring Eclipse / connecting to the
+        // Gradle build / while importing the root project".
+        load_failures: &["failed due to an error", "Failed to import"],
         needs_java: true,
         empty_is_unknown: false,
         on_by_default: false,
-        // Eclipse metadata (`.project`, `.classpath`, `.settings`) goes to the state folder, and no
-        // build writes classes into `bin/` of the project: uals only reads.
-        initialization_options: r#"{"settings": {"java": {
-            "import": {"generatesMetadataFilesAtProjectRoot": false},
-            "autobuild": {"enabled": false}}}}"#,
+        // No build: nothing writes classes into `bin/` of the project.
+        initialization_options: r#"{"settings": {"java": {"autobuild": {"enabled": false}}}}"#,
     },
     ServerSpec {
         name: "gopls",
@@ -239,6 +243,12 @@ mod tests {
                 assert!(seen.insert(*extension), "{extension} is claimed twice");
             }
         }
+    }
+
+    #[test]
+    fn jdtls_keeps_its_eclipse_files_out_of_the_project() {
+        let jdtls = server_named("jdtls").unwrap();
+        assert!(jdtls.commands.iter().all(|command| command.contains(&JDTLS_NO_PROJECT_FILES)));
     }
 
     #[test]
