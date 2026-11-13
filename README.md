@@ -4,7 +4,7 @@
 
 uals (ultimate-ai-local-search) is a Rust MCP (Model Context Protocol) server and a command line tool.
 
-It searches every repository in a folder at once, with three backends: symbols (ast-index), text (an in-process search built on the ripgrep crates) and meaning (Semble by default, claude-context with Milvus as an option). It fuses the answers into one ranked list with code snippets. For find-usages it asks the language servers you have installed (kotlin-lsp, jdtls, gopls, rust-analyzer, typescript-language-server, pyright, clangd, sourcekit-lsp), so it tells apart two functions with the same name, the way an IDE does. See [Precise usages](#precise-usages).
+It searches every repository in a folder at once, with three backends: symbols (ast-index), text (an in-process search built on the ripgrep crates) and meaning (Semble by default: a local model on the CPU, no API key and no network; claude-context with Milvus as an option). It fuses the answers into one ranked list with code snippets. For find-usages it asks the language servers you have installed (kotlin-lsp, jdtls, gopls, rust-analyzer, typescript-language-server, pyright, clangd, sourcekit-lsp), so it tells apart two functions with the same name, the way an IDE does. See [Precise usages](#precise-usages).
 
 Languages: Kotlin, Java, Go, Rust, TypeScript, JavaScript, Python, C, C++, Swift and every other language ast-index and text search cover. Works for a monorepo and for a folder of several repositories.
 
@@ -303,7 +303,7 @@ Or add this to the `mcpServers` object in `~/.claude.json`, with the absolute pa
 
 For any other MCP client, start `uals mcp` as a stdio server with the same command and arguments. Put variables such as `UALS_WORKSPACE`, `UALS_CONFIG` or `UALS_LOG` in the `env` object.
 
-With a cloud embedder (claude-context), the API key goes into `env`:
+Only if you pick claude-context with a cloud embedder (OpenAI, VoyageAI, Gemini, OpenRouter), its API key goes into `env`. Semble, Ollama and LM Studio need no key.
 
 ```json
 "env": { "OPENAI_API_KEY": "sk-REPLACE_ME" }
