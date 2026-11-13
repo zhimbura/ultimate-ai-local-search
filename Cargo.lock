@@ -1664,7 +1664,7 @@ checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
 
 [[package]]
 name = "uals"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1688,7 +1688,7 @@ dependencies = [
 
 [[package]]
 name = "uals-adapters"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "async-trait",
  "grep-matcher",
@@ -1713,7 +1713,7 @@ dependencies = [
 
 [[package]]
 name = "uals-bench"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "clap",
@@ -1729,7 +1729,7 @@ dependencies = [
 
 [[package]]
 name = "uals-core"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "async-trait",
  "dirs",
