@@ -107,6 +107,31 @@ next: offset=5";
 }
 
 #[test]
+fn identifier_search_with_only_semantic_hits_says_so() {
+    let mut response = three_hits();
+    response.hits = vec![fused("sample-web", "/ws/sample-web/src/other.ts", (40, 41), 40)];
+    response.backends.clear();
+    response.total = 1;
+    response.query = "NoSuchName".into();
+    let expected = "\
+search \"NoSuchName\" · identifier · 1-1 of 1
+note: no definition or text match for \"NoSuchName\"; the hits below match by meaning only
+1. sample-web · /ws/sample-web/src/other.ts:40-41 · semble#1";
+    assert_eq!(render_search(&response, Format::Concise, &OutputConfig::default()), expected);
+
+    // A text match, a definition, a later page or another query kind: no note.
+    let mut with_text = response.clone();
+    with_text.hits[0].sources.push(SourceRef { backend: BackendId::Lexical, rank: 0 });
+    assert!(!render_search(&with_text, Format::Concise, &OutputConfig::default()).contains("note:"));
+    let mut later_page = response.clone();
+    later_page.offset = 5;
+    assert!(!render_search(&later_page, Format::Concise, &OutputConfig::default()).contains("note:"));
+    let mut natural = response;
+    natural.kind = QueryKind::Natural;
+    assert!(!render_search(&natural, Format::Concise, &OutputConfig::default()).contains("note:"));
+}
+
+#[test]
 fn empty_search_has_a_header_only() {
     let response = SearchResponse {
         query: "nothing".into(),

@@ -60,8 +60,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::OutputConfig;
 use crate::types::{
-    BackendReport, BackendStatus, DefinitionReport, FusedHit, LineRange, QueryKind, RepoUsages, SearchResponse,
-    Snippet, SymbolKind, Usage, UsagesResponse,
+    BackendId, BackendReport, BackendStatus, DefinitionReport, FusedHit, LineRange, QueryKind, RepoUsages,
+    SearchResponse, Snippet, SymbolKind, Usage, UsagesResponse,
 };
 
 /// Snippet lines longer than this many characters are cut.
@@ -206,6 +206,12 @@ fn search_text(response: &SearchResponse, format: Format) -> String {
         kind_name(response.kind),
         response.total
     )];
+    if lacks_exact_match(response) {
+        lines.push(format!(
+            "note: no definition or text match for \"{}\"; the hits below match by meaning only",
+            response.query
+        ));
+    }
     for (index, hit) in response.hits.iter().enumerate() {
         lines.push(hit_line(response.offset + index + 1, hit, format));
         if let Some(snippet) = &hit.snippet {
@@ -219,6 +225,18 @@ fn search_text(response: &SearchResponse, format: Format) -> String {
         lines.push(format!("next: offset={next}"));
     }
     lines.join("\n")
+}
+
+/// True for an identifier query on its first page whose hits hold no definition and no text match:
+/// a name that does not exist gets only semantic neighbours, which look like answers.
+fn lacks_exact_match(response: &SearchResponse) -> bool {
+    response.kind == QueryKind::Identifier
+        && response.offset == 0
+        && !response.hits.is_empty()
+        && response.hits.iter().all(|hit| {
+            !hit.is_definition
+                && !hit.sources.iter().any(|s| matches!(s.backend, BackendId::Lexical | BackendId::AstIndex))
+        })
 }
 
 /// One numbered line of a hit: location, symbol, flags and sources.
